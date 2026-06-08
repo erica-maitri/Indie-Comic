@@ -207,6 +207,9 @@ if generated_paths:
     grid_size = (2, 2) if num_panels == 4 else (1, num_panels)
     create_comic_grid(generated_paths, grid_path, grid_size=grid_size, cell_size=(width, height))
     print(f"Saved page dynamic grid layout to: {grid_path}")
+else:
+    print("Error: No panels were successfully generated.")
+    sys.exit(1)
 
 # Run Character Consistency Evaluation against reference profile
 ref_path = get_output_path(char_dir, "character_reference_sd15.png")

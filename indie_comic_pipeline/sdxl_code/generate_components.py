@@ -360,6 +360,9 @@ if component_paths:
     create_comic_grid(component_paths, grid_path, grid_size=grid_size, cell_size=(width, height))
 
     print(f"Saved dynamic component sheet grid to: {grid_path} (Grid size: {grid_size[0]}x{grid_size[1]})")
+else:
+    print("Error: No components were successfully generated.")
+    sys.exit(1)
 
                                                                                               
 
