@@ -21,7 +21,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 
                                                   
 
-fusion_check = "../outputs/fusion/sdxl_prompt.json"
+fusion_check = os.path.join(current_dir, "..", "outputs", "fusion", "sdxl_prompt.json")
 
 if not os.path.exists(fusion_check):
 
