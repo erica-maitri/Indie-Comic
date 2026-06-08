@@ -11,7 +11,7 @@ import os
 
 print("=" * 70)
 
-print("📦 INSTALLING ALL DEPENDENCIES")
+print("INSTALLING ALL DEPENDENCIES")
 
 print("=" * 70)
 
@@ -49,11 +49,11 @@ subprocess.run([sys.executable, "-m", "pip", "install",
 
 print("\n" + "=" * 70)
 
-print("✅ INSTALLATION COMPLETE!")
+print("[SUCCESS] INSTALLATION COMPLETE!")
 
 print("=" * 70)
 
-print("\n📋 Next steps:")
+print("\nNext steps:")
 
 print("   1. Install Ollama from: https://ollama.com/download")
 

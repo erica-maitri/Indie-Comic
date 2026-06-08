@@ -63,7 +63,7 @@ notebook = {
 
    "source": [
 
-    "!pip install diffusers transformers accelerate safetensors langchain-ollama langchain-core pyyaml opencv-python pillow"
+    "!pip install diffusers transformers accelerate safetensors langchain-ollama langchain-core pyyaml opencv-python pillow scikit-image peft"
 
    ]
 
@@ -161,11 +161,19 @@ notebook = {
 
     "\n",
 
-    "# Configure settings for fast GPU SDXL\n",
+    "# Configure settings for GPU execution of SDXL, SD v1.5 and LoRA\n",
 
     "settings['models']['sdxl']['device'] = 'cuda'\n",
 
     "settings['models']['sdxl']['name'] = 'stabilityai/stable-diffusion-xl-base-1.0'\n",
+
+    "settings['models']['sd15']['device'] = 'cuda'\n",
+
+    "settings['models']['sd15']['name'] = 'runwayml/stable-diffusion-v1-5'\n",
+
+    "settings['models']['lora']['name'] = 'artificialguybr/LineAniRedmond-LinearMangaSDXL-V2'\n",
+
+    "settings['models']['lora']['trigger_words'] = 'LineAniAF, lineart'\n",
 
     "settings['generation']['default_size']['width'] = 1024\n",
 
@@ -237,6 +245,40 @@ notebook = {
 
    "source": [
 
+    "### Step 4.5: Run Emotion Recognition (ERC) Engine\n",
+
+    "Processes dialogue and story contexts to extract emotions, maps expressions to visual prompts, and prepares annotated layout instructions."
+
+   ]
+
+  },
+
+  {
+
+   "cell_type": "code",
+
+   "execution_count": None,
+
+   "metadata": {},
+
+   "outputs": [],
+
+   "source": [
+
+    "!python langchain_code/emotion_recognition_engine.py"
+
+   ]
+
+  },
+
+  {
+
+   "cell_type": "markdown",
+
+   "metadata": {},
+
+   "source": [
+
     "### Step 5: Run SDXL Image Generation Pipeline\n",
 
     "This loads SDXL on GPU, renders the character reference and the 4 story components, and saves them."
@@ -275,7 +317,231 @@ notebook = {
 
    "source": [
 
-    "### Step 5: Read the 10-Page Multiverse Crossover Script\n",
+    "### Step 5.1: Run Stable Diffusion v1.5 Image Generation Pipeline\n",
+
+    "As an alternative to SDXL, this loads Stable Diffusion v1.5 on GPU, renders the character reference and panel components, and saves them."
+
+   ]
+
+  },
+
+  {
+
+   "cell_type": "code",
+
+   "execution_count": None,
+
+   "metadata": {},
+
+   "outputs": [],
+
+   "source": [
+
+    "%cd sd15_code\n",
+
+    "!python run_sd15_pipeline.py\n",
+
+    "%cd .."
+
+   ]
+
+  },
+
+  {
+
+   "cell_type": "markdown",
+
+   "metadata": {},
+
+   "source": [
+
+    "### Step 5.2: Run SDXL + LoRA Image Generation Pipeline\n",
+
+    "This loads SDXL with the Lineart LoRA on GPU, renders the character reference and panel components with enhanced artistic styling, and saves them."
+
+   ]
+
+  },
+
+  {
+
+   "cell_type": "code",
+
+   "execution_count": None,
+
+   "metadata": {},
+
+   "outputs": [],
+
+   "source": [
+
+    "%cd lora_code\n",
+
+    "!python run_lora_pipeline.py\n",
+
+    "%cd .."
+
+   ]
+
+  },
+
+  {
+
+   "cell_type": "markdown",
+
+   "metadata": {},
+
+   "source": [
+
+    "### Step 5.3: Run SDXL Emotion-Aware Comic Panel Generation\n",
+
+    "Generates individual comic panels and compiles page layouts using the base SDXL model."
+
+   ]
+
+  },
+
+  {
+
+   "cell_type": "code",
+
+   "execution_count": None,
+
+   "metadata": {},
+
+   "outputs": [],
+
+   "source": [
+
+    "%cd sdxl_code\n",
+
+    "!python generate_panels.py --page 1\n",
+
+    "%cd .."
+
+   ]
+
+  },
+
+  {
+
+   "cell_type": "markdown",
+
+   "metadata": {},
+
+   "source": [
+
+    "### Step 5.4: Run Stable Diffusion v1.5 Emotion-Aware Comic Panel Generation\n",
+
+    "Generates individual comic panels and compiles page layouts using SD 1.5 + LoRA styling."
+
+   ]
+
+  },
+
+  {
+
+   "cell_type": "code",
+
+   "execution_count": None,
+
+   "metadata": {},
+
+   "outputs": [],
+
+   "source": [
+
+    "%cd sd15_code\n",
+
+    "!python generate_panels.py --page 1\n",
+
+    "%cd .."
+
+   ]
+
+  },
+
+  {
+
+   "cell_type": "markdown",
+
+   "metadata": {},
+
+   "source": [
+
+    "### Step 5.5: Run SDXL + LoRA Emotion-Aware Comic Panel Generation\n",
+
+    "Generates individual comic panels and compiles page layouts using SDXL + Lineart LoRA model styling."
+
+   ]
+
+  },
+
+  {
+
+   "cell_type": "code",
+
+   "execution_count": None,
+
+   "metadata": {},
+
+   "outputs": [],
+
+   "source": [
+
+    "%cd lora_code\n",
+
+    "!python generate_panels.py --page 1\n",
+
+    "%cd .."
+
+   ]
+
+  },
+
+  {
+
+   "cell_type": "markdown",
+
+   "metadata": {},
+
+   "source": [
+
+    "### Step 5.6: Run Model Evaluation and Benchmarking Matrix\n",
+
+    "Compare Stable Diffusion v1.5, Stable Diffusion XL (Base), and SDXL with a Lineart LoRA side-by-side on CLIP Similarity Score, FID Score, and Inference speed."
+
+   ]
+
+  },
+
+  {
+
+   "cell_type": "code",
+
+   "execution_count": None,
+
+   "metadata": {},
+
+   "outputs": [],
+
+   "source": [
+
+    "!python matrix_evaluation_zone/model_matrix_bench.py"
+
+   ]
+
+  },
+
+  {
+
+   "cell_type": "markdown",
+
+   "metadata": {},
+
+   "source": [
+
+    "### Step 5.7: Read the 10-Page Multiverse Crossover Script\n",
 
     "This displays the full 10-page crossover storyboard script, including plot progression, character personality adaptation, panel descriptions, and dialogue/captions."
 
@@ -371,9 +637,9 @@ notebook = {
 
    "source": [
 
-    "### Step 6: View the Generated Assets (Visual Components)\n",
+    "### Step 6: View the Generated Assets (Visual Components & Comic Panels)\n",
 
-    "Displays the generated character reference profile and the compiled dynamic asset sheet showing the persistent components (ranked by vector space persistence scoring)."
+    "Displays the generated character reference profile, compiled asset sheet, and any generated emotion-aware comic panel layouts."
 
    ]
 
@@ -393,17 +659,127 @@ notebook = {
 
     "from IPython.display import Image, display\n",
 
+    "import os\n",
+
+    "import glob\n",
+
     "\n",
 
     "print(\"=== Character Reference Profile ===\")\n",
 
-    "display(Image(\"outputs/characters/character_reference.png\"))\n",
+    "if os.path.exists(\"outputs/characters/character_reference.png\"):\n",
+
+    "    display(Image(\"outputs/characters/character_reference.png\"))\n",
+
+    "else:\n",
+
+    "    print(\"Not generated yet.\")\n",
 
     "\n",
 
     "print(\"\\n=== Persistent Visual Assets Sheet (Dynamic Grid) ===\")\n",
 
-    "display(Image(\"outputs/comics/component_sheet_grid_2x2.png\"))"
+    "if os.path.exists(\"outputs/comics/component_sheet_grid_2x2.png\"):\n",
+
+    "    display(Image(\"outputs/comics/component_sheet_grid_2x2.png\"))\n",
+
+    "else:\n",
+
+    "    print(\"Not generated yet.\")\n",
+
+    "\n",
+
+    "print(\"\\n=== Emotion-Aware Comic Panel Layouts ===\")\n",
+
+    "layouts = glob.glob(\"outputs/comics/page_*_layout_*_grid.png\")\n",
+
+    "if layouts:\n",
+
+    "    for layout in sorted(layouts):\n",
+
+    "        print(f\"Displaying: {layout}\")\n",
+
+    "        display(Image(layout))\n",
+
+    "else:\n",
+
+    "    print(\"No panel layouts generated yet. Run Step 5.3, 5.4, or 5.5 first.\")"
+
+   ]
+
+  },
+
+  {
+
+   "cell_type": "markdown",
+
+   "metadata": {},
+
+   "source": [
+
+    "### Step 5.8: Generate Custom Doodle Storyboard (Optional Test)\n",
+
+    "Runs the `generate_doodle_panels.py` script to generate 8 test panels from a custom story JSON and compiles them into a grid layout."
+
+   ]
+
+  },
+
+  {
+
+   "cell_type": "code",
+
+   "execution_count": None,
+
+   "metadata": {},
+
+   "outputs": [],
+
+   "source": [
+
+    "!python generate_doodle_panels.py"
+
+   ]
+
+  },
+
+  {
+
+   "cell_type": "markdown",
+
+   "metadata": {},
+
+   "source": [
+
+    "### Step 6.1: View Custom Doodle Storyboard Layout\n",
+
+    "Displays the compiled 4x2 layout grid for the custom test story."
+
+   ]
+
+  },
+
+  {
+
+   "cell_type": "code",
+
+   "execution_count": None,
+
+   "metadata": {},
+
+   "outputs": [],
+
+   "source": [
+
+    "print(\"=== Custom Doodle Storyboard Layout Grid ===\")\n",
+
+    "if os.path.exists(\"outputs/comics/doodle_story_layout_grid.png\"):\n",
+
+    "    display(Image(\"outputs/comics/doodle_story_layout_grid.png\"))\n",
+
+    "else:\n",
+
+    "    print(\"Doodle storyboard not generated yet. Run Step 5.8 first.\")"
 
    ]
 
@@ -437,9 +813,10 @@ notebook = {
 
 }
 
-with open("indie_comic_pipeline.ipynb", "w", encoding="utf-8") as f:
-
+import os
+script_dir = os.path.dirname(os.path.abspath(__file__))
+notebook_path = os.path.join(script_dir, "indie_comic_pipeline.ipynb")
+with open(notebook_path, "w", encoding="utf-8") as f:
     json.dump(notebook, f, indent=2)
-
-print("Google Colab notebook 'indie_comic_pipeline.ipynb' created successfully!")
+print(f"Google Colab notebook '{notebook_path}' created successfully!")
 

@@ -11,6 +11,14 @@ models:
     device: "cuda"
     memory_optimization: true
   
+  sd15:
+    name: "runwayml/stable-diffusion-v1-5"
+    device: "cuda"
+  
+  lora:
+    name: "artificialguybr/LineAniRedmond-LinearMangaSDXL-V2"
+    trigger_words: "LineAniAF, lineart"
+  
   controlnet:
     lineart: "AnylineSDXL"
     canny: "canny"
