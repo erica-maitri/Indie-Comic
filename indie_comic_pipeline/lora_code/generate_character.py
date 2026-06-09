@@ -77,7 +77,10 @@ try:
     pipe = pipe.to(device)
     
     if device == "cuda" and sdxl_settings.get("memory_optimization", True):
-        pipe.enable_attention_slicing()
+        try:
+            pipe.enable_attention_slicing()
+        except Exception as slice_err:
+            print(f"Warning: Could not enable attention slicing: {slice_err}")
         pipe.enable_vae_slicing()
         print("GPU memory optimization enabled")
         

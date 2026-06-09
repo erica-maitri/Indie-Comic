@@ -201,7 +201,10 @@ def run_stable_diffusion_xl():
     )
     
     if sdxl_device == "cuda" and sdxl_config.get("memory_optimization", True):
-        pipe.enable_attention_slicing()
+        try:
+            pipe.enable_attention_slicing()
+        except Exception as slice_err:
+            print(f"Warning: Could not enable attention slicing: {slice_err}")
         pipe.enable_vae_slicing()
         
     pipe = pipe.to(sdxl_device)
@@ -269,7 +272,10 @@ def run_stable_diffusion_xl_only_lora():
     pipe.load_lora_weights(lora_name)
     
     if sdxl_device == "cuda" and sdxl_config.get("memory_optimization", True):
-        pipe.enable_attention_slicing()
+        try:
+            pipe.enable_attention_slicing()
+        except Exception as slice_err:
+            print(f"Warning: Could not enable attention slicing: {slice_err}")
         pipe.enable_vae_slicing()
         
     pipe = pipe.to(sdxl_device)
@@ -340,7 +346,10 @@ def run_stable_diffusion_xl_with_lora():
     pipe.load_lora_weights(lora_name)
     
     if sdxl_device == "cuda" and sdxl_config.get("memory_optimization", True):
-        pipe.enable_attention_slicing()
+        try:
+            pipe.enable_attention_slicing()
+        except Exception as slice_err:
+            print(f"Warning: Could not enable attention slicing: {slice_err}")
         pipe.enable_vae_slicing()
         
     pipe = pipe.to(sdxl_device)
