@@ -139,3 +139,6 @@ if __name__ == "__main__":
     print('═'*85)
     print(f"{'Stable Diffusion v1.5':<30} | {live_clip:<10} | {live_fid:<10} | {str(inf_time)+' seconds':<15}")
     print('═'*85)
+
+# Running the complete script file
+!python matrix_evaluation_zone/model1_matrix_bench.py
