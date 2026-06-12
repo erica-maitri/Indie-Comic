@@ -1,7 +1,8 @@
 # Main Pipeline Settings
 pipeline:
   name: "Indie Comic Generator"
-  version: "1.0.0"
+  version: "2.0.0"
+  t4_optimized: true  # Enable T4 GPU optimizations
 
 # Model Settings
 models:
@@ -10,14 +11,19 @@ models:
     variant: "fp16"
     device: "cuda"
     memory_optimization: true
+    vae_slicing: true
+    attention_slicing: true
+    cpu_offload: true  # Critical for T4 16GB VRAM
   
   sd15:
     name: "runwayml/stable-diffusion-v1-5"
     device: "cuda"
+    memory_optimization: true
   
   lora:
     name: "artificialguybr/LineAniRedmond-LinearMangaSDXL-V2"
     trigger_words: "LineAniAF, lineart"
+    adapter_scale: 0.8  # Reduce LoRA influence slightly for faster inference
   
   controlnet:
     lineart: "AnylineSDXL"
@@ -26,15 +32,25 @@ models:
   ipadapter:
     model: "ip-adapter-faceid-plusv2_sdxl"
     weight: 0.8
+    # Disable IP-Adapter on T4 to save VRAM (optional)
+    enabled: false  # Set to true if you need character consistency
 
-# Generation Settings
+# Generation Settings - OPTIMIZED FOR T4
 generation:
   default_size:
-    width: 1024
-    height: 1024
-  inference_steps: 40
+    width: 768   # Reduced from 1024 for T4 (saves 40% VRAM)
+    height: 768  # Reduced from 1024
+  inference_steps: 25  # Reduced from 40 (40% faster, 90% quality)
   guidance_scale: 7.5
   seed: 42
+  batch_size: 1  # Always 1 for T4
+  safety_checker: false  # Disable safety checker to save VRAM
+  
+  # Performance optimizations
+  enable_attention_slicing: true
+  enable_vae_slicing: true
+  enable_tiling: false  # Can cause issues on T4
+  enable_model_cpu_offload: true  # Essential for T4
 
 # Output Settings
 outputs:
@@ -57,9 +73,117 @@ style:
     - "gradients"
     - "blurry"
     - "messy lines"
+    - "extra fingers"
+    - "deformed face"
+    - "bad anatomy"
 
 # LangChain Settings
 langchain:
   model: "llama3.2"
   temperature: 0.3
   ollama_url: "http://localhost:11434"
+  max_tokens: 2048  # Limit tokens to prevent timeout
+  timeout: 60  # Seconds
+
+# CONSISTENCY CHECKER - OPTIMIZED FOR T4
+consistency:
+  # Heavy neural metrics - DISABLED by default for T4 speed
+  enable_clip: false     # Disable CLIP (saves 10-15s per check)
+  enable_dinov2: false   # Disable DINOv2 (saves 15-20s per check)
+  
+  # Lightweight metrics - KEEP ENABLED
+  enable_ssim: true      # Fast structural similarity
+  enable_edge: true      # Fast edge detection
+  enable_color: true     # Fast histogram comparison
+  enable_style: true     # Fast gram matrix calculation
+  
+  # Thresholds
+  threshold: 0.55        # Slightly lower for T4 generations
+  strict_threshold: 0.70  # For production quality
+  
+  # Performance
+  cache_results: true    # Cache consistency results
+
+# Story-Weaver Integration Settings
+story_weaver:
+  input_path: "../Story-Weaver/story_dynamic.json"
+  character_name: "Wanderer"
+  story_world: "The Abstract"
+  min_side_characters: 3
+  reference_mode: "panel"
+  enrich_via_llm: true
+  
+  # T4 Optimizations for LLM enrichment
+  llm_temperature: 0.2   # Lower = faster, more deterministic
+  llm_max_tokens: 1500   # Limit response size
+  
+  # Batch processing
+  batch_panels: 2        # Process 2 panels at a time (saves API calls)
+  cache_llm_responses: true  # Cache to avoid re-processing
+
+# Performance Monitoring
+monitoring:
+  enable_vram_tracking: true
+  enable_time_tracking: true
+  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  
+  # Alert when VRAM exceeds this (MB)
+  vram_warning_threshold: 14000  # 14GB warning for T4
+  vram_critical_threshold: 15000 # 15GB critical
+
+# T4 GPU Specific Settings
+t4_optimizations:
+  enabled: true
+  
+  # Memory management
+  clear_cache_every_n_steps: 5    # Clear GPU cache every 5 generations
+  enable_gc_after_each_panel: true  # Force garbage collection
+  use_float16: true                # Use FP16 for all models
+  
+  # Resolution presets for T4
+  resolutions:
+    draft: [512, 512]     # Ultra-fast for testing
+    normal: [768, 768]    # Default - good balance
+    high: [1024, 1024]    # Use sparingly - may OOM
+  
+  # Inference steps presets
+  steps:
+    draft: 15              # Quick test (2-3 sec per image)
+    normal: 25             # Default (5-8 sec per image)
+    high: 35               # Quality (12-15 sec per image)
+  
+  # Auto-adjust based on available VRAM
+  auto_adjust: true
+  
+  # Disable features that consume VRAM
+  disable_ipadapter: true      # IP-Adapter uses extra 2-3GB VRAM
+  disable_controlnet: true     # ControlNet uses extra 1-2GB VRAM
+  disable_refiner: true        # SDXL refiner uses extra 3-4GB VRAM
+
+# Batch Generation Settings
+batch:
+  enabled: false  # Disable batching on T4 (limited VRAM)
+  max_batch_size: 1
+
+# Fallback Settings (when T4 runs out of memory)
+fallback:
+  enable_cpu_fallback: true
+  reduce_resolution_on_oom: true
+  resolution_fallback: [512, 512]
+  steps_fallback: 20
+  notify_on_fallback: true
+
+# Caching Settings
+cache:
+  enable_model_caching: true
+  enable_prompt_caching: true
+  cache_dir: ".cache"
+  max_cache_size_mb: 2048  # 2GB cache limit
+
+# Logging
+logging:
+  enabled: true
+  log_file: "logs/pipeline.log"
+  console_output: true
+  log_timings: true
+  log_vram: true

@@ -104,4 +104,6 @@ with open(test_file_path, "w", encoding="utf-8") as f:
 print(f" Code cleanly updated to fix the loop inside: {test_file_path}")
 
 # Executing directly by wrapping the live runtime working path context
-!python "$(pwd)/matrix_evaluation_zone/storyboard_speed_bench.py"
+import subprocess
+import sys
+subprocess.run([sys.executable, test_file_path])

@@ -11,13 +11,17 @@ import ast
 
 if sys.stdout.encoding != 'utf-8':
     try:
-        sys.stdout.reconfigure(encoding='utf-8')
+        reconfigure = getattr(sys.stdout, 'reconfigure', None)
+        if reconfigure:
+            reconfigure(encoding='utf-8')
     except:
         pass
 
 if sys.stderr.encoding != 'utf-8':
     try:
-        sys.stderr.reconfigure(encoding='utf-8')
+        reconfigure = getattr(sys.stderr, 'reconfigure', None)
+        if reconfigure:
+            reconfigure(encoding='utf-8')
     except:
         pass
 
@@ -376,15 +380,16 @@ for page in target_pages:
         raw_parts = []
         raw_parts.extend([p.strip() for p in style_desc.split(",") if p.strip()])
         raw_parts.extend([p.strip() for p in clean_panel_text.split(",") if p.strip()])
-        if action:
-            raw_parts.extend([p.strip() for p in action.split(",") if p.strip()])
+        action_str = str(action) if action else ""
+        if action_str:
+            raw_parts.extend([p.strip() for p in action_str.split(",") if p.strip()])
         raw_parts.extend([p.strip() for p in char_prompt_combined.split(",") if p.strip()])
-        raw_parts.extend([p.strip() for p in env_details.split(",") if p.strip()])
+        raw_parts.extend([p.strip() for p in str(env_details).split(",") if p.strip()])
         
-        lighting = setting.get('lighting', 'dramatic noir lighting')
-        weather = setting.get('weather', 'foggy overcast')
-        raw_parts.extend([p.strip() for p in lighting.split(",") if p.strip()])
-        raw_parts.extend([p.strip() for p in weather.split(",") if p.strip()])
+        lighting_str = str(setting.get('lighting', 'dramatic noir lighting'))
+        weather_str = str(setting.get('weather', 'foggy overcast'))
+        raw_parts.extend([p.strip() for p in lighting_str.split(",") if p.strip()])
+        raw_parts.extend([p.strip() for p in weather_str.split(",") if p.strip()])
         
         # Case-insensitive deduplication of comma-separated chunks to avoid redundant tokens
         seen = set()

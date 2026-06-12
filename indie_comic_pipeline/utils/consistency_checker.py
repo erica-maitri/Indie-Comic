@@ -1,6 +1,7 @@
 """
 CONSISTENCY CHECKER
 Validates that character looks the same across all panels using color, structure, style, and semantic similarity
+Optimized for T4 GPU with model caching and configurable metrics
 """
 
 import numpy as np
@@ -8,6 +9,13 @@ from PIL import Image
 import os
 import cv2
 import torch
+import gc
+
+# Global model cache - prevents reloading models for every comparison
+_CLIP_MODEL = None
+_CLIP_PROCESSOR = None
+_DINOV2_MODEL = None
+_DINOV2_PROCESSOR = None
 
 class ConsistencyChecker:
 
@@ -16,6 +24,34 @@ class ConsistencyChecker:
         self.clip_model = None
         self.clip_processor = None
         self.device = None
+        # Tracks whether reference was set from a character sheet or the first panel
+        self.reference_mode = "character_sheet"  # "character_sheet" | "panel"
+        
+        # Load configuration for which metrics to use
+        try:
+            from utils.config_helper import load_settings
+            settings = load_settings()
+            self.consistency_config = settings.get("consistency", {})
+        except:
+            # Default to fast settings for T4 GPU
+            self.consistency_config = {
+                "enable_clip": False,    # Disable CLIP by default (too slow on T4)
+                "enable_dinov2": False,  # Disable DINOv2 by default (too slow on T4)
+                "enable_ssim": True,
+                "enable_edge": True,
+                "enable_color": True,
+                "enable_style": True,
+                "threshold": 0.55        # Slightly lower threshold for T4
+            }
+        
+        # Print which metrics are enabled
+        print(f"[ConsistencyChecker] Metrics enabled:")
+        print(f"  - CLIP: {self.consistency_config.get('enable_clip', False)}")
+        print(f"  - DINOv2: {self.consistency_config.get('enable_dinov2', False)}")
+        print(f"  - SSIM: {self.consistency_config.get('enable_ssim', True)}")
+        print(f"  - Edge: {self.consistency_config.get('enable_edge', True)}")
+        print(f"  - Color: {self.consistency_config.get('enable_color', True)}")
+        print(f"  - Style: {self.consistency_config.get('enable_style', True)}")
 
     def _fallback_ssim(self, img1, img2):
         """NumPy/OpenCV implementation of SSIM (Gaussian-based) as a fallback"""
@@ -95,21 +131,32 @@ class ConsistencyChecker:
         return float(aesthetic_val)
 
     def compute_clip_image_similarity(self, img1_path, img2_path):
-        """Compute visual semantic similarity using CLIP embeddings"""
-        if self.clip_model is None or self.clip_processor is None:
-            from transformers import CLIPProcessor, CLIPModel
+        """Compute visual semantic similarity using CLIP embeddings (CACHED for T4 GPU)"""
+        global _CLIP_MODEL, _CLIP_PROCESSOR
+        
+        # Only run on CUDA, skip on CPU to save time
+        if not torch.cuda.is_available():
+            return None
             
-            # Use CPU or CUDA depending on torch support
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
-            self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(self.device)
-            self.clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+        # Check if CLIP is enabled in config
+        if not self.consistency_config.get("enable_clip", False):
+            return None
+            
+        # Load once globally, reuse forever
+        if _CLIP_MODEL is None:
+            from transformers import CLIPProcessor, CLIPModel
+            print("  [i] Loading CLIP model (once, cached)...")
+            self.device = "cuda"
+            _CLIP_MODEL = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(self.device)
+            _CLIP_PROCESSOR = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+            print("  [✓] CLIP model loaded and cached")
             
         img1 = Image.open(img1_path)
         img2 = Image.open(img2_path)
         
-        inputs = self.clip_processor(images=[img1, img2], return_tensors="pt", padding=True).to(self.device)
+        inputs = _CLIP_PROCESSOR(images=[img1, img2], return_tensors="pt", padding=True).to(self.device)
         with torch.no_grad():
-            features = self.clip_model.get_image_features(**inputs)
+            features = _CLIP_MODEL.get_image_features(**inputs)
             
         # Normalize embeddings
         features = features / features.norm(p=2, dim=-1, keepdim=True)
@@ -119,23 +166,35 @@ class ConsistencyChecker:
         return max(0.0, min(1.0, similarity))
 
     def compute_dinov2_similarity(self, img1_path, img2_path):
-        """Compute visual structure similarity using DINOv2 features"""
-        if not hasattr(self, 'dinov2_model') or self.dinov2_model is None:
-            from transformers import AutoImageProcessor, AutoModel
+        """Compute visual structure similarity using DINOv2 features (CACHED for T4 GPU)"""
+        global _DINOV2_MODEL, _DINOV2_PROCESSOR
+        
+        # Only run on CUDA, skip on CPU to save time
+        if not torch.cuda.is_available():
+            return None
             
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
-            self.dinov2_processor = AutoImageProcessor.from_pretrained("facebook/dinov2-base")
-            self.dinov2_model = AutoModel.from_pretrained("facebook/dinov2-base").to(self.device)
+        # Check if DINOv2 is enabled in config
+        if not self.consistency_config.get("enable_dinov2", False):
+            return None
+            
+        # Load once globally, reuse forever
+        if _DINOV2_MODEL is None:
+            from transformers import AutoImageProcessor, AutoModel
+            print("  [i] Loading DINOv2 model (once, cached)...")
+            self.device = "cuda"
+            _DINOV2_PROCESSOR = AutoImageProcessor.from_pretrained("facebook/dinov2-base")
+            _DINOV2_MODEL = AutoModel.from_pretrained("facebook/dinov2-base").to(self.device)
+            print("  [✓] DINOv2 model loaded and cached")
             
         img1 = Image.open(img1_path).convert("RGB")
         img2 = Image.open(img2_path).convert("RGB")
         
-        inputs1 = self.dinov2_processor(images=img1, return_tensors="pt").to(self.device)
-        inputs2 = self.dinov2_processor(images=img2, return_tensors="pt").to(self.device)
+        inputs1 = _DINOV2_PROCESSOR(images=img1, return_tensors="pt").to(self.device)
+        inputs2 = _DINOV2_PROCESSOR(images=img2, return_tensors="pt").to(self.device)
         
         with torch.no_grad():
-            outputs1 = self.dinov2_model(**inputs1)
-            outputs2 = self.dinov2_model(**inputs2)
+            outputs1 = _DINOV2_MODEL(**inputs1)
+            outputs2 = _DINOV2_MODEL(**inputs2)
             
             # Use pooler_output for global image representation
             features1 = outputs1.pooler_output
@@ -191,26 +250,49 @@ class ConsistencyChecker:
         }
 
     def set_reference(self, reference_image_path):
-        """Set the reference character image"""
+        """Set the reference character image (character sheet mode)."""
         self.reference_features = self.extract_features(reference_image_path)
-        print(f"[SUCCESS] Reference set: {reference_image_path}")
+        self.reference_mode = "character_sheet"
+        print(f"[SUCCESS] Reference set (character sheet): {reference_image_path}")
 
-    def check_consistency(self, image_path, threshold=0.60):
-        """Check if image matches reference character using color, structure, style, and semantic similarity"""
+    def set_reference_from_panel(self, panel_image_path):
+        """
+        Set the reference from the FIRST generated panel instead of a pre-rendered
+        character sheet. Used in Story-Weaver / reference-free mode.
+        All subsequent panels are compared against this anchor panel.
+        """
+        self.reference_features = self.extract_features(panel_image_path)
+        self.reference_mode = "panel"
+        print(f"[SUCCESS] Reference set (panel 1 anchor): {panel_image_path}")
+
+    def check_consistency(self, image_path, threshold=None):
+        """Check if image matches reference character using configurable metrics"""
         if self.reference_features is None:
             raise ValueError("No reference set. Call set_reference() first.")
             
+        # Use threshold from config if not provided
+        if threshold is None:
+            threshold = self.consistency_config.get("threshold", 0.55)
+            
         features = self.extract_features(image_path)
         
-        # 1. Color similarity (correlation of HSV histograms)
-        color_score = cv2.compareHist(
-            self.reference_features['histogram'], 
-            features['histogram'], 
-            cv2.HISTCMP_CORREL
-        )
-        color_score = max(0.0, min(1.0, color_score))
+        # Initialize scores
+        color_score = 0.0
+        ssim_score = 0.0
+        edge_score = 0.0
+        style_score = 0.0
+        legacy_struct_score = 0.0
         
-        # 2. Grayscale thumbnail correlation (legacy struct_score)
+        # 1. Color similarity (HSV correlation) - Always compute (lightweight)
+        if self.consistency_config.get("enable_color", True):
+            color_score = cv2.compareHist(
+                self.reference_features['histogram'], 
+                features['histogram'], 
+                cv2.HISTCMP_CORREL
+            )
+            color_score = max(0.0, min(1.0, color_score))
+        
+        # 2. Grayscale thumbnail correlation - Always compute (lightweight)
         p1 = self.reference_features['pixels']
         p2 = features['pixels']
         std1, std2 = np.std(p1), np.std(p2)
@@ -220,85 +302,93 @@ class ConsistencyChecker:
             legacy_struct_score = 0.0
         legacy_struct_score = max(0.0, min(1.0, legacy_struct_score))
         
-        # 3. Structural Similarity Index (SSIM)
-        ref_gray = self.reference_features['img_gray']
-        feat_gray = features['img_gray']
-        if ref_gray.shape != feat_gray.shape:
-            feat_gray = cv2.resize(feat_gray, (ref_gray.shape[1], ref_gray.shape[0]))
-            
-        try:
-            from skimage.metrics import structural_similarity as ssim
-            ssim_score = ssim(ref_gray, feat_gray)
-        except Exception:
-            ssim_score = self._fallback_ssim(ref_gray, feat_gray)
-        ssim_score = max(0.0, min(1.0, ssim_score))
+        # 3. Structural Similarity Index (SSIM) - Optional but recommended
+        if self.consistency_config.get("enable_ssim", True):
+            ref_gray = self.reference_features['img_gray']
+            feat_gray = features['img_gray']
+            if ref_gray.shape != feat_gray.shape:
+                feat_gray = cv2.resize(feat_gray, (ref_gray.shape[1], ref_gray.shape[0]))
+                
+            try:
+                from skimage.metrics import structural_similarity as ssim
+                ssim_score = ssim(ref_gray, feat_gray)
+            except Exception:
+                ssim_score = self._fallback_ssim(ref_gray, feat_gray)
+            ssim_score = max(0.0, min(1.0, ssim_score))
         
-        # 4. Edge Density Similarity
-        ref_density = self.reference_features['edge_density']
-        feat_density = features['edge_density']
-        edge_diff = abs(ref_density - feat_density)
-        edge_score = max(0.0, min(1.0, 1.0 - edge_diff * 5.0))
+        # 4. Edge Density Similarity - Optional
+        if self.consistency_config.get("enable_edge", True):
+            ref_density = self.reference_features['edge_density']
+            feat_density = features['edge_density']
+            edge_diff = abs(ref_density - feat_density)
+            edge_score = max(0.0, min(1.0, 1.0 - edge_diff * 5.0))
         
-        # 5. Art Style Gram Matrix similarity
-        ref_gram = self.reference_features['gram_matrix']
-        feat_gram = features['gram_matrix']
-        gram_diff = np.mean((ref_gram - feat_gram) ** 2)
-        style_score = max(0.0, min(1.0, 1.0 - gram_diff * 10.0)) # Scale diff to similarity
+        # 5. Art Style Gram Matrix similarity - Optional
+        if self.consistency_config.get("enable_style", True):
+            ref_gram = self.reference_features['gram_matrix']
+            feat_gram = features['gram_matrix']
+            gram_diff = np.mean((ref_gram - feat_gram) ** 2)
+            style_score = max(0.0, min(1.0, 1.0 - gram_diff * 10.0))
         
-        # 6. CLIP Image-to-Image Cosine Similarity (Semantic)
-        clip_img_score = 0.0
-        clip_computed = False
-        try:
-            clip_img_score = self.compute_clip_image_similarity(self.reference_features['path'], features['path'])
-            clip_computed = True
-        except Exception as e:
-            pass
+        # 6. CLIP Image-to-Image Cosine Similarity (Semantic) - Optional, heavy
+        clip_img_score = None
+        if self.consistency_config.get("enable_clip", False):
+            try:
+                clip_img_score = self.compute_clip_image_similarity(self.reference_features['path'], features['path'])
+            except Exception as e:
+                pass
+                
+        # 7. DINOv2 Structural Similarity - Optional, heavy
+        dinov2_score = None
+        if self.consistency_config.get("enable_dinov2", False):
+            try:
+                dinov2_score = self.compute_dinov2_similarity(self.reference_features['path'], features['path'])
+            except Exception as e:
+                pass
+        
+        # Combine the scores with dynamic weights based on available metrics
+        available_metrics = 0
+        total_weight = 0
+        
+        # Build weighted sum based on what's available
+        overall_score = 0.0
+        
+        # Always include lightweight metrics
+        overall_score += color_score * 0.25
+        total_weight += 0.25
+        available_metrics += 1
+        
+        overall_score += ssim_score * 0.30
+        total_weight += 0.30
+        available_metrics += 1
+        
+        overall_score += style_score * 0.20
+        total_weight += 0.20
+        available_metrics += 1
+        
+        overall_score += edge_score * 0.15
+        total_weight += 0.15
+        available_metrics += 1
+        
+        # Add heavy metrics if available
+        if clip_img_score is not None:
+            overall_score += clip_img_score * 0.10
+            total_weight += 0.10
+            available_metrics += 1
             
-        # 7. DINOv2 Structural Similarity (Vision Transformer representation)
-        dinov2_score = 0.0
-        dinov2_computed = False
-        try:
-            dinov2_score = self.compute_dinov2_similarity(self.reference_features['path'], features['path'])
-            dinov2_computed = True
-        except Exception as e:
-            pass
-            
-        # Combine the scores into a weighted overall score
-        if clip_computed and dinov2_computed:
-            overall_score = (
-                0.15 * color_score + 
-                0.15 * clip_img_score + 
-                0.20 * dinov2_score + 
-                0.15 * ssim_score + 
-                0.15 * style_score + 
-                0.20 * edge_score
-            )
-        elif clip_computed:
-            overall_score = (
-                0.2 * color_score + 
-                0.2 * clip_img_score + 
-                0.2 * ssim_score + 
-                0.2 * style_score + 
-                0.2 * edge_score
-            )
-        elif dinov2_computed:
-            overall_score = (
-                0.2 * color_score + 
-                0.2 * dinov2_score + 
-                0.2 * ssim_score + 
-                0.2 * style_score + 
-                0.2 * edge_score
-            )
-        else:
-            overall_score = (
-                0.3 * color_score + 
-                0.3 * ssim_score + 
-                0.2 * style_score + 
-                0.2 * edge_score
-            )
-            
+        if dinov2_score is not None:
+            overall_score += dinov2_score * 0.10
+            total_weight += 0.10
+            available_metrics += 1
+        
+        # Normalize by total weight
+        if total_weight > 0:
+            overall_score = overall_score / total_weight
+        
         overall_score = max(0.0, min(1.0, overall_score))
-        
+
+        ref_label = "Panel Anchor" if self.reference_mode == "panel" else "Character Sheet"
+
         return {
             'consistent': overall_score >= threshold,
             'score': float(overall_score),
@@ -308,8 +398,10 @@ class ConsistencyChecker:
             'edge_score': float(edge_score),
             'style_score': float(style_score),
             'aesthetic_score': float(features['aesthetic_score']),
-            'clip_img_score': float(clip_img_score) if clip_computed else None,
-            'dinov2_score': float(dinov2_score) if dinov2_computed else None
+            'clip_img_score': float(clip_img_score) if clip_img_score is not None else None,
+            'dinov2_score': float(dinov2_score) if dinov2_score is not None else None,
+            'reference_mode': ref_label,
+            'metrics_used': available_metrics
         }
 
     def validate_panels(self, panel_paths, reference_path):
@@ -321,7 +413,29 @@ class ConsistencyChecker:
             results[path] = self.check_consistency(path)
         
         return results
+    
+    def clear_cache(self):
+        """Clear cached models to free GPU memory"""
+        global _CLIP_MODEL, _CLIP_PROCESSOR, _DINOV2_MODEL, _DINOV2_PROCESSOR
+        
+        if _CLIP_MODEL is not None:
+            del _CLIP_MODEL
+            del _CLIP_PROCESSOR
+            _CLIP_MODEL = None
+            _CLIP_PROCESSOR = None
+            
+        if _DINOV2_MODEL is not None:
+            del _DINOV2_MODEL
+            del _DINOV2_PROCESSOR
+            _DINOV2_MODEL = None
+            _DINOV2_PROCESSOR = None
+            
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            gc.collect()
+            
+        print("[✓] Model cache cleared, GPU memory freed")
 
 def get_consistency_checker():
+    """Factory function to create a new ConsistencyChecker instance"""
     return ConsistencyChecker()
-

@@ -1,3 +1,9 @@
+"""
+DOODLE PANEL GENERATOR - T4 OPTIMIZED
+Generates test story panels for quick layout testing
+Optimized for T4 GPU with faster settings
+"""
+
 import json
 import torch
 from diffusers import StableDiffusionXLPipeline, DPMSolverMultistepScheduler
@@ -6,17 +12,18 @@ import os
 import sys
 import gc
 
+print("=" * 70)
+print("DOODLE PANEL GENERATOR - T4 OPTIMIZED")
+print("Generating test story panels (Fast Mode)")
+print("=" * 70)
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from utils.config_helper import load_settings, get_output_path
 from utils.image_utils import create_comic_grid
 from utils.consistency_checker import get_consistency_checker
 
-print("=" * 70)
-print("DOODLE PANEL GENERATOR - Generating test story panels")
-print("=" * 70)
-
-# Input data directly in script
+# Input data directly in script (test storyboard)
 story_data = {
   "recurring_motif": "water droplets on glass or fabric",
   "mood_journey": "From rage and tension towards serenity.",
@@ -37,7 +44,7 @@ story_data = {
     },
     {
       "panel": 3,
-      "visual": "He suddenly looks down at his clenched fists and realizes there’s steam rising from them - evidence of unspent energy.",
+      "visual": "He suddenly looks down at his clenched fists and realizes there's steam rising from them - evidence of unspent energy.",
       "dialogue": "",
       "emotion_beat": "fracture",
       "motion": "Fingers spread apart slowly"
@@ -65,7 +72,7 @@ story_data = {
     },
     {
       "panel": 7,
-      "visual": "His body language shifts to one where he’s more relaxed—body leaning forward against himself as though embracing a protective shield between himself and whatever threats may lie ahead.",
+      "visual": "His body language shifts to one where he's more relaxed—body leaning forward against himself as though embracing a protective shield between himself and whatever threats may lie ahead.",
       "dialogue": "",
       "emotion_beat": "grounded",
       "motion": "Man relaxes shoulders"
@@ -83,6 +90,7 @@ story_data = {
 settings = load_settings()
 sdxl_settings = settings.get("models", {}).get("sdxl", {})
 lora_settings = settings.get("models", {}).get("lora", {})
+t4_opts = settings.get("t4_optimizations", {})
 comics_dir = settings.get("outputs", {}).get("comics_dir", "outputs/comics")
 
 model_name = sdxl_settings.get("name", "stabilityai/stable-diffusion-xl-base-1.0")
@@ -94,6 +102,21 @@ if device == "cuda" and not torch.cuda.is_available():
     device = "cpu"
 
 print(f"\nUsing device: {device}")
+
+# Use faster doodle-specific settings
+if t4_opts.get("enabled", False):
+    resolution = t4_opts.get("resolutions", {}).get("draft", [512, 512])
+    width, height = resolution
+    steps = t4_opts.get("steps", {}).get("draft", 15)  # Fast 15 steps for doodles
+    print(f"  [Doodle Mode] Resolution: {width}x{height}, Steps: {steps}")
+else:
+    width = 512
+    height = 512
+    steps = 15
+
+guidance = 7.0  # Slightly lower for faster generation
+seed = 42
+
 print(f"Loading SDXL base model '{model_name}'...")
 
 try:
@@ -104,33 +127,31 @@ try:
         variant=variant if device == "cuda" else None
     )
     
-    # Load LoRA weights
+    # Try to load LoRA weights (optional for doodles)
     lora_name = lora_settings.get("name", "artificialguybr/LineAniRedmond-LinearMangaSDXL-V2")
     print(f"Loading LoRA weights: {lora_name}...")
-    pipe.load_lora_weights(lora_name)
+    try:
+        pipe.load_lora_weights(lora_name)
+        print("  LoRA loaded")
+    except Exception as e:
+        print(f"  LoRA not loaded: {e}")
     
     pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config, use_karras_sigmas=True)
-    pipe = pipe.to(device)
     
+    # Memory optimizations
     if device == "cuda":
         try:
             pipe.enable_attention_slicing()
-        except Exception as slice_err:
-            print(f"Warning: Could not enable attention slicing: {slice_err}")
-        pipe.enable_vae_slicing()
-        print("GPU memory optimization enabled")
-        
+            pipe.enable_vae_slicing()
+            print("  Memory optimization enabled")
+        except:
+            pass
+        pipe = pipe.to(device)
+    
     print("Model loaded successfully")
 except Exception as e:
     print(f"Error: Failed to load model: {e}")
     sys.exit(1)
-
-gen_settings = settings.get("generation", {})
-width = gen_settings.get("default_size", {}).get("width", 1024)
-height = gen_settings.get("default_size", {}).get("height", 1024)
-steps = 30  # Slightly lower steps for faster test doodle generations
-guidance = gen_settings.get("guidance_scale", 7.5)
-seed = gen_settings.get("seed", 42)
 
 generated_paths = []
 motif = story_data["recurring_motif"]
@@ -140,11 +161,11 @@ style_desc = ", ".join(style_settings.get("positive_terms", [
 ]))
 trigger_words = lora_settings.get("trigger_words", "LineAniAF, lineart")
 
-print("\nGenerating 8 storyboard panels...")
+print("\nGenerating 8 storyboard panels (Doodle Mode)...")
 print("-" * 50)
 
 for idx, p in enumerate(story_data["panels"]):
-    p_num = p["panel"]
+    p_num = int(p["panel"])
     print(f"\n--- Panel {p_num} ---")
     visual = p["visual"]
     motion = p["motion"]
@@ -164,7 +185,7 @@ for idx, p in enumerate(story_data["panels"]):
         prompt_sections.append(f"incorporating motif of {motif}")
     prompt_sections.append(trigger_words)
     
-    prompt_str = ", ".join([s.strip() for s in prompt_sections if s.strip()])
+    prompt_str = ", ".join([str(s).strip() for s in prompt_sections if s and str(s).strip()])
     print(f"  Prompt: {prompt_str[:120]}...")
     
     negative_str = "photorealistic, 3D render, shading, gradients, blurry, extra fingers, deformed face, bad anatomy"
@@ -185,21 +206,22 @@ for idx, p in enumerate(story_data["panels"]):
         panel_path = get_output_path(comics_dir, f"doodle_panel_{p_num}.png")
         image.save(panel_path)
         generated_paths.append(panel_path)
-        print(f"  Saved panel image to: {panel_path}")
+        print(f"  ✓ Saved to: {panel_path}")
+        
+        # Clear memory occasionally
+        if (idx + 1) % 4 == 0:
+            if device == "cuda":
+                torch.cuda.empty_cache()
+            gc.collect()
+            print("  🧹 Memory cleared")
         
     except Exception as e:
-        print(f"  Error generating panel {p_num}: {e}")
-    
-    # Release memory between generations
-    if device == "cuda":
-        torch.cuda.empty_cache()
-        gc.collect()
+        print(f"  ❌ Error generating panel {p_num}: {e}")
 
-# Compile panels into 4x2 grid sheet
+# Compile panels into grid sheet
 if generated_paths:
     print("\nCompiling doodles into grid sheet layout...")
     grid_path = get_output_path(comics_dir, "doodle_story_layout_grid.png")
-    # Compute grid size dynamically based on actual number of panels generated
     import math
     n = len(generated_paths)
     cols = min(n, 4)
@@ -208,19 +230,19 @@ if generated_paths:
     cell_w = min(width, 512)
     cell_h = min(height, 512)
     create_comic_grid(generated_paths, grid_path, grid_size=grid_size, cell_size=(cell_w, cell_h))
-    print(f"✅ Success! Compiled grid layout ({rows}x{cols}) saved to: {grid_path}")
+    print(f"✅ Compiled grid layout ({rows}x{cols}) saved to: {grid_path}")
     
-    # Evaluate sequential consistency
+    # Quick consistency check (optional)
     print("\nEvaluating panel-to-panel sequential consistency...")
     try:
         checker = get_consistency_checker()
         for i in range(len(generated_paths) - 1):
             checker.set_reference(generated_paths[i])
             res = checker.check_consistency(generated_paths[i+1])
-            print(f"  Panel {i+1} -> Panel {i+2} consistency similarity: {res['score']:.2%}")
+            print(f"  Panel {i+1} -> Panel {i+2}: {res['score']:.2%}")
     except Exception as e:
         print(f"  Could not run consistency checker: {e}")
 
 print("\n" + "=" * 70)
-print("TEST DOODLE LAYOUT GENERATION COMPLETE!")
+print("✅ DOODLE LAYOUT GENERATION COMPLETE!")
 print("=" * 70)

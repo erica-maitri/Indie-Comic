@@ -9,23 +9,19 @@ import sys
 import os
 
 if sys.stdout.encoding != 'utf-8':
-
     try:
-
-        sys.stdout.reconfigure(encoding='utf-8')
-
+        reconfigure = getattr(sys.stdout, 'reconfigure', None)
+        if reconfigure:
+            reconfigure(encoding='utf-8')
     except:
-
         pass
 
 if sys.stderr.encoding != 'utf-8':
-
     try:
-
-        sys.stderr.reconfigure(encoding='utf-8')
-
+        reconfigure = getattr(sys.stderr, 'reconfigure', None)
+        if reconfigure:
+            reconfigure(encoding='utf-8')
     except:
-
         pass
 
 import json
@@ -272,7 +268,14 @@ print(f"Genre: {setting['genre']}")
 
 print(f"Vibes: {setting['vibes']}")
 
-print(f"Colors: {', '.join(setting['theme_color_associated'])}")
+colors = setting.get('theme_color_associated', ["grey", "blue"])
+if isinstance(colors, str):
+    colors_list = [colors]
+elif isinstance(colors, list):
+    colors_list = [str(c) for c in colors]
+else:
+    colors_list = [str(colors)]
+print(f"Colors: {', '.join(colors_list)}")
 
 print(f"\nEnvironment: {setting['environment_description'][:100]}...")
 

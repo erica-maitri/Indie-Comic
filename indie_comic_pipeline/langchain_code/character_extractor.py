@@ -9,23 +9,19 @@ import sys
 import os
 
 if sys.stdout.encoding != 'utf-8':
-
     try:
-
-        sys.stdout.reconfigure(encoding='utf-8')
-
+        reconfigure = getattr(sys.stdout, 'reconfigure', None)
+        if reconfigure:
+            reconfigure(encoding='utf-8')
     except:
-
         pass
 
 if sys.stderr.encoding != 'utf-8':
-
     try:
-
-        sys.stderr.reconfigure(encoding='utf-8')
-
+        reconfigure = getattr(sys.stderr, 'reconfigure', None)
+        if reconfigure:
+            reconfigure(encoding='utf-8')
     except:
-
         pass
 
 import json
