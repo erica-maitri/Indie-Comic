@@ -39,7 +39,7 @@ class ConsistencyChecker:
                 "enable_dinov2": False,  # Disable DINOv2 by default (too slow on T4)
                 "enable_ssim": True,
                 "enable_edge": True,
-                "enable_color": True,
+                "enable_color": False,
                 "enable_style": True,
                 "threshold": 0.55        # Slightly lower threshold for T4
             }
@@ -213,9 +213,16 @@ class ConsistencyChecker:
         if not os.path.exists(image_path):
             raise FileNotFoundError(f"Image not found at {image_path}")
             
-        img_cv = cv2.imread(image_path)
+        # Read file as bytes to handle Unicode paths on Windows safely
+        try:
+            with open(image_path, 'rb') as f:
+                file_bytes = np.frombuffer(f.read(), dtype=np.uint8)
+            img_cv = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        except Exception as e:
+            raise ValueError(f"Could not read image at {image_path}: {e}")
+            
         if img_cv is None:
-            raise ValueError(f"Could not read image at {image_path}")
+            raise ValueError(f"Could not decode image at {image_path}")
             
         hsv = cv2.cvtColor(img_cv, cv2.COLOR_BGR2HSV)
         hist = cv2.calcHist([hsv], [0, 1], None, [8, 8], [0, 180, 0, 256])
@@ -353,23 +360,26 @@ class ConsistencyChecker:
         # Build weighted sum based on what's available
         overall_score = 0.0
         
-        # Always include lightweight metrics
-        overall_score += color_score * 0.25
-        total_weight += 0.25
-        available_metrics += 1
-        
-        overall_score += ssim_score * 0.30
-        total_weight += 0.30
-        available_metrics += 1
-        
-        overall_score += style_score * 0.20
-        total_weight += 0.20
-        available_metrics += 1
-        
-        overall_score += edge_score * 0.15
-        total_weight += 0.15
-        available_metrics += 1
-        
+        if self.consistency_config.get("enable_color", True):
+            overall_score += color_score * 0.25
+            total_weight += 0.25
+            available_metrics += 1
+            
+        if self.consistency_config.get("enable_ssim", True):
+            overall_score += ssim_score * 0.30
+            total_weight += 0.30
+            available_metrics += 1
+            
+        if self.consistency_config.get("enable_style", True):
+            overall_score += style_score * 0.20
+            total_weight += 0.20
+            available_metrics += 1
+            
+        if self.consistency_config.get("enable_edge", True):
+            overall_score += edge_score * 0.15
+            total_weight += 0.15
+            available_metrics += 1
+            
         # Add heavy metrics if available
         if clip_img_score is not None:
             overall_score += clip_img_score * 0.10
@@ -392,7 +402,7 @@ class ConsistencyChecker:
         return {
             'consistent': overall_score >= threshold,
             'score': float(overall_score),
-            'color_score': float(color_score),
+            'color_score': float(color_score) if self.consistency_config.get("enable_color", True) else None,
             'struct_score': float(legacy_struct_score),
             'ssim_score': float(ssim_score),
             'edge_score': float(edge_score),

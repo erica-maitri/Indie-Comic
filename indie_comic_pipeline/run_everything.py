@@ -223,9 +223,9 @@ print("Choose the image generation pipeline model to use:")
 print("  1. SDXL Base Pipeline (Recommended for quality)")
 print("  2. Stable Diffusion v1.5 Pipeline (Faster, lower quality)")
 print("  3. SDXL + LoRA Pipeline (Best for manga/lineart style)")
-choice = input("Enter choice [1, 2, or 3, default is 3]: ").strip()
+choice = input("Enter choice [1, 2, or 3, default is 1]: ").strip()
 if not choice:
-    choice = "3"
+    choice = "1"
 
 # FIX: Add page range selection for legacy mode
 if not USING_STORY_WEAVER_MODE:

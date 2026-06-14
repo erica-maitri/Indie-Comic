@@ -431,7 +431,8 @@ if generated_paths:
                 print("-" * 50)
                 print(f"Panel {idx} vs Panel 1 Anchor ({basename}):")
                 print(f"   - Overall Score     : {res['score']:.2%}")
-                print(f"   - Color (HSV)       : {res['color_score']:.2%}")
+                if res['color_score'] is not None:
+                    print(f"   - Color (HSV)       : {res['color_score']:.2%}")
                 print(f"   - SSIM Structural   : {res['ssim_score']:.2%}")
                 print(f"   - Style (Gram)      : {res['style_score']:.2%}")
                 print(f"   - Edge Density      : {res['edge_score']:.2%}")

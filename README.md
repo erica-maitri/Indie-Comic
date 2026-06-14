@@ -150,7 +150,7 @@ drid/
                │ CONSISTENCY CHECKER │
                │                     │
                │  8 metrics:         │
-               │  HSV Color          │
+               │  HSV Color (Opt)    │
                │  SSIM               │
                │  Gram Style         │
                │  Edge Density       │
@@ -403,7 +403,7 @@ consistency_checker.py     ← All panels checked against reference image
 
 | Metric | Method | What It Checks |
 |--------|--------|---------------|
-| **HSV Color** | Histogram comparison (OpenCV) | Same color palette across panels |
+| **HSV Color (Opt)** | Histogram comparison (OpenCV) | Same color palette (Disabled by default to focus on art style) |
 | **SSIM** | Structural Similarity Index | Pixel-level structural similarity |
 | **Gram Matrix** | Neural style features (VGG-19) | Consistent artistic style / texture |
 | **Edge Density** | Canny edge detection | Line weight and density consistency |
@@ -747,7 +747,7 @@ python evaluate.py --compare story_finetuned.json story_base.json --all
 | **≥3 side characters enforced** | Comic panels feel cinematic with an ensemble. The LLM is permitted to invent bystanders if the scene is sparse, ensuring the minimum is always met. |
 | **Emotion shown through objects** | The Story-Weaver prompt explicitly forbids naming emotions. This forces the model to write `hands grip the countertop` rather than `she felt angry` — producing richer visual descriptions. |
 | **Recurring visual motif** | One motif (e.g. `a ceramic mug with a small chip`) appears in every panel, giving the comic a visual signature that aids style consistency without a reference image. |
-| **8-metric consistency check** | Single-metric checks (e.g. SSIM alone) are brittle. Combining color, structure, style, semantic, and feature-level metrics gives a robust consistency signal across different artistic styles. |
+| **8-metric consistency check** | Single-metric checks (e.g. SSIM alone) are brittle. Combining structure, style, semantic, and feature-level metrics (with optional color checks) gives a robust consistency signal across different artistic styles. |
 
 ---
 

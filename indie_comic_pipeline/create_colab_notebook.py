@@ -4,8 +4,26 @@ Generates 'indie_comic_pipeline.ipynb' and modular notebooks
 with T4-optimized settings and correct cell indices
 """
 
+import sys
 import json
 import os
+
+if sys.stdout.encoding != 'utf-8':
+    try:
+        reconfigure = getattr(sys.stdout, 'reconfigure', None)
+        if reconfigure:
+            reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
+if sys.stderr.encoding != 'utf-8':
+    try:
+        reconfigure = getattr(sys.stderr, 'reconfigure', None)
+        if reconfigure:
+            reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
 
 def build_notebook():
     """Build the master notebook with T4-optimized cells"""
@@ -215,7 +233,7 @@ def build_notebook():
             "GUIDANCE_SCALE = 7.5\n",
             "SEED           = 42\n",
             "OLLAMA_MODEL   = \"llama3.2\"\n",
-            "SELECTED_MODEL = 3      # 1=SDXL Base, 2=SD 1.5, 3=SDXL+LoRA\n",
+            "SELECTED_MODEL = 1      # 1=SDXL Base, 2=SD 1.5, 3=SDXL+LoRA\n",
             "\n",
             "import yaml, os\n",
             "\n",
@@ -249,7 +267,7 @@ def build_notebook():
             "    'enable_dinov2': False,\n",
             "    'enable_ssim': True,\n",
             "    'enable_edge': True,\n",
-            "    'enable_color': True,\n",
+            "    'enable_color': False,\n",
             "    'enable_style': True,\n",
             "    'threshold': 0.55\n",
             "}\n",

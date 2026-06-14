@@ -94,7 +94,7 @@ consistency:
   # Lightweight metrics - KEEP ENABLED
   enable_ssim: true      # Fast structural similarity
   enable_edge: true      # Fast edge detection
-  enable_color: true     # Fast histogram comparison
+  enable_color: false    # Fast histogram comparison
   enable_style: true     # Fast gram matrix calculation
   
   # Thresholds

@@ -9,10 +9,31 @@ from PIL import Image
 import re
 import argparse
 
+# Configure stdout/stderr to use UTF-8 if they aren't already, preventing UnicodeEncodeErrors on Windows
+if sys.stdout.encoding != 'utf-8':
+    try:
+        reconfigure = getattr(sys.stdout, 'reconfigure', None)
+        if reconfigure:
+            reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
+if sys.stderr.encoding != 'utf-8':
+    try:
+        reconfigure = getattr(sys.stderr, 'reconfigure', None)
+        if reconfigure:
+            reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from utils.config_helper import load_settings, get_output_path
 
-def compile_pdf(layout_style='sdxl_lora_grid'):
+def compile_pdf(layout_style='sdxl_lora_grid', visited=None):
+    if visited is None:
+        visited = set()
+    visited.add(layout_style)
+    
     settings = load_settings()
     comics_dir = settings.get("outputs", {}).get("comics_dir", "outputs/comics")
     
@@ -38,7 +59,7 @@ def compile_pdf(layout_style='sdxl_lora_grid'):
                 page_files.append((page_num, os.path.join(comics_dir, f)))
                 
     if not page_files:
-        print(f"\n⚠️ No page grid layouts found with style '{layout_style}'.")
+        print(f"\nNo page grid layouts found with style '{layout_style}'.")
         print("Available styles in output folder:")
         styles = set()
         for f in files:
@@ -51,16 +72,16 @@ def compile_pdf(layout_style='sdxl_lora_grid'):
             
         # Try fallback styles
         for fallback in ["grid", "sdxl_base_grid", "sd15_lora_grid", "doodle_grid"]:
-            if fallback != layout_style:
+            if fallback not in visited:
                 print(f"\nTrying fallback style: {fallback}...")
-                if compile_pdf(fallback):
+                if compile_pdf(fallback, visited):
                     return True
         return False
         
     # Sort pages numerically
     page_files.sort(key=lambda x: x[0])
     
-    print(f"\n✅ Found {len(page_files)} pages to compile:")
+    print(f"\nFound {len(page_files)} pages to compile:")
     for num, path in page_files:
         size_mb = os.path.getsize(path) / (1024 * 1024)
         print(f"  - Page {num}: {os.path.basename(path)} ({size_mb:.1f} MB)")
@@ -76,13 +97,13 @@ def compile_pdf(layout_style='sdxl_lora_grid'):
                 if img.mode != 'RGB':
                     img = img.convert('RGB')
                 images.append(img)
-                print(f"  ✓ Loaded page {num}")
+                print(f"  Loaded page {num}")
             except Exception as e:
-                print(f"  ✗ Failed to load page {num}: {e}")
+                print(f"  Failed to load page {num}: {e}")
                 failed.append(num)
                 
         if failed:
-            print(f"\n⚠️ Failed to load pages: {failed}")
+            print(f"\nFailed to load pages: {failed}")
             if not images:
                 return False
                 
@@ -106,7 +127,7 @@ def compile_pdf(layout_style='sdxl_lora_grid'):
             )
         
         pdf_size_mb = os.path.getsize(output_pdf) / (1024 * 1024)
-        print(f"\n✅ Comic PDF successfully compiled!")
+        print(f"\nComic PDF successfully compiled!")
         print(f"   File: {output_pdf}")
         print(f"   Size: {pdf_size_mb:.1f} MB")
         print(f"   Pages: {len(images)}")
@@ -124,5 +145,5 @@ if __name__ == "__main__":
     
     success = compile_pdf(args.style)
     if not success:
-        print("\n❌ PDF compilation failed.")
+        print("\nPDF compilation failed.")
         sys.exit(1)

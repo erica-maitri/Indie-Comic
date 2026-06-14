@@ -101,10 +101,9 @@ Module: [consistency_checker.py](file:///c:/Users/Dell/Downloads/drid/indie_comi
 * **Why Utilized:** Standard pixel-by-pixel comparisons (MSE) fail when a character changes poses or angles. We need a holistic suite of metrics assessing color, structure, style, and semantic meaning.
 * **How It Is Used:** It compares generated panels against a reference character profile using eight specific mathematical and neural techniques:
 
-1. **Color Consistency (HSV correlation):** 
-   * **Formula/Code:** Converts images to HSV space, calculates a 2D color histogram on Hue and Saturation (`cv2.calcHist([hsv], [0, 1]...)`), and computes correlation distance:
-     $$d(H_1, H_2) = \frac{\sum (H_1 - \bar{H_1})(H_2 - \bar{H_2})}{\sqrt{\sum(H_1 - \bar{H_1})^2 \sum(H_2 - \bar{H_2})^2}}$$
-   * **Utility:** Verifies that the colors (skin, clothing, environment) remain visually stable.
+1. **Color Consistency (HSV correlation - Optional, Disabled by Default):** 
+   * **Formula/Code:** Converts images to HSV space, calculates a 2D color histogram on Hue and Saturation (`cv2.calcHist([hsv], [0, 1]...)`), and computes correlation distance.
+   * **Utility:** Verifies color stability (can be toggled in settings, but is bypassed by default to prioritize pure art style evaluation).
 2. **SSIM (Structural Similarity Index):**
    * **Formula/Code:** Uses `scikit-image`'s structural similarity metric (luminance, contrast, and structure comparison) or a custom NumPy/OpenCV Gaussian fallback:
      $$SSIM(x,y) = \frac{(2\mu_x\mu_y + C_1)(2\sigma_{xy} + C_2)}{(\mu_x^2 + \mu_y^2 + C_1)(\sigma_x^2 + \sigma_y^2 + C_2)}$$
@@ -130,7 +129,7 @@ Module: [consistency_checker.py](file:///c:/Users/Dell/Downloads/drid/indie_comi
 8. **Grayscale Composition (Legacy structure):**
    * **Formula/Code:** Resizes grayscale thumbnails to $128 \times 128$ and calculates correlation coefficient.
 
-* **Dynamic Scoring Weights:** The overall consistency score combines the metrics dynamically. If CLIP and DINOv2 are installed, weights are: 20% DINOv2, 15% CLIP, 15% SSIM, 15% HSV Color, 15% Style Gram Matrix, and 20% Edge Density. If models are unavailable, weights shift gracefully to structural/color fallbacks.
+* **Dynamic Scoring Weights:** The overall consistency score combines the metrics dynamically. By default, with color checks disabled and without heavy models, weights are: 46.1% SSIM, 30.8% Style Gram Matrix, and 23.1% Edge Density. If color checks are enabled, weight is 25% HSV Color. If CLIP (10%) and DINOv2 (10%) are enabled, the weights shift dynamically to incorporate semantic and deep structural similarity checks.
 
 ---
 
@@ -342,7 +341,7 @@ graph TD
    * **Purpose**: Loads the heavy Stable Diffusion XL/1.5 models and IP-Adapter weights to render character references and panels.
    * **Action**: Upload `indie_comic_outputs.zip` in the Setup cell, run the generator cells, download the updated outputs zip, and disconnect.
 3. **Step 3: Character Consistency Verification (`consistency_checking.ipynb`)**
-   * **Purpose**: Compares HSV color histograms, SSIM structure, Gram matrix textures, and CLIP/DINOv2 features to evaluate drawing consistency.
+   * **Purpose**: Compares SSIM structure, Gram matrix textures (art style), edge density, and optional CLIP/DINOv2 features to evaluate drawing consistency (color checks are disabled by default to prioritize pure artistic styling).
    * **Action**: Upload the latest outputs zip, execute validation checks, and view results.
 4. **Step 4: Layout Grid Assembly & Doodles (`comic_strip_generation.ipynb`)**
    * **Purpose**: Compiles individual panel paths into 4-panel layouts and tests layout variations using a lightweight doodle generation.

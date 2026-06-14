@@ -1,5 +1,6 @@
 # Pure Python generated Testing Matrix File - Imports Layer
 import os
+import sys
 import time
 import torch
 import numpy as np
@@ -9,10 +10,34 @@ from transformers import CLIPProcessor, CLIPModel
 import cv2
 import gc
 
+# Configure stdout/stderr to use UTF-8 if they aren't already, preventing UnicodeEncodeErrors on Windows
+if sys.stdout.encoding != 'utf-8':
+    try:
+        reconfigure = getattr(sys.stdout, 'reconfigure', None)
+        if reconfigure:
+            reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
+if sys.stderr.encoding != 'utf-8':
+    try:
+        reconfigure = getattr(sys.stderr, 'reconfigure', None)
+        if reconfigure:
+            reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
 # Function to calculate Canny edge density (representing line-art line detail level)
 def compute_edge_density(image_path):
     try:
-        img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+        if not os.path.exists(image_path):
+            return 0.0
+        # Read file as bytes to handle Unicode paths on Windows safely
+        with open(image_path, 'rb') as f:
+            file_bytes = np.frombuffer(f.read(), dtype=np.uint8)
+        img = cv2.imdecode(file_bytes, cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            return 0.0
         edges = cv2.Canny(img, 50, 150)
         density = np.sum(edges > 0) / edges.size
         return round(density * 100, 2)
@@ -71,7 +96,7 @@ def run_stable_diffusion_v15():
     if sd15_device == "cuda" and not torch.cuda.is_available():
         sd15_device = "cpu"
         
-    print(f"\n⏳ Loading Stable Diffusion v1.5 Base Model ({sd15_config.get('name')}) into {sd15_device.upper()} Memory...")
+    print(f"\nLoading Stable Diffusion v1.5 Base Model ({sd15_config.get('name')}) into {sd15_device.upper()} Memory...")
     torch_dtype = torch.float16 if sd15_device == "cuda" else torch.float32
     
     if sd15_device == "cuda":
@@ -123,7 +148,7 @@ def run_stable_diffusion_v15_with_lora():
     if sd15_device == "cuda" and not torch.cuda.is_available():
         sd15_device = "cpu"
         
-    print(f"\n⏳ Loading Stable Diffusion v1.5 + LoRA into {sd15_device.upper()} Memory...")
+    print(f"\nLoading Stable Diffusion v1.5 + LoRA into {sd15_device.upper()} Memory...")
     torch_dtype = torch.float16 if sd15_device == "cuda" else torch.float32
     
     if sd15_device == "cuda":
@@ -186,7 +211,7 @@ def run_stable_diffusion_xl():
     if sdxl_device == "cuda" and not torch.cuda.is_available():
         sdxl_device = "cpu"
         
-    print(f"\n⏳ Loading Stable Diffusion XL Base Model ({sdxl_config.get('name')}) into {sdxl_device.upper()} Memory...")
+    print(f"\nLoading Stable Diffusion XL Base Model ({sdxl_config.get('name')}) into {sdxl_device.upper()} Memory...")
     torch_dtype = torch.float16 if sdxl_device == "cuda" else torch.float32
     
     if sdxl_device == "cuda":
@@ -252,7 +277,7 @@ def run_stable_diffusion_xl_only_lora():
     if sdxl_device == "cuda" and not torch.cuda.is_available():
         sdxl_device = "cpu"
         
-    print(f"\n⏳ Loading SDXL for ONLY LoRA Benchmark into {sdxl_device.upper()} Memory...")
+    print(f"\nLoading SDXL for ONLY LoRA Benchmark into {sdxl_device.upper()} Memory...")
     torch_dtype = torch.float16 if sdxl_device == "cuda" else torch.float32
     
     if sdxl_device == "cuda":
@@ -326,7 +351,7 @@ def run_stable_diffusion_xl_with_lora():
     if sdxl_device == "cuda" and not torch.cuda.is_available():
         sdxl_device = "cpu"
         
-    print(f"\n⏳ Loading Stable Diffusion XL + LoRA into {sdxl_device.upper()} Memory...")
+    print(f"\nLoading Stable Diffusion XL + LoRA into {sdxl_device.upper()} Memory...")
     torch_dtype = torch.float16 if sdxl_device == "cuda" else torch.float32
     
     if sdxl_device == "cuda":
@@ -475,12 +500,12 @@ if __name__ == "__main__":
     sdxl_lora_edges = compute_edge_density(sdxl_lora_path)
     
     # 6. Printing the exact dynamic values derived from formulas
-    print("\n" + "═"*115)
+    print("\n" + "="*115)
     print(f"{'Generative Model Configuration':<32} | {'CLIP Score':<10} | {'FID Score':<10} | {'Inference Time':<16} | {'Peak VRAM':<12} | {'Edge Density':<12}")
-    print("═"*115)
+    print("="*115)
     print(f"{'Stable Diffusion v1.5':<32} | {sd15_clip:<10} | {sd15_fid:<10} | {str(sd15_inf_time)+' sec':<16} | {str(sd15_vram)+' MB':<12} | {str(sd15_edges)+'%':<12}")
     print(f"{'SD 1.5 + LoRA':<32} | {sd15_lora_clip:<10} | {sd15_lora_fid:<10} | {str(sd15_lora_inf_time)+' sec':<16} | {str(sd15_lora_vram)+' MB':<12} | {str(sd15_lora_edges)+'%':<12}")
     print(f"{'Stable Diffusion XL (Base)':<32} | {sdxl_clip:<10} | {sdxl_fid:<10} | {str(sdxl_inf_time)+' sec':<16} | {str(sdxl_vram)+' MB':<12} | {str(sdxl_edges)+'%':<12}")
     print(f"{'Only LoRA (SDXL + No Prompts)':<32} | {only_lora_clip:<10} | {only_lora_fid:<10} | {str(only_lora_inf_time)+' sec':<16} | {str(only_lora_vram)+' MB':<12} | {str(only_lora_edges)+'%':<12}")
     print(f"{'SDXL + LoRA (With Prompts)':<32} | {sdxl_lora_clip:<10} | {sdxl_lora_fid:<10} | {str(sdxl_lora_inf_time)+' sec':<16} | {str(sdxl_lora_vram)+' MB':<12} | {str(sdxl_lora_edges)+'%':<12}")
-    print("═"*115)
+    print("="*115)

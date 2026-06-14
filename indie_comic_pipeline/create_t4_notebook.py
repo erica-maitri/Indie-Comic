@@ -4,8 +4,26 @@ Generates a single, complete notebook optimized for T4 GPU execution
 All models cache between cells for maximum speed
 """
 
+import sys
 import json
 import os
+
+if sys.stdout.encoding != 'utf-8':
+    try:
+        reconfigure = getattr(sys.stdout, 'reconfigure', None)
+        if reconfigure:
+            reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
+if sys.stderr.encoding != 'utf-8':
+    try:
+        reconfigure = getattr(sys.stderr, 'reconfigure', None)
+        if reconfigure:
+            reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
 
 def create_t4_optimized_notebook():
     """Generate a single comprehensive notebook for T4 GPU"""
@@ -59,7 +77,7 @@ def create_t4_optimized_notebook():
             "CHARACTER_NAME = \"Spider-Man\"      # Any character (Wolverine, Batman, etc.)\n",
             "STORY_WORLD = \"Cyberpunk 2077\"     # Any setting (Harry Potter, Wuthering Heights, etc.)\n",
             "NUM_PAGES = 5                      # Pages to generate (1-10)\n",
-            "USE_LORA = True                    # True = SDXL+LoRA (best), False = SDXL Base\n",
+            "USE_LORA = False                   # True = SDXL+LoRA (best), False = SDXL Base\n",
             "\n",
             "# Advanced settings (usually leave as is)\n",
             "IMG_WIDTH = 768                    # T4 optimized (512-1024)\n",
@@ -197,7 +215,7 @@ def create_t4_optimized_notebook():
             "    'enable_dinov2': False,\n",
             "    'enable_ssim': True,\n",
             "    'enable_edge': True,\n",
-            "    'enable_color': True,\n",
+            "    'enable_color': False,\n",
             "    'enable_style': True,\n",
             "    'threshold': 0.55\n",
             "}\n",
