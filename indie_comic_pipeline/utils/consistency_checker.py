@@ -23,7 +23,6 @@ class ConsistencyChecker:
         self.reference_features = None
         self.clip_model = None
         self.clip_processor = None
-        self.device = None
         # Tracks whether reference was set from a character sheet or the first panel
         self.reference_mode = "character_sheet"  # "character_sheet" | "panel"
         
@@ -41,8 +40,11 @@ class ConsistencyChecker:
                 "enable_edge": True,
                 "enable_color": False,
                 "enable_style": True,
+                "device": "cpu",         # CPU by default to save VRAM
                 "threshold": 0.55        # Slightly lower threshold for T4
             }
+            
+        self.device = self.consistency_config.get("device", "cpu")
         
         # Print which metrics are enabled
         print(f"[ConsistencyChecker] Metrics enabled:")
@@ -131,22 +133,17 @@ class ConsistencyChecker:
         return float(aesthetic_val)
 
     def compute_clip_image_similarity(self, img1_path, img2_path):
-        """Compute visual semantic similarity using CLIP embeddings (CACHED for T4 GPU)"""
+        """Compute visual semantic similarity using CLIP embeddings (runs on CPU/GPU based on config)"""
         global _CLIP_MODEL, _CLIP_PROCESSOR
         
-        # Only run on CUDA, skip on CPU to save time
-        if not torch.cuda.is_available():
-            return None
-            
         # Check if CLIP is enabled in config
         if not self.consistency_config.get("enable_clip", False):
             return None
             
         # Load once globally, reuse forever
-        self.device = "cuda"
         if _CLIP_MODEL is None or _CLIP_PROCESSOR is None:
             from transformers import CLIPProcessor, CLIPModel
-            print("  [i] Loading CLIP model (once, cached)...")
+            print(f"  [i] Loading CLIP model on {self.device} (once, cached)...")
             _CLIP_MODEL = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(self.device)
             _CLIP_PROCESSOR = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
             print("  [✓] CLIP model loaded and cached")
@@ -166,31 +163,28 @@ class ConsistencyChecker:
         # Cosine similarity
         similarity = torch.nn.functional.cosine_similarity(features[0:1], features[1:2]).item()
         
-        # Offload to CPU and clear CUDA cache to save VRAM
-        _CLIP_MODEL = _CLIP_MODEL.to("cpu")
-        import gc
-        gc.collect()
-        torch.cuda.empty_cache()
+        # Offload if we are using CUDA to free VRAM immediately
+        if self.device == "cuda":
+            _CLIP_MODEL = _CLIP_MODEL.to("cpu")
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            import gc
+            gc.collect()
         
         return max(0.0, min(1.0, similarity))
 
     def compute_dinov2_similarity(self, img1_path, img2_path):
-        """Compute visual structure similarity using DINOv2 features (CACHED for T4 GPU)"""
+        """Compute visual structure similarity using DINOv2 features (runs on CPU/GPU based on config)"""
         global _DINOV2_MODEL, _DINOV2_PROCESSOR
         
-        # Only run on CUDA, skip on CPU to save time
-        if not torch.cuda.is_available():
-            return None
-            
         # Check if DINOv2 is enabled in config
         if not self.consistency_config.get("enable_dinov2", False):
             return None
             
         # Load once globally, reuse forever
-        self.device = "cuda"
         if _DINOV2_MODEL is None or _DINOV2_PROCESSOR is None:
             from transformers import AutoImageProcessor, AutoModel
-            print("  [i] Loading DINOv2 model (once, cached)...")
+            print(f"  [i] Loading DINOv2 model on {self.device} (once, cached)...")
             _DINOV2_PROCESSOR = AutoImageProcessor.from_pretrained("facebook/dinov2-base")
             _DINOV2_MODEL = AutoModel.from_pretrained("facebook/dinov2-base").to(self.device)
             print("  [✓] DINOv2 model loaded and cached")
@@ -217,11 +211,13 @@ class ConsistencyChecker:
             
             similarity = torch.nn.functional.cosine_similarity(features1, features2).item()
             
-        # Offload to CPU and clear CUDA cache to save VRAM
-        _DINOV2_MODEL = _DINOV2_MODEL.to("cpu")
-        import gc
-        gc.collect()
-        torch.cuda.empty_cache()
+        # Offload if we are using CUDA to free VRAM immediately
+        if self.device == "cuda":
+            _DINOV2_MODEL = _DINOV2_MODEL.to("cpu")
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            import gc
+            gc.collect()
         
         return max(0.0, min(1.0, similarity))
 

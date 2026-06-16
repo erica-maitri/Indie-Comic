@@ -199,6 +199,100 @@ else:
         print(f"⚠️ Warning: Failed to reset settings.yaml: {e}")
 
 # ============================================================================
+# COMIC STYLE SELECTION
+# ============================================================================
+
+print("\n" + "=" * 70)
+print("COMIC STYLE SELECTION")
+print("=" * 70)
+print("Choose the comic art style:")
+print("  1. Indie Comic Style (Clean minimalist line art, flat color palette, cel-shaded)")
+print("  2. American Comic Style (Bold ink outlines, dramatic chiaroscuro shading, vibrant colors)")
+style_choice = input("\nEnter choice [1 or 2, default is 1]: ").strip()
+
+if style_choice == "2":
+    print("\nApplying American Comic Style configurations to settings.yaml...")
+    try:
+        import yaml
+        settings_path = os.path.join(PIPELINE_ROOT, "config", "settings.yaml")
+        with open(settings_path, "r", encoding="utf-8") as f:
+            settings = yaml.safe_load(f)
+            
+        settings['style'] = {
+            'name': "American Comic",
+            'positive_terms': [
+                "classic american comic book style",
+                "bold black ink outlines",
+                "detailed cross-hatching",
+                "dramatic chiaroscuro lighting",
+                "deep shadows",
+                "high contrast illustration",
+                "vibrant colors"
+            ],
+            'negative_terms': [
+                "flat color palette",
+                "clean minimalist line art",
+                "cel-shaded with no gradients",
+                "pastel colors",
+                "anime",
+                "manga",
+                "3D render",
+                "photorealistic"
+            ]
+        }
+        
+        # Adjust consistency metrics for dynamic lighting/shading
+        settings['consistency'] = settings.get('consistency', {})
+        settings['consistency']['enable_color'] = False  # Disabled: dramatic shading alters color histograms
+        settings['consistency']['threshold'] = 0.52      # Slightly lower threshold due to shading variations
+        
+        # If extreme quality is not explicitly turned on, still keep clip/dinov2 disabled to avoid OOM
+        # but if it is enabled, we rely heavily on them.
+        
+        with open(settings_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(settings, f)
+        print("✅ settings.yaml successfully updated for American Comic Style.")
+    except Exception as e:
+        print(f"⚠️ Warning: Failed to update settings.yaml: {e}")
+else:
+    print("\nApplying Indie Comic Style configurations to settings.yaml...")
+    try:
+        import yaml
+        settings_path = os.path.join(PIPELINE_ROOT, "config", "settings.yaml")
+        with open(settings_path, "r", encoding="utf-8") as f:
+            settings = yaml.safe_load(f)
+            
+        settings['style'] = {
+            'name': "Clean Indie Comic",
+            'positive_terms': [
+                "clean minimalist line art",
+                "flat color palette",
+                "crisp continuous outlines",
+                "cel-shaded with no gradients",
+                "hand-drawn webcomic illustration"
+            ],
+            'negative_terms': [
+                "dramatic shadows",
+                "cross-hatching",
+                "gradients",
+                "heavy shading",
+                "3D render",
+                "photorealistic"
+            ]
+        }
+        
+        # Adjust consistency metrics for flat colors
+        settings['consistency'] = settings.get('consistency', {})
+        settings['consistency']['enable_color'] = True   # Enabled: color histograms are highly consistent in flat style
+        settings['consistency']['threshold'] = 0.60      # Stricter threshold since flat style is more uniform
+        
+        with open(settings_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(settings, f)
+        print("✅ settings.yaml successfully updated for Indie Comic Style.")
+    except Exception as e:
+        print(f"⚠️ Warning: Failed to update settings.yaml: {e}")
+
+# ============================================================================
 # MODE SELECTION: Story-Weaver Direct vs LangChain Extraction
 # ============================================================================
 
