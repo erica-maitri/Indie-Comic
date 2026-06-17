@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ultimate AI Comic Generator</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #121212; color: #ffffff; padding: 20px; }
+        .container { max-width: 1000px; margin: 0 auto; background-color: #1e1e1e; padding: 30px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        h1 { color: #bb86fc; text-align: center; }
+        .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+        label { display: block; margin-bottom: 5px; color: #cf6679; }
+        input, select { width: 100%; padding: 10px; background-color: #2d2d2d; color: white; border: 1px solid #333; border-radius: 5px; }
+        .full-width { grid-column: span 2; }
+        button { grid-column: span 2; background-color: #bb86fc; color: #121212; padding: 15px; border: none; border-radius: 5px; font-size: 16px; font-weight: bold; cursor: pointer; transition: background-color 0.2s; }
+        button:hover { background-color: #9965f4; }
+        button:disabled { background-color: #555; cursor: not-allowed; }
+        .output-container { text-align: center; margin-top: 30px; min-height: 300px; border: 2px dashed #333; display: flex; align-items: center; justify-content: center; border-radius: 5px; }
+        img { max-width: 100%; border-radius: 5px; }
+        .feedback-box { display: none; margin-top: 20px; padding: 20px; background-color: #2d2d2d; border-radius: 5px; }
+        .stars { font-size: 24px; cursor: pointer; color: #555; }
+        .stars span:hover, .stars span.active { color: #f1c40f; }
+        #loading { display: none; color: #bb86fc; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Ultimate AI Comic Generator</h1>
+        
+        <div class="controls">
+            <div>
+                <label>Character</label>
+                <input type="text" id="character" value="Spider-Man">
+            </div>
+            <div>
+                <label>World / Setting</label>
+                <input type="text" id="world" value="Cyberpunk 2077">
+            </div>
+            <div class="full-width">
+                <label>Story Prompt</label>
+                <input type="text" id="prompt" value="A superhero fighting evil in a futuristic city">
+            </div>
+            <div class="full-width">
+                <label>Style</label>
+                <select id="style">
+                    <option value="manga">Manga</option>
+                    <option value="western">Western Comic</option>
+                    <option value="noir">Film Noir</option>
+                    <option value="watercolor">Watercolor</option>
+                    <option value="retro">Retro Vintage</option>
+                </select>
+            </div>
+            <button id="generateBtn" onclick="generateComic()">Generate Comic Page</button>
+        </div>
+
+        <div class="output-container" id="output">
+            <span id="loading">Generating your comic page... this may take a minute! 🚀</span>
+            <img id="comicImage" style="display:none;">
+        </div>
+
+        <div class="feedback-box" id="feedbackBox">
+            <h3>How was this generation?</h3>
+            <div class="stars" id="starContainer">
+                <span data-value="1">★</span><span data-value="2">★</span><span data-value="3">★</span><span data-value="4">★</span><span data-value="5">★</span>
+            </div>
+            <br>
+            <input type="text" id="comment" placeholder="What went well? What needs work?">
+            <button style="margin-top:10px; width:150px; padding:10px;" onclick="submitFeedback()">Submit Feedback</button>
+        </div>
+    </div>
+
+    <script>
+        let currentFeedbackUrl = '';
+        let currentRating = 0;
+
+        document.querySelectorAll('.stars span').forEach(star => {
+            star.addEventListener('click', (e) => {
+                currentRating = e.target.getAttribute('data-value');
+                document.querySelectorAll('.stars span').forEach(s => s.classList.remove('active'));
+                for(let i=0; i<currentRating; i++) {
+                    document.querySelectorAll('.stars span')[i].classList.add('active');
+                }
+            });
+        });
+
+        async function generateComic() {
+            const btn = document.getElementById('generateBtn');
+            const loading = document.getElementById('loading');
+            const img = document.getElementById('comicImage');
+            const feedbackBox = document.getElementById('feedbackBox');
+            
+            btn.disabled = true;
+            loading.style.display = 'block';
+            img.style.display = 'none';
+            feedbackBox.style.display = 'none';
+
+            const character = encodeURIComponent(document.getElementById('character').value);
+            const world = encodeURIComponent(document.getElementById('world').value);
+            const prompt = encodeURIComponent(document.getElementById('prompt').value);
+            const style = encodeURIComponent(document.getElementById('style').value);
+
+            try {
+                const response = await fetch(`/generate?character=${character}&world=${world}&prompt=${prompt}&style=${style}`);
+                const data = await response.json();
+
+                if(data.error) {
+                    alert('Error: ' + data.error);
+                } else if(data.image) {
+                    img.src = data.image;
+                    img.style.display = 'block';
+                    currentFeedbackUrl = data.feedback_url;
+                    feedbackBox.style.display = 'block';
+                }
+            } catch (err) {
+                alert('Generation failed. Ensure backend is running.');
+            }
+
+            loading.style.display = 'none';
+            btn.disabled = false;
+        }
+
+        async function submitFeedback() {
+            if(!currentRating) {
+                alert('Please select a star rating!');
+                return;
+            }
+            
+            const comment = document.getElementById('comment').value;
+            try {
+                await fetch(currentFeedbackUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rating: parseInt(currentRating), comment: comment })
+                });
+                alert('Feedback submitted! Thanks for helping the model learn.');
+                document.getElementById('feedbackBox').style.display = 'none';
+            } catch(e) {
+                alert('Failed to submit feedback.');
+            }
+        }
+    </script>
+</body>
+</html>
