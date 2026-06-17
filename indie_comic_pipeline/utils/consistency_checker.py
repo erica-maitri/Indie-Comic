@@ -34,14 +34,14 @@ class ConsistencyChecker:
         except:
             # Default to fast settings for T4 GPU
             self.consistency_config = {
-                "enable_clip": False,    # Disable CLIP by default (too slow on T4)
-                "enable_dinov2": False,  # Disable DINOv2 by default (too slow on T4)
+                "enable_clip": True,     # Enable CLIP based on methodology
+                "enable_dinov2": True,   # Enable DINOv2 based on methodology
                 "enable_ssim": True,
                 "enable_edge": True,
-                "enable_color": False,
+                "enable_color": True,    # Ensure color is enabled
                 "enable_style": True,
                 "device": "cpu",         # CPU by default to save VRAM
-                "threshold": 0.55        # Slightly lower threshold for T4
+                "threshold": 0.55        # Methodology threshold
             }
             
         self.device = self.consistency_config.get("device", "cpu")
@@ -395,13 +395,13 @@ class ConsistencyChecker:
             
         # Add heavy metrics if available
         if clip_img_score is not None:
-            overall_score += clip_img_score * 0.10
-            total_weight += 0.10
+            overall_score += clip_img_score * 0.05
+            total_weight += 0.05
             available_metrics += 1
             
         if dinov2_score is not None:
-            overall_score += dinov2_score * 0.10
-            total_weight += 0.10
+            overall_score += dinov2_score * 0.05
+            total_weight += 0.05
             available_metrics += 1
         
         # Normalize by total weight

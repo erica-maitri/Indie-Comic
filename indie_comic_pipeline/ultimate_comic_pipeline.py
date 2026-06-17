@@ -5,6 +5,7 @@ Version: 2.0.0
 """
 
 import os
+import sys
 import json
 import time
 import torch
@@ -12,6 +13,14 @@ import gc
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Tuple
 from enum import Enum
+
+# Force UTF-8 encoding for Windows console to support emojis
+if hasattr(sys.stdout, 'encoding') and sys.stdout.encoding != 'utf-8':
+    try:
+        if hasattr(sys.stdout, 'reconfigure'):
+            sys.stdout.reconfigure(encoding='utf-8')  # type: ignore
+    except Exception:
+        pass
 
 # ============================================================================
 # CONFIGURATION
@@ -37,8 +46,8 @@ class ComicConfig:
     
     # Consistency settings
     consistency_threshold: float = 0.55
-    enable_clip: bool = False  # Disable for T4 speed
-    enable_dinov2: bool = False
+    enable_clip: bool = True  # Methodology dictates 5% weight
+    enable_dinov2: bool = True # Methodology dictates 5% weight
     enable_ssim: bool = True
     enable_edge: bool = True
     enable_color: bool = True
@@ -51,9 +60,9 @@ class ComicConfig:
     enable_memory_management: bool = True
     
     # Quality metrics
-    enable_fid: bool = False  # Too slow on T4
-    enable_bleu: bool = False
-    enable_iou: bool = False
+    enable_fid: bool = True  # Enable for methodology metrics run
+    enable_bleu: bool = True # Enable for methodology metrics run
+    enable_iou: bool = True  # Enable for methodology metrics run
 
 # ============================================================================
 # STYLE MANAGER
@@ -119,14 +128,14 @@ class SpeechBubbleOptimizer:
     def _load_models(self):
         """Load YOLO model for object detection"""
         try:
-            from ultralytics import YOLO
+            from ultralytics import YOLO  # type: ignore
             self.yolo_model = YOLO('yolov8n.pt')
             print("[✓] YOLO model loaded")
         except:
             print("[!] YOLO not available - using fallback")
             self.yolo_model = None
     
-    def optimize_placement(self, panel_image, dialogue: str, speaker_position: Tuple[int, int] = None):
+    def optimize_placement(self, panel_image, dialogue: str, speaker_position: Optional[Tuple[int, int]] = None):
         """
         Find optimal speech bubble placement
         
@@ -649,7 +658,7 @@ class PanelGenerator:
                        prompt: str,
                        emotion: str = 'neutral',
                        panel_num: int = 1,
-                       previous_panels: List = None) -> Dict:
+                       previous_panels: Optional[List] = None) -> Dict:
         """
         Generate a single comic panel
         
@@ -686,7 +695,7 @@ class PanelGenerator:
         # 6. Optimize speech bubble placement
         speaker_pos = (image.width // 2, image.height // 2)  # Default center
         bbox = self.speech_optimizer.optimize_placement(image, dialogue, speaker_pos)
-        image_with_bubble = self.speech_optimizer.render_bubble(image, dialogue, bbox)
+        image_with_bubble = self.speech_optimizer.render_bubble(image, dialogue, bbox)  # type: ignore
         
         # 7. Validate emotional alignment
         is_aligned, alignment_score = self.emotion_validator.validate_alignment(
@@ -770,7 +779,7 @@ class PanelGenerator:
             os.unlink(ref_path)
             os.unlink(new_path)
             
-            return result['score']
+            return float(result.get('score', 0.5))  # type: ignore
         except:
             return 0.5  # Default if checker not available
 
@@ -789,7 +798,7 @@ class PageGenerator:
     def generate_page(self, 
                       story_prompt: str,
                       page_num: int = 1,
-                      emotions: List[str] = None) -> Dict:
+                      emotions: Optional[List[str]] = None) -> Dict:
         """
         Generate a complete page with 4 panels
         
@@ -870,7 +879,7 @@ class UltimateComicGenerator:
     Master class that orchestrates the entire comic generation pipeline
     """
     
-    def __init__(self, config: ComicConfig = None):
+    def __init__(self, config: Optional[ComicConfig] = None):
         if config is None:
             config = ComicConfig()
         self.config = config
