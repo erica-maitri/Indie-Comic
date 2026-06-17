@@ -7,7 +7,30 @@ def create_ultimate_notebook():
     cells = [
         nbf.v4.new_markdown_cell("# 🎨 Ultimate AI Comic Generator (Phase 3 & 4)\n\nThis notebook runs the new Master Pipeline class, bypassing the old fragmented scripts. It includes the quantitative metrics, audio TTS, CBR/CBZ exporting, and the unified style manager!"),
         
-        nbf.v4.new_markdown_cell("## 📦 Step 1: Install Dependencies"),
+        nbf.v4.new_markdown_cell("## 📁 Step 1: Clone Repository & Setup (Colab Only)\nThis block detects if you are in Google Colab and downloads the repository automatically."),
+        nbf.v4.new_code_cell("""import os, subprocess
+
+try:
+    from google.colab import files
+    IN_COLAB = True
+except ImportError:
+    IN_COLAB = False
+
+if IN_COLAB:
+    REPO_DIR = "/content/indie_comic_pipeline"
+    if not os.path.exists(REPO_DIR):
+        print("Cloning repository in Colab...")
+        subprocess.run(["git", "clone", "--depth", "1", "https://github.com/Cyberpunk-San/Indie-Comic.git", REPO_DIR], check=True)
+    os.chdir(REPO_DIR)
+else:
+    # If running locally, make sure we are in the right folder
+    cwd = os.getcwd()
+    if os.path.basename(cwd) != "indie_comic_pipeline" and os.path.exists(os.path.join(cwd, "indie_comic_pipeline")):
+        os.chdir(os.path.join(cwd, "indie_comic_pipeline"))
+
+print(f"✅ Working directory set to: {os.getcwd()}")"""),
+        
+        nbf.v4.new_markdown_cell("## 📦 Step 2: Install Dependencies"),
         nbf.v4.new_code_cell("!pip install -r requirements.txt"),
         
         nbf.v4.new_markdown_cell("## ⚙️ Step 2: Configuration\nDefine your character, world, and the visual style."),
