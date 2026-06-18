@@ -1,12 +1,14 @@
-# 🎨 Ultimate AI Indie Comic Generator: A Multi-Modal, Emotion-Aware Pipeline
+# 🎨 Ultimate AI Indie Comic Generator
 
 A comprehensive, production-ready, local generative AI pipeline designed for academic research and high-fidelity comic generation. This system takes a character and setting, extracts psychological parameters via a local LLM, maps dialogue to facial expressions, generates consistent panels using SDXL and LoRA, dynamically places speech bubbles using YOLOv8 spatial collision detection, evaluates structural integrity using quantitative metrics (FID, BLEU, IoU), and packages the final result with Text-to-Speech (TTS) audio.
 
+> **See the [Root README](../README.md) for the full project documentation** including Story-Weaver, installation, architecture diagrams, and configuration reference.
+
 ---
 
-## 🏛️ Experimental Research Flow (System Architecture)
+## 🏛️ Experimental Research Flow
 
-The core scientific methodology of this pipeline is built on an iterative experimental loop designed to empirically solve the problem of generative AI temporal inconsistency.
+The core scientific methodology is built on an iterative experimental loop designed to empirically solve the problem of generative AI temporal inconsistency.
 
 ```mermaid
 graph TD
@@ -25,85 +27,229 @@ graph TD
 
 ---
 
+## 📁 Directory Structure
+
+```text
+indie_comic_pipeline/
+│
+│── Core Pipeline ─────────────────────────────────────────────
+├── ultimate_comic_pipeline.py      # Master engine: 10 classes, 700+ lines
+│                                   #   ComicConfig, StyleManager, NarrativeMemory,
+│                                   #   EmotionValidator, SpeechBubbleOptimizer,
+│                                   #   QualityMetrics, ModelEnsemble, PanelGenerator,
+│                                   #   PageGenerator, UltimateComicGenerator
+├── run_10_panel_pipeline.py        # Production 10-panel sequential generator
+├── generate_doodle_panels.py       # Quick 8-panel test generator (T4 optimized)
+├── compile_comic_pdf.py            # Assembles page grids into final PDF
+├── comic_exporter.py               # Export to CBZ / CBR / HTML web comic
+├── audio_integration.py            # TTS audio dialogue via gTTS
+├── model_comparator.py             # A/B model testing (FID, CLIP, timing)
+├── incremental_learner.py          # RLHF feedback collection & prompt learning
+│
+│── Environment & Config ──────────────────────────────────────
+├── colab_setup.py                  # Universal Colab/Jupyter bootstrap
+├── install_all.py                  # One-click dependency installer
+├── generate_research_notebooks.py  # Generates 6 research notebooks
+├── requirements.txt                # Full pinned dependencies
+├── requirements_colab.txt          # Slim Colab-compatible dependencies
+├── config/
+│   ├── settings.yaml               # All pipeline settings
+│   └── model_paths.yaml            # HuggingFace model paths
+│
+│── LangChain Code ────────────────────────────────────────────
+├── langchain_code/
+│   ├── story_weaver_enricher.py    # Reference-free cast enrichment (Mode 0)
+│   ├── character_extractor.py      # Character personality parser (Mode 1)
+│   ├── story_extractor.py          # Story setting parser (Mode 1)
+│   ├── fusion_engine.py            # Crossover storyboard builder (Mode 1)
+│   ├── emotion_recognition_engine.py  # Per-panel expression mapper
+│   └── run_full_pipeline.py        # Sequential LangChain runner
+│
+│── Render Backends ───────────────────────────────────────────
+├── sdxl_code/                      # SDXL Base (1024×1024, ~8-10 GB VRAM)
+├── lora_code/                      # SDXL + LoRA (1024×1024, best quality)
+├── sd15_code/                      # SD 1.5 (512×512, ~4-6 GB VRAM)
+│   └── Each contains: generate_character.py, generate_components.py,
+│       generate_panels.py, run_*_pipeline.py
+│
+│── Utilities ─────────────────────────────────────────────────
+├── utils/
+│   ├── bridge_weaver.py            # Story-Weaver JSON → pipeline converter
+│   ├── consistency_checker.py      # 8-metric visual consistency engine
+│   ├── config_helper.py            # Settings loader + path resolver
+│   ├── image_utils.py              # Strip/grid layout composer
+│   └── prompt_optimizer.py         # SD prompt builder & deduplication
+│
+│── Evaluation & Benchmarking ─────────────────────────────────
+├── matrix_evaluation_zone/
+│   ├── model_matrix_bench.py       # 5-config benchmark suite
+│   └── storyboard_speed_bench.py   # 8-panel speed benchmark
+│
+│── Web Interface ─────────────────────────────────────────────
+├── web_interface/
+│   ├── app.py                      # Flask server (port 5000)
+│   └── templates/comic_generator.html
+│
+│── Research Notebooks ────────────────────────────────────────
+├── 01_Metrics_Build_and_Setup.ipynb
+├── 02_Initial_Generation_and_Consistency_Check.ipynb
+├── 03_First_Changes_and_Refinement.ipynb
+├── 04_Apply_IP_Adapter.ipynb
+├── 05_Final_Changes_and_Spatial_Layout.ipynb
+├── 06_Multimedia_Output_and_Export.ipynb
+│
+│── Output ────────────────────────────────────────────────────
+└── outputs/
+    ├── fusion/          # Generated JSON storyboards
+    ├── characters/      # Character reference sheets
+    ├── comics/          # Panels, strips, grids, PDFs
+    ├── exports/         # CBZ / CBR / HTML exports
+    ├── audio/           # TTS dialogue MP3 files
+    ├── production_run/  # 10-panel production output
+    └── comparison/      # Model A/B test reports
+```
+
+---
+
 ## 🧠 Core Experimental Phases
 
-The pipeline has been rigorously architected to follow the exact experimental flow outlined above, supporting objective academic evaluation.
-
 ### Phase 1: Metrics Build
-Before rendering begins, the pipeline establishes a strict quantitative evaluation suite to benchmark success:
-* **Fréchet Inception Distance (FID):** Uses `torchmetrics` to evaluate the variance between generated features against ground-truth style references. 
-* **BLEU Score (Bilingual Evaluation Understudy):** Measures how closely the generated visual prompt matches the ideal storyboard instruction.
-* **Mathematical Consistency Suite:** Incorporates Structural Similarity Index (SSIM), Art Style Gram Matrix evaluations, and Canny Edge Density parameters.
+Establishes a strict quantitative evaluation suite to benchmark success:
+* **Fréchet Inception Distance (FID):** Uses `torchmetrics` to evaluate the variance between generated features against ground-truth style references.
+* **BLEU Score:** Measures how closely the generated visual prompt matches the ideal storyboard instruction.
+* **Mathematical Consistency Suite:** SSIM, Art Style Gram Matrix evaluations, and Canny Edge Density parameters.
 
 ### Phase 2: Check Consistency
 * **Baseline Execution:** The pipeline executes an initial visual pass using the `UltimateComicGenerator` without advanced structural locks.
-* **EmotionValidator:** Uses a local LLM (Llama 3.2 via Ollama) to analyze the generated visual prompt and cross-reference it with the dialogue text.
-* **Evaluation:** The generated panels are pushed through the consistency checker to mathematically prove structural deviations or "emotion amnesia".
+* **EmotionValidator:** Uses a local LLM (Llama 3.2 via Ollama) to cross-reference generated visuals with dialogue text.
+* **Evaluation:** Generated panels are pushed through the 8-metric consistency checker to mathematically prove structural deviations or "emotion amnesia".
 
 ### Phase 3: Initial Changes
-* **Feedback Loop (`IncrementalLearner`):** Based on the consistency failures identified in Phase 2, the pipeline adjusts prompt weighting. It dynamically refines negative prompts or shifts LoRA weights to attempt software-level correction based on aggregated human/metric preferences.
+* **Feedback Loop (`IncrementalLearner`):** Based on consistency failures from Phase 2, the pipeline adjusts prompt weighting. Dynamically refines negative prompts or shifts LoRA weights based on aggregated human/metric preferences.
+* **Prompt Refinement:** Uses `log_feedback()` to record ratings and extract patterns from high-rated outputs.
 
 ### Phase 4: Apply IP-Adapter
-* **Structural Lock-In:** To mathematically resolve the inconsistency identified in Phase 2, the pipeline introduces the **IP-Adapter** (Image Prompt Adapter). 
-* **Reference Conditioning:** A high-quality anchor image of the protagonist is passed through the IP-Adapter's Cross-Attention layers. This physically forces the SDXL diffusion process to preserve facial contours, identity, and clothing cues across wildly different poses and expressions.
+* **Structural Lock-In:** Introduces the **IP-Adapter** (Image Prompt Adapter) to resolve inconsistency.
+* **Reference Conditioning:** A high-quality anchor image is passed through IP-Adapter's Cross-Attention layers to force facial contour, identity, and clothing preservation across different poses and expressions.
 
 ### Phase 5: Final Changes & Spatial Layout
-* **Collision Detection (`SpeechBubbleOptimizer`):** With the character's facial consistency now mathematically locked by the IP-Adapter, the pipeline resolves spatial occlusion.
-* **YOLOv8 Integration:** Identifies bounding boxes for `person` and `face`. It computes the negative space and mathematically determines the optimal $X, Y$ coordinates to render the speech bubble. If an overlap occurs, the optimizer shifts the text outwards until Intersection over Union (IoU) equals zero.
+* **Collision Detection (`SpeechBubbleOptimizer`):** Resolves spatial occlusion with the character's facial consistency now locked.
+* **YOLOv8 Integration:** Identifies bounding boxes for `person` and `face`, computes negative space, and determines optimal speech bubble coordinates. Shifts text outwards until IoU equals zero.
 
 ### Phase 6: Final Output & Export
-* **Text-to-Speech (TTS):** Parses the generated dialogue and utilizes `gTTS` to generate localized MP3 audio files.
-* **CBZ Archiving & HTML:** Standardizes the output by compressing generated panels and layout grids into universally readable `.cbz` archives and interactive HTML web comic formats.
+* **Text-to-Speech (TTS):** Parses dialogue and generates localized MP3 audio files via `gTTS` with per-character voice profiles.
+* **CBZ Archiving & HTML:** Compresses panels into `.cbz` archives and interactive HTML web comic formats.
+* **PDF Compilation:** Assembles page grids into multi-page PDFs.
 
 ---
 
-## 🔬 Research Paper Execution Workflow (Google Colab / Jupyter)
+## 📓 Research Notebooks
 
-To execute the pipeline and gather empirical data for your research paper, the repository provides 6 chronologically ordered Jupyter Notebooks that explicitly mirror the 6-step experimental flow. Ensure your runtime is set to **T4 GPU**.
+Six Jupyter notebooks mirror the 6-step experimental flow. Each includes a **universal setup cell** that works on both Google Colab and local Jupyter.
 
-### Notebook 1: `01_Metrics_Build_and_Setup.ipynb`
-* **Purpose:** Prepares the environment and establishes the baseline evaluation parameters.
-* **Academic Focus:** Executes **Phase 1 (Metrics Build)** by initializing FID, BLEU, SSIM, and Edge Density calculations.
+| Notebook | Phase | What It Does |
+|----------|-------|-------------|
+| `01_Metrics_Build_and_Setup` | Baseline | Initializes `ModelComparator` and `QualityMetrics` |
+| `02_Initial_Generation_and_Consistency_Check` | Generation | Runs SDXL generation (T4 GPU required), evaluates emotion detection |
+| `03_First_Changes_and_Refinement` | Feedback | `IncrementalLearner` logs feedback and refines prompts |
+| `04_Apply_IP_Adapter` | Structural Fix | Demonstrates IP-Adapter cross-attention conditioning |
+| `05_Final_Changes_and_Spatial_Layout` | Layout | YOLOv8 `SpeechBubbleOptimizer` for collision-free text |
+| `06_Multimedia_Output_and_Export` | Export | TTS audio generation + CBZ/HTML export |
 
-### Notebook 2: `02_Initial_Generation_and_Consistency_Check.ipynb`
-* **Purpose:** Runs the initial SDXL generation without structural locks.
-* **Academic Focus:** Executes **Phase 2 (Check Consistency)**. Demonstrates how to mathematically evaluate the uncontrolled generation for structural deviation and "emotion amnesia".
+### Running on Google Colab
 
-### Notebook 3: `03_First_Changes_and_Refinement.ipynb`
-* **Purpose:** Acts on the consistency failures identified in Notebook 2.
-* **Academic Focus:** Executes **Phase 3 (First Changes)** by logging simulated RLHF human evaluation feedback via the `IncrementalLearner` and refining text prompts.
+1. Upload any notebook to Google Colab
+2. Set runtime to **T4 GPU**: `Runtime → Change runtime type → T4 GPU`
+3. Run the first cell — it clones the repo and installs dependencies automatically
+4. Persist `outputs/` between sessions by mounting Google Drive
 
-### Notebook 4: `04_Apply_IP_Adapter.ipynb`
-* **Purpose:** Introduces structural anchors to the generation process.
-* **Academic Focus:** Executes **Phase 4 (Apply IP-Adapter)** to demonstrate how Cross-Attention conditioning mathematically forces facial and structural preservation, solving the failures from Phase 2.
+### Running Locally
 
-### Notebook 5: `05_Final_Changes_and_Spatial_Layout.ipynb`
-* **Purpose:** Isolates the spatial layout engine to finalize the image composition.
-* **Academic Focus:** Executes **Phase 5 (Final Changes)** by showcasing the YOLOv8 object detector avoiding occlusions. Extracts coordinate data to prove speech bubble placement successfully shifts to avoid overlapping the face.
-
-### Notebook 6: `06_Multimedia_Output_and_Export.ipynb`
-* **Purpose:** Wraps the entire experiment into digestible artifacts.
-* **Academic Focus:** Executes **Phase 6 (Output Generation)** by demonstrating multi-modal expansion via TTS audio generation and `.cbz` / `.html` interactive formats.
-
-*(Note: When running these sequentially in Google Colab, ensure you persist your `outputs/` directory between sessions by mounting Google Drive or manually downloading the generated JSONs).*
+```bash
+cd indie_comic_pipeline
+jupyter notebook
+# Open 01_Metrics_Build_and_Setup.ipynb and proceed sequentially
+```
 
 ---
 
-## 🚀 Execution Guide (Local Setup)
+## 🎯 8-Metric Consistency Engine
 
-If you are running the pipeline locally on a dedicated NVIDIA GPU (RTX 3090/4090):
+`utils/consistency_checker.py` measures visual coherence across panels:
 
-### 1. Flask Web Interface (Interactive Mode)
-We provide a beautiful, fully-featured web application to generate comics visually.
+| Metric | Method | Checks | Default |
+|--------|--------|--------|---------|
+| **HSV Color** | Histogram comparison | Same color palette | Off |
+| **SSIM** | Structural Similarity | Pixel-level structure | On |
+| **Gram Matrix** | 5-channel spatial features | Artistic style/texture | On |
+| **Edge Density** | Canny edge detection | Line weight/density | On |
+| **CLIP Semantic** | CLIP embeddings (cosine) | Content similarity | Off (saves VRAM) |
+| **DINOv2 Structure** | DINOv2 pooler output | Identity consistency | Off (saves VRAM) |
+| **Aesthetic Score** | Laplacian + contrast + color | Visual quality | On |
+| **Thumbnail Corr.** | Pearson correlation | Global composition | On |
+
+**Threshold:** Combined weighted score above **0.55** = consistent (configurable in `settings.yaml`).
+
+---
+
+## 🚀 Quick Start
+
+### Interactive Web Interface
 ```bash
 pip install -r requirements.txt
 python web_interface/app.py
+# → http://localhost:5000
 ```
-*Navigate to `http://localhost:5000` to access the interactive Comic Studio.*
 
-### 2. Jupyter Step-by-Step Execution
-Open your terminal in the `indie_comic_pipeline` directory and launch Jupyter:
+### Production Pipeline
 ```bash
-jupyter notebook
+# Generate panels from fusion JSONs
+python run_10_panel_pipeline.py
+
+# Quick test with doodle panels
+python generate_doodle_panels.py
+
+# Compile final PDF
+python compile_comic_pdf.py
 ```
-Open `01_Metrics_Build_and_Setup.ipynb` and proceed sequentially through the 6 notebooks to gather your research data.
+
+### Export Formats
+```bash
+# CBZ archive
+python -c "from comic_exporter import ComicExporter; e = ComicExporter(); ..."
+
+# TTS audio
+python -c "from audio_integration import AudioIntegrator; a = AudioIntegrator(); ..."
+```
+
+---
+
+## 📋 Dependencies
+
+### Full Install (Local)
+```bash
+pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu121
+```
+
+### Colab Install (Auto)
+```bash
+# Handled automatically by colab_setup.py using requirements_colab.txt
+# No manual install needed — just run the first notebook cell
+```
+
+### Key Dependencies
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `torch` | ≥ 2.0 | Core ML framework |
+| `diffusers` | ≥ 0.28 | SDXL / SD 1.5 pipelines |
+| `transformers` | ≥ 4.40 | CLIP, DINOv2 models |
+| `accelerate` | ≥ 0.30 | GPU memory optimization |
+| `ultralytics` | ≥ 8.0 | YOLOv8 (speech bubble placement) |
+| `scikit-image` | ≥ 0.20 | SSIM computation |
+| `langchain` | latest | LLM orchestration |
+| `gTTS` | ≥ 2.3 | Text-to-Speech audio |
+| `flask` | ≥ 2.0 | Web interface |
+
+---
+
+*Built with Ollama · LangChain · Diffusers · SDXL · LoRA · CLIP · DINOv2 · YOLOv8 · gTTS · Flask · Python*

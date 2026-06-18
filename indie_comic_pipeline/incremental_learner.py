@@ -73,6 +73,11 @@ class IncrementalLearner:
                 if 'dark shadows' not in self.prompt_modifiers['noir']:
                     self.prompt_modifiers['noir'].append('dark shadows')
                     
+    def log_feedback(self, prompt: str, rating: int, feedback: str):
+        """Convenience alias used by research notebooks (simpler signature)."""
+        panel_id = f"nb_{abs(hash(prompt)) % 10000}"
+        self.learn_from_feedback(panel_id, prompt, rating, feedback)
+
     def get_enhanced_prompt(self, base_prompt: str, style: str) -> str:
         """Applies learned modifiers to a prompt"""
         modifiers = self.prompt_modifiers.get(style, [])

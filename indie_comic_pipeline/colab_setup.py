@@ -45,7 +45,7 @@ if IN_COLAB:
 else:
     # Walk up from this file's location to find the repo root
     # Works whether cwd is the repo root or indie_comic_pipeline/
-    _here = os.path.abspath(os.path.dirname(__file__) if "__file__" in dir() else os.getcwd())
+    _here = os.path.abspath(os.path.dirname(globals()["__file__"]) if "__file__" in globals() else os.getcwd())
     if os.path.basename(_here) == PIPELINE:
         REPO_ROOT = os.path.dirname(_here)
     elif os.path.exists(os.path.join(_here, PIPELINE)):
@@ -78,7 +78,10 @@ print(f"🐍 Python path includes: {PIPELINE_DIR}")
 # ── 4. Install requirements (Colab only) ────────────────────────────────────
 
 if IN_COLAB:
-    req_file = os.path.join(PIPELINE_DIR, "requirements.txt")
+    # Prefer the slim colab requirements to avoid version conflicts
+    req_file = os.path.join(PIPELINE_DIR, "requirements_colab.txt")
+    if not os.path.exists(req_file):
+        req_file = os.path.join(PIPELINE_DIR, "requirements.txt")
     if os.path.exists(req_file):
         print("📦 Installing requirements (this may take a few minutes)...")
         subprocess.run(

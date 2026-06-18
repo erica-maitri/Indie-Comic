@@ -1,0 +1,19 @@
+# Requirements for Google Colab (slim — no pinned transitive deps)
+# Colab already has torch, torchvision, numpy, pillow pre-installed.
+# Only install what's missing.
+
+diffusers>=0.28.0
+transformers>=4.40.0
+accelerate>=0.30.0
+torchmetrics
+safetensors
+opencv-python
+pyyaml
+scikit-image>=0.20.0
+ultralytics>=8.0.0
+gTTS>=2.3.0
+flask>=2.0.0
+langchain
+langchain-ollama
+langchain-core
+rarfile>=4.0

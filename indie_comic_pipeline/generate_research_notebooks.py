@@ -7,6 +7,28 @@ def create_notebook(filename, title, description, cells_data):
     # Title & Description
     cells = [nbf.v4.new_markdown_cell(f"# {title}\n\n{description}")]
     
+    # Environment Setup Cell
+    setup_code = """import os, sys, subprocess
+
+try:
+    import google.colab
+    IN_COLAB = True
+except ImportError:
+    IN_COLAB = False
+
+if IN_COLAB:
+    print("🚀 Detected Google Colab. Setting up environment...")
+    subprocess.run([sys.executable, "-c", "import urllib.request; exec(urllib.request.urlopen('https://raw.githubusercontent.com/Cyberpunk-San/Indie-Comic/main/indie_comic_pipeline/colab_setup.py').read())"], check=False)
+else:
+    print("💻 Detected Local Jupyter. Setting up path...")
+    if os.path.exists("colab_setup.py"):
+        exec(open("colab_setup.py").read())
+    else:
+        print("⚠️ colab_setup.py not found. Please ensure you are running from the correct directory.")"""
+    
+    cells.append(nbf.v4.new_markdown_cell("## 🔧 0. Universal Environment Setup\nRun this cell first to configure Colab or local Jupyter environments."))
+    cells.append(nbf.v4.new_code_cell(setup_code))
+    
     # Custom Cells
     for cell_type, content in cells_data:
         if cell_type == "md":
@@ -26,26 +48,7 @@ def main():
     n1_title = "🔬 Research Phase 1: Metrics Build & Setup"
     n1_desc = "This notebook establishes the baseline quantitative evaluation suite (FID, BLEU, SSIM, Edge Density) and sets up the environment."
     n1_cells = [
-        ("md", "## 📦 1. Environment & Repository Setup"),
-        ("code", """import os, subprocess
-try:
-    from google.colab import files
-    IN_COLAB = True
-except ImportError:
-    IN_COLAB = False
-
-if IN_COLAB:
-    REPO_DIR = "/content/indie_comic_pipeline"
-    if not os.path.exists(REPO_DIR):
-        subprocess.run(["git", "clone", "--depth", "1", "https://github.com/Cyberpunk-San/Indie-Comic.git", REPO_DIR], check=True)
-    os.chdir(REPO_DIR)
-else:
-    cwd = os.getcwd()
-    if os.path.basename(cwd) != "indie_comic_pipeline" and os.path.exists(os.path.join(cwd, "indie_comic_pipeline")):
-        os.chdir(os.path.join(cwd, "indie_comic_pipeline"))"""),
-        ("md", "## 📦 2. Install Dependencies"),
-        ("code", "!pip install -r requirements.txt"),
-        ("md", "## ⚙️ 3. Initialize Validation Metrics Pipeline"),
+        ("md", "## ⚙️ 1. Initialize Validation Metrics Pipeline"),
         ("code", """from model_comparator import ModelComparator
 # Initializes FID, BLEU, and IoU metric calculators.
 comparator = ModelComparator()
@@ -60,20 +63,32 @@ print("✅ Quantitative Metrics Baseline Established.")""")
     n2_desc = "Executes the initial generation without strict structural locks and evaluates the output mathematically for 'emotion amnesia' and structural deviation."
     n2_cells = [
         ("md", "## 🧠 1. Load Configurations & Narrative Memory"),
-        ("code", """from ultimate_comic_pipeline import UltimateComicGenerator, ComicConfig
-
-config = ComicConfig(character_name="Spider-Man", story_world="Cyberpunk 2077", style="manga", num_pages=1)
-generator = UltimateComicGenerator(config)"""),
+        ("code", """import torch
+if not torch.cuda.is_available():
+    print("⚠️ No GPU detected. SDXL generation requires a CUDA GPU (T4 or better).")
+    print("In Colab: Runtime → Change runtime type → T4 GPU")
+    print("Skipping model load. Re-run this cell after enabling GPU.")
+else:
+    from ultimate_comic_pipeline import UltimateComicGenerator, ComicConfig
+    config = ComicConfig(character_name="Spider-Man", story_world="Cyberpunk 2077", style="manga", num_pages=1)
+    generator = UltimateComicGenerator(config)
+    print("✅ Generator loaded successfully on", torch.cuda.get_device_name(0))"""),
         ("md", "## 🎨 2. Generate Base Panel (No IP-Adapter)"),
-        ("code", """story_prompt = "A dramatic entrance of Spider-Man in Night City, feeling determined."
-result = generator.generate_comic(story_prompt)"""),
+        ("code", """try:
+    story_prompt = "A dramatic entrance of Spider-Man in Night City, feeling determined."
+    result = generator.generate_comic(story_prompt)
+    print("✅ Generation complete!")
+except NameError:
+    print("⚠️ Generator not loaded — please enable GPU and re-run the previous cell.")"""),
         ("md", "## ⚖️ 3. Evaluate Consistency"),
-        ("code", """first_panel = result['pages'][0]['panels'][0]
-print(f"Emotion detected: {first_panel['emotion']}")
-print(f"Alignment Score: {first_panel['alignment_score']:.2f}")
-# Visual inspection of the deviation
-from IPython.display import display
-display(first_panel['image'])""")
+        ("code", """try:
+    first_panel = result['pages'][0]['panels'][0]
+    print(f"Emotion detected: {first_panel['emotion']}")
+    print(f"Alignment Score: {first_panel['alignment_score']:.2f}")
+    from IPython.display import display
+    display(first_panel['image'])
+except NameError:
+    print("⚠️ No results to evaluate — please run generation cells first.")""")
     ]
     create_notebook("02_Initial_Generation_and_Consistency_Check.ipynb", n2_title, n2_desc, n2_cells)
 

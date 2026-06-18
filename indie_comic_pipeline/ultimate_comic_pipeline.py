@@ -187,7 +187,10 @@ class SpeechBubbleOptimizer:
         draw.ellipse([x, y, x+w, y+h], outline='black', width=3, fill='white')
         
         # Add text
-        font = ImageFont.truetype("arial.ttf", 24)
+        try:
+            font = ImageFont.truetype("arial.ttf", 24)
+        except (OSError, IOError):
+            font = ImageFont.load_default()
         draw.text((x+20, y+20), dialogue, fill='black', font=font)
         
         return panel
@@ -484,9 +487,9 @@ class ModelEnsemble:
         if style.get('lora'):
             try:
                 pipe.load_lora_weights(style['lora'])
-                pipe.set_adapter_scale(0.8)
+                pipe.fuse_lora(lora_scale=0.8)
             except Exception as e:
-                print(f"[!] LoRA load failed: {e}")
+                print(f"[!] LoRA load/fuse failed: {e}")
         
         # Scheduler
         pipe.scheduler = DPMSolverMultistepScheduler.from_config(
@@ -553,7 +556,8 @@ class ModelEnsemble:
         guidance = kwargs.get('guidance', self.config.guidance_scale)
         seed = kwargs.get('seed', self.config.seed)
         
-        generator = torch.Generator(device=device).manual_seed(seed)
+        # Always create generator on CPU for cross-device compatibility
+        generator = torch.Generator(device="cpu").manual_seed(seed)
         
         # Generate
         image = pipe(

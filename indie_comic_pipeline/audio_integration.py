@@ -1,5 +1,9 @@
 import os
-from gtts import gTTS
+try:
+    from gtts import gTTS
+    GTTS_AVAILABLE = True
+except ImportError:
+    GTTS_AVAILABLE = False
 import tempfile
 import uuid
 
@@ -27,6 +31,10 @@ class AudioIntegrator:
         Returns the path to the saved MP3 file
         """
         if not dialogue or dialogue.strip() == "...":
+            return None
+        
+        if not GTTS_AVAILABLE:
+            print("[!] gTTS not installed. Run: pip install gTTS")
             return None
             
         voice = self.get_character_voice(character)

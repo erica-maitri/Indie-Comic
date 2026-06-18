@@ -1,7 +1,7 @@
 import os
 import time
 import json
-from ultimate_comic_pipeline import QualityMetrics
+
 
 class ModelComparator:
     """Utility to A/B test different diffusion models and LoRAs to quantify performance"""
@@ -9,6 +9,7 @@ class ModelComparator:
     def __init__(self, output_dir="outputs/comparison"):
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
+        from ultimate_comic_pipeline import QualityMetrics
         self.metrics = QualityMetrics()
         
     def compare_models(self, prompt: str, models: dict, reference_image=None):
