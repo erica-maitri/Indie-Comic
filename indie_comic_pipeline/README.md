@@ -27,29 +27,28 @@ graph TD
 
 ---
 
-## 📁 Directory Structure
+## 📁 Detailed Directory Directory & Module Guide
 
 ```text
 indie_comic_pipeline/
 │
 │── Core Pipeline ─────────────────────────────────────────────
-├── ultimate_comic_pipeline.py      # Master engine: 10 classes, 700+ lines
-│                                   #   ComicConfig, StyleManager, NarrativeMemory,
-│                                   #   EmotionValidator, SpeechBubbleOptimizer,
-│                                   #   QualityMetrics, ModelEnsemble, PanelGenerator,
-│                                   #   PageGenerator, UltimateComicGenerator
+├── ultimate_comic_pipeline.py      # Master engine: 10 classes, 1000+ lines
+│                                   # Contains: ComicConfig, StyleManager, NarrativeMemory,
+│                                   # EmotionValidator, SpeechBubbleOptimizer, QualityMetrics,
+│                                   # ModelEnsemble, PanelGenerator, PageGenerator, UltimateComicGenerator
 ├── run_10_panel_pipeline.py        # Production 10-panel sequential generator
 ├── generate_doodle_panels.py       # Quick 8-panel test generator (T4 optimized)
 ├── compile_comic_pdf.py            # Assembles page grids into final PDF
 ├── comic_exporter.py               # Export to CBZ / CBR / HTML web comic
-├── audio_integration.py            # TTS audio dialogue via gTTS
+├── audio_integration.py            # TTS audio dialogue via gTTS with guard for local systems
 ├── model_comparator.py             # A/B model testing (FID, CLIP, timing)
 ├── incremental_learner.py          # RLHF feedback collection & prompt learning
 │
 │── Environment & Config ──────────────────────────────────────
-├── colab_setup.py                  # Universal Colab/Jupyter bootstrap
+├── colab_setup.py                  # Universal Colab/Jupyter bootstrap helper
 ├── install_all.py                  # One-click dependency installer
-├── generate_research_notebooks.py  # Generates 6 research notebooks
+├── generate_research_notebooks.py  # Generates 6 research notebooks with Colab checks
 ├── requirements.txt                # Full pinned dependencies
 ├── requirements_colab.txt          # Slim Colab-compatible dependencies
 ├── config/
@@ -97,159 +96,134 @@ indie_comic_pipeline/
 ├── 04_Apply_IP_Adapter.ipynb
 ├── 05_Final_Changes_and_Spatial_Layout.ipynb
 ├── 06_Multimedia_Output_and_Export.ipynb
-│
-│── Output ────────────────────────────────────────────────────
-└── outputs/
-    ├── fusion/          # Generated JSON storyboards
-    ├── characters/      # Character reference sheets
-    ├── comics/          # Panels, strips, grids, PDFs
-    ├── exports/         # CBZ / CBR / HTML exports
-    ├── audio/           # TTS dialogue MP3 files
-    ├── production_run/  # 10-panel production output
-    └── comparison/      # Model A/B test reports
 ```
 
 ---
 
-## 🧠 Core Experimental Phases
+## 🔧 Core Pipeline API & Class Specifications
 
-### Phase 1: Metrics Build
-Establishes a strict quantitative evaluation suite to benchmark success:
-* **Fréchet Inception Distance (FID):** Uses `torchmetrics` to evaluate the variance between generated features against ground-truth style references.
-* **BLEU Score:** Measures how closely the generated visual prompt matches the ideal storyboard instruction.
-* **Mathematical Consistency Suite:** SSIM, Art Style Gram Matrix evaluations, and Canny Edge Density parameters.
+### `ultimate_comic_pipeline.py`
 
-### Phase 2: Check Consistency
-* **Baseline Execution:** The pipeline executes an initial visual pass using the `UltimateComicGenerator` without advanced structural locks.
-* **EmotionValidator:** Uses a local LLM (Llama 3.2 via Ollama) to cross-reference generated visuals with dialogue text.
-* **Evaluation:** Generated panels are pushed through the 8-metric consistency checker to mathematically prove structural deviations or "emotion amnesia".
+This master orchestration file consolidates the entire generative pipeline. Key classes include:
 
-### Phase 3: Initial Changes
-* **Feedback Loop (`IncrementalLearner`):** Based on consistency failures from Phase 2, the pipeline adjusts prompt weighting. Dynamically refines negative prompts or shifts LoRA weights based on aggregated human/metric preferences.
-* **Prompt Refinement:** Uses `log_feedback()` to record ratings and extract patterns from high-rated outputs.
+#### 1. `ComicConfig`
+Stores system configuration, generation options, and verification flags:
+* `character_name` / `story_world` (str): Define characters and universe contexts.
+* `resolution` (Tuple[int, int]): Dimensions of output panels (defaults to T4 sweet spot `(768, 768)`).
+* `inference_steps` / `guidance_scale` (float): Diffusion inference dynamics.
+* `use_lora` / `model_type` / `style`: Determines rendering engine configuration.
+* `consistency_threshold`: The target score for the 8-metric visual consistency check.
 
-### Phase 4: Apply IP-Adapter
-* **Structural Lock-In:** Introduces the **IP-Adapter** (Image Prompt Adapter) to resolve inconsistency.
-* **Reference Conditioning:** A high-quality anchor image is passed through IP-Adapter's Cross-Attention layers to force facial contour, identity, and clothing preservation across different poses and expressions.
+#### 2. `StyleManager`
+Maintains preset artistic styles with prompt triggers, negative anchors, and optional LoRA paths:
+* `manga`: Utilizes manga line art LoRA, flat colors, clean outlines.
+* `western_comic`: Bold inks, classic comic style.
+* `noir`: High-contrast, dark shadows.
+* `watercolor` & `retro`: Soft wash and vintage print patterns.
 
-### Phase 5: Final Changes & Spatial Layout
-* **Collision Detection (`SpeechBubbleOptimizer`):** Resolves spatial occlusion with the character's facial consistency now locked.
-* **YOLOv8 Integration:** Identifies bounding boxes for `person` and `face`, computes negative space, and determines optimal speech bubble coordinates. Shifts text outwards until IoU equals zero.
+#### 3. `SpeechBubbleOptimizer`
+Optimizes spatial bubble placement by utilizing YOLOv8 object detection paired with negative space layout math:
+* Prevents text from overlapping crucial elements (like characters or faces).
+* Uses custom text wrapped layout engine, ensuring readable font sizing with automatic fallback to default platform fonts if `Arial` is missing.
 
-### Phase 6: Final Output & Export
-* **Text-to-Speech (TTS):** Parses dialogue and generates localized MP3 audio files via `gTTS` with per-character voice profiles.
-* **CBZ Archiving & HTML:** Compresses panels into `.cbz` archives and interactive HTML web comic formats.
-* **PDF Compilation:** Assembles page grids into multi-page PDFs.
+#### 4. `QualityMetrics`
+Computes key quantitative scores to measure generation success:
+* **FID**: Compares feature variance with ground-truth styles.
+* **BLEU**: Measures storyboard description alignment.
+* **IoU**: Calculates speech bubble layout overlaps to verify collision avoidance.
+
+#### 5. `ModelEnsemble`
+Loads and controls the underlying Stable Diffusion components (SDXL, SD1.5, LoRAs, and IP-Adapters). Manages cross-device tensor allocation and features automatic CPU/GPU model offloading to fit within Google Colab’s T4 VRAM.
+
+#### 6. `PanelGenerator`, `PageGenerator`, & `UltimateComicGenerator`
+Constructs single-panel visual structures, organizes panels into high-fidelity page grids, and drives the complete end-to-end storyboard compilation.
 
 ---
 
-## 📓 Research Notebooks
+## 🧠 Core Experimental Phases & Notebook Walkthrough
 
-Six Jupyter notebooks mirror the 6-step experimental flow. Each includes a **universal setup cell** that works on both Google Colab and local Jupyter.
+### Phase 1: Metrics Build (`01_Metrics_Build_and_Setup.ipynb`)
+Initializes evaluation algorithms. Establishes baseline metrics (FID, Structural SSIM, and Gram Matrix) to score visual quality before any optimizations are introduced.
 
-| Notebook | Phase | What It Does |
-|----------|-------|-------------|
-| `01_Metrics_Build_and_Setup` | Baseline | Initializes `ModelComparator` and `QualityMetrics` |
-| `02_Initial_Generation_and_Consistency_Check` | Generation | Runs SDXL generation (T4 GPU required), evaluates emotion detection |
-| `03_First_Changes_and_Refinement` | Feedback | `IncrementalLearner` logs feedback and refines prompts |
-| `04_Apply_IP_Adapter` | Structural Fix | Demonstrates IP-Adapter cross-attention conditioning |
-| `05_Final_Changes_and_Spatial_Layout` | Layout | YOLOv8 `SpeechBubbleOptimizer` for collision-free text |
-| `06_Multimedia_Output_and_Export` | Export | TTS audio generation + CBZ/HTML export |
+### Phase 2: Check Consistency (`02_Initial_Generation_and_Consistency_Check.ipynb`)
+Executes baseline image generations. Pushes generated panels through `utils/consistency_checker.py` to calculate raw structural amnesia and color drift.
 
-### Running on Google Colab
+### Phase 3: Initial Changes (`03_First_Changes_and_Refinement.ipynb`)
+Introduces reinforcement feedback via `IncrementalLearner` and `log_feedback(prompt, rating, feedback)`. Adjusts prompt composition, weights, and negative anchors based on recorded performance.
 
-1. Upload any notebook to Google Colab
-2. Set runtime to **T4 GPU**: `Runtime → Change runtime type → T4 GPU`
-3. Run the first cell — it clones the repo and installs dependencies automatically
-4. Persist `outputs/` between sessions by mounting Google Drive
+### Phase 4: Apply IP-Adapter (`04_Apply_IP_Adapter.ipynb`)
+Activates cross-attention image conditioning using an anchor image. Aligns facial structure, outfits, and styling throughout varying camera angles and scenes.
 
-### Running Locally
+### Phase 5: Final Changes & Spatial Layout (`05_Final_Changes_and_Spatial_Layout.ipynb`)
+Combines YOLOv8 target detection with collision avoidance math inside `SpeechBubbleOptimizer` to dynamically layout panel dialogue bubbles cleanly.
 
+### Phase 6: Final Output & Export (`06_Multimedia_Output_and_Export.ipynb`)
+Compiles final PDF grids, bundles web-friendly HTML pages, saves `.cbz` archives, and builds per-panel TTS audio files via `audio_integration.py`.
+
+---
+
+## 🎯 8-Metric Consistency Engine Specifications
+
+Located in `utils/consistency_checker.py`. Runs metrics sequentially to evaluate image pair consistency:
+
+| Metric | Algorithm | Target |
+|---|---|---|
+| **SSIM** | Structural Similarity Index | Structural layout validation |
+| **Gram Matrix** | Feature Map Gramian Correlation | Artistic style & texture consistency |
+| **Edge Density** | Canny Edge Detection Comparison | Ink weights & line consistency |
+| **Aesthetic Score** | Contrast, Laplacian, & Color Variance | Outlier and quality check |
+| **Thumbnail Corr.** | Pearson Correlation | Grid composition & layout flow |
+| **HSV Color** | Color Histogram Intersection | Palette uniformity (optional) |
+| **CLIP Semantic** | CLIP Embeddings Cosine Distance | High-level concept consistency (VRAM intensive) |
+| **DINOv2 Structure** | DINOv2 Pooling Cosine Distance | Identity preservation (VRAM intensive) |
+
+---
+
+## 🚀 Execution & Command-Line Interfaces
+
+### One-Click Dependency Installer
 ```bash
-cd indie_comic_pipeline
-jupyter notebook
-# Open 01_Metrics_Build_and_Setup.ipynb and proceed sequentially
+python install_all.py
 ```
-
----
-
-## 🎯 8-Metric Consistency Engine
-
-`utils/consistency_checker.py` measures visual coherence across panels:
-
-| Metric | Method | Checks | Default |
-|--------|--------|--------|---------|
-| **HSV Color** | Histogram comparison | Same color palette | Off |
-| **SSIM** | Structural Similarity | Pixel-level structure | On |
-| **Gram Matrix** | 5-channel spatial features | Artistic style/texture | On |
-| **Edge Density** | Canny edge detection | Line weight/density | On |
-| **CLIP Semantic** | CLIP embeddings (cosine) | Content similarity | Off (saves VRAM) |
-| **DINOv2 Structure** | DINOv2 pooler output | Identity consistency | Off (saves VRAM) |
-| **Aesthetic Score** | Laplacian + contrast + color | Visual quality | On |
-| **Thumbnail Corr.** | Pearson correlation | Global composition | On |
-
-**Threshold:** Combined weighted score above **0.55** = consistent (configurable in `settings.yaml`).
-
----
-
-## 🚀 Quick Start
-
-### Interactive Web Interface
-```bash
-pip install -r requirements.txt
-python web_interface/app.py
-# → http://localhost:5000
-```
+This utility auto-detects CUDA availability and installs matching PyTorch, Diffusers, and accessory libraries.
 
 ### Production Pipeline
 ```bash
-# Generate panels from fusion JSONs
+# Run the complete 10-panel comic generation cycle
 python run_10_panel_pipeline.py
 
-# Quick test with doodle panels
+# Run a faster 8-panel test using doodle generations (great for low VRAM or testing pipelines)
 python generate_doodle_panels.py
 
-# Compile final PDF
+# Compile generated outputs into a unified multi-page PDF
 python compile_comic_pdf.py
 ```
 
-### Export Formats
+### Benchmarks & Evaluation
 ```bash
-# CBZ archive
-python -c "from comic_exporter import ComicExporter; e = ComicExporter(); ..."
+# Compare visual quality across 5 distinct pipeline configurations
+python matrix_evaluation_zone/model_matrix_bench.py
 
-# TTS audio
-python -c "from audio_integration import AudioIntegrator; a = AudioIntegrator(); ..."
+# Benchmark rendering speed of storyboard iterations
+python matrix_evaluation_zone/storyboard_speed_bench.py
 ```
+
+### Web UI
+To spin up the interactive Flask visual generator:
+```bash
+python web_interface/app.py
+```
+Once initialized, navigate to `http://localhost:5000` to configure panels, view generations, and export comics directly from your browser.
 
 ---
 
-## 📋 Dependencies
+## 🛠️ Troubleshooting & Support
 
-### Full Install (Local)
-```bash
-pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu121
-```
-
-### Colab Install (Auto)
-```bash
-# Handled automatically by colab_setup.py using requirements_colab.txt
-# No manual install needed — just run the first notebook cell
-```
-
-### Key Dependencies
-| Package | Version | Purpose |
-|---------|---------|---------|
-| `torch` | ≥ 2.0 | Core ML framework |
-| `diffusers` | ≥ 0.28 | SDXL / SD 1.5 pipelines |
-| `transformers` | ≥ 4.40 | CLIP, DINOv2 models |
-| `accelerate` | ≥ 0.30 | GPU memory optimization |
-| `ultralytics` | ≥ 8.0 | YOLOv8 (speech bubble placement) |
-| `scikit-image` | ≥ 0.20 | SSIM computation |
-| `langchain` | latest | LLM orchestration |
-| `gTTS` | ≥ 2.3 | Text-to-Speech audio |
-| `flask` | ≥ 2.0 | Web interface |
-
----
-
-*Built with Ollama · LangChain · Diffusers · SDXL · LoRA · CLIP · DINOv2 · YOLOv8 · gTTS · Flask · Python*
+* **Out of Memory (OOM) on Colab/Local GPU**:
+  * Set `resolution` to `(512, 512)` or use the SD1.5 rendering backend (`sd15_code/`).
+  * Disable CLIP and DINOv2 metrics in `config/settings.yaml` to save VRAM.
+  * Enable memory offloading in the pipeline config (`enable_memory_management: true`).
+* **Fonts Missing (Arial / TrueType)**:
+  * On Linux/Colab, the system automatically catches `arial.ttf` missing errors and falls back to PIL's internal monospace font.
+* **TTS Package Missing (`gTTS`)**:
+  * The audio integration module wraps `gtts` imports in safety try/except blocks. If not installed, it outputs warning logs instead of crashing the pipeline.
