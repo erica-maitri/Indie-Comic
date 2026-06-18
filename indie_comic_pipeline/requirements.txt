@@ -12,14 +12,14 @@ asgiref==3.11.1
 attrs==26.1.0
 av==17.0.1
 backoff==2.2.1
-binaryornot==0.6.0
+binaryornot>=0.6.0
 blake3==1.0.8
 certifi==2026.5.20
 charset-normalizer==3.4.7
-click==8.4.1
+click>=8.4.1
 colorama==0.4.6
 comfy-aimdo==0.4.8
-comfy-cli==1.10.3
+comfy-cli>=1.10.3
 comfy-kitchen==0.2.10
 comfyui-embedded-docs==0.5.2
 comfyui-workflow-templates-core==0.3.252
@@ -29,7 +29,7 @@ comfyui-workflow-templates-media-other==0.3.217
 comfyui-workflow-templates-media-video==0.3.91
 comfyui_frontend_package==1.44.19
 comfyui_workflow_templates==0.9.98
-cookiecutter==2.7.1
+cookiecutter>=2.7.1
 diffusers==0.38.0
 distro==1.9.0
 einops==0.8.2
@@ -81,7 +81,7 @@ ormsgpack==1.12.2
 packaging==26.2
 pathspec==1.1.1
 pillow==12.2.0
-posthog==7.17.0
+posthog>=7.17.0
 prompt_toolkit==3.0.52
 propcache==0.5.2
 psutil==7.2.2
@@ -96,7 +96,7 @@ python-slugify==8.0.4
 PyYAML==6.0.3
 questionary==2.1.1
 regex==2026.5.9
-requests==2.34.2
+requests>=2.34.2
 requests-toolbelt==1.0.0
 rich==15.0.0
 ruff==0.15.16
