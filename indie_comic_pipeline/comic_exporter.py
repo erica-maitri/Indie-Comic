@@ -34,7 +34,7 @@ class ComicExporter:
                         # Cleanup temp
                         os.remove(temp_path)
             
-            print(f"[✓] Successfully exported CBZ: {output_path}")
+            print(f"[OK] Successfully exported CBZ: {output_path}")
             return output_path
             
         except Exception as e:

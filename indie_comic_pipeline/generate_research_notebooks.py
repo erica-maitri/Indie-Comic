@@ -43,140 +43,264 @@ else:
 
 def main():
     # =========================================================================
-    # Notebook 1: Metrics Build
+    # Phase 0: Story Intake
     # =========================================================================
-    n1_title = "🔬 Research Phase 1: Metrics Build & Setup"
-    n1_desc = "This notebook establishes the baseline quantitative evaluation suite (FID, BLEU, SSIM, Edge Density) and sets up the environment."
-    n1_cells = [
-        ("md", "## ⚙️ 1. Initialize Validation Metrics Pipeline"),
-        ("code", """from model_comparator import ModelComparator
-# Initializes FID, BLEU, and IoU metric calculators.
-comparator = ModelComparator()
-print("✅ Quantitative Metrics Baseline Established.")""")
-    ]
-    create_notebook("01_Metrics_Build_and_Setup.ipynb", n1_title, n1_desc, n1_cells)
+    create_notebook(
+        "00_Phase_0_Story_Intake.ipynb",
+        "🚀 Phase 0: Story Intake Engine",
+        "This notebook demonstrates Phase 0 of the pipeline: processing raw narrative and emotional user prompts through the Story-Weaver LLM to generate structured story configs.",
+        [
+            ("md", "## ⚙️ 1. Process story prompt through Story Intake"),
+            ("code", """from core.story_intake import StoryIntakeEngine
+# Initialize the intake engine (uses local Ollama by default)
+intake = StoryIntakeEngine()
+print("Intake engine initialized.")
 
-    # =========================================================================
-    # Notebook 2: Check Consistency
-    # =========================================================================
-    n2_title = "🔬 Research Phase 2: Initial Generation & Consistency Check"
-    n2_desc = "Executes the initial generation without strict structural locks and evaluates the output mathematically for 'emotion amnesia' and structural deviation."
-    n2_cells = [
-        ("md", "## 🧠 1. Load Configurations & Narrative Memory"),
-        ("code", """import torch
-if not torch.cuda.is_available():
-    print("⚠️ No GPU detected. SDXL generation requires a CUDA GPU (T4 or better).")
-    print("In Colab: Runtime → Change runtime type → T4 GPU")
-    print("Skipping model load. Re-run this cell after enabling GPU.")
-else:
-    from ultimate_comic_pipeline import UltimateComicGenerator, ComicConfig
-    config = ComicConfig(character_name="Spider-Man", story_world="Cyberpunk 2077", style="manga", num_pages=1)
-    generator = UltimateComicGenerator(config)
-    print("✅ Generator loaded successfully on", torch.cuda.get_device_name(0))"""),
-        ("md", "## 🎨 2. Generate Base Panel (No IP-Adapter)"),
-        ("code", """try:
-    story_prompt = "A dramatic entrance of Spider-Man in Night City, feeling determined."
-    result = generator.generate_comic(story_prompt)
-    print("✅ Generation complete!")
-except NameError:
-    print("⚠️ Generator not loaded — please enable GPU and re-run the previous cell.")"""),
-        ("md", "## ⚖️ 3. Evaluate Consistency"),
-        ("code", """try:
-    first_panel = result['pages'][0]['panels'][0]
-    print(f"Emotion detected: {first_panel['emotion']}")
-    print(f"Alignment Score: {first_panel['alignment_score']:.2f}")
-    from IPython.display import display
-    display(first_panel['image'])
-except NameError:
-    print("⚠️ No results to evaluate — please run generation cells first.")""")
-    ]
-    create_notebook("02_Initial_Generation_and_Consistency_Check.ipynb", n2_title, n2_desc, n2_cells)
-
-    # =========================================================================
-    # Notebook 3: First Changes
-    # =========================================================================
-    n3_title = "🔬 Research Phase 3: First Changes & Refinement"
-    n3_desc = "Based on the consistency failures identified in Phase 2, this notebook adjusts prompt weighting and integrates RLHF feedback."
-    n3_cells = [
-        ("md", "## 🔄 1. Incremental Learner Feedback"),
-        ("code", """from incremental_learner import IncrementalLearner
-learner = IncrementalLearner()
-
-# Simulate human/metric feedback on Phase 2's failure
-learner.log_feedback(
-    prompt="A dramatic entrance of Spider-Man in Night City",
-    rating=2,
-    feedback="Character's face looks generic, missing the specific mask details."
+# Run fallback / template intake processing
+config = intake.process_prompt(
+    user_prompt="A lone wanderer discovers hope",
+    panel_count=4,
+    character_name="Wanderer",
+    story_world="The Abstract"
 )
-print("Feedback logged. Adjusting internal weights...")"""),
-        ("md", "## 🗣️ 2. Apply Prompt Adjustments"),
-        ("code", """refined_prompt = "A dramatic entrance of Spider-Man in Night City, Highly detailed classic mask with white expressive lenses, cel-shaded."
-print(f"Refined Prompt: {refined_prompt}")""")
-    ]
-    create_notebook("03_First_Changes_and_Refinement.ipynb", n3_title, n3_desc, n3_cells)
+
+print("Structured Story Config:")
+import json
+print(json.dumps(config, indent=2))""")
+        ]
+    )
 
     # =========================================================================
-    # Notebook 4: Apply IP-Adapter
+    # Phase 1: Narrative Planning Layer
     # =========================================================================
-    n4_title = "🔬 Research Phase 4: Apply IP-Adapter"
-    n4_desc = "The critical 'fix' step. The structural facial anchor is applied via IP-Adapter to mathematically force facial preservation."
-    n4_cells = [
-        ("md", "## 📐 1. Load Anchor Image & IP-Adapter Weights"),
-        ("code", """# Note: This demonstrates the conceptual hook. UltimateComicGenerator handles this internally when IP-Adapter is enabled.
-print("Loading IP-Adapter weights into Cross-Attention layers...")
-# pipe.load_ip_adapter('ip-adapter-faceid-plusv2_sdxl.bin')"""),
-        ("md", "## 🎨 2. Regenerate with Structural Lock"),
-        ("code", """print("Generating new panel with IP-Adapter conditioning...")
-# Simulate the fixed generation output here.
-# By combining the refined prompt (Phase 3) and IP-Adapter (Phase 4), consistency is achieved.""")
-    ]
-    create_notebook("04_Apply_IP_Adapter.ipynb", n4_title, n4_desc, n4_cells)
+    create_notebook(
+        "01_Phase_1_Narrative_Planning.ipynb",
+        "🚀 Phase 1: Narrative Planning Layer",
+        "This notebook demonstrates Phase 1 of the pipeline: orchestrating the Storyboard, Character, Scene, and Layout agents through the shared Memory Blackboard.",
+        [
+            ("md", "## 🧠 1. Run multi-agent planning coordinator"),
+            ("code", """from core.memory import StorySectionMemory
+from core.agents.agent_coordinator import AgentCoordinator
+
+memory = StorySectionMemory()
+coordinator = AgentCoordinator(memory)
+
+# Sample story configuration
+story_config = {
+    "title": "Neon Sunset",
+    "characters": [{"name": "Akira", "costume": "Leather jacket"}],
+    "setting": {"location": "Mega-city alleyway", "lighting": "cyberpunk pink"},
+    "mood_journey": "despair to hope",
+    "recurring_motif": "broken circuit",
+    "panels": [
+        {"panel": 1, "visual": "Akira looking at the sky", "dialogue": "Is there anyone out there?", "emotion_beat": "lonely"},
+        {"panel": 2, "visual": "A drone lights up the alley", "dialogue": "Intruder detected.", "emotion_beat": "startled"},
+    ],
+    "_metadata": {"character": "Akira", "world": "Mega-city", "emotion": "lonely"}
+}
+
+coordinator.run_planning(story_config)
+
+print("Memory populated with page plans:")
+for plan in memory.page_plans:
+    print(f"Page {plan['page_number']}: phase={plan['pacing_phase']}, panels={len(plan['panels'])}")""")
+        ]
+    )
 
     # =========================================================================
-    # Notebook 5: Final Changes
+    # Phase 2: Reference-Free Anchoring
     # =========================================================================
-    n5_title = "🔬 Research Phase 5: Final Changes & Spatial Layout"
-    n5_desc = "Passing the now-consistent image through the YOLOv8 Speech Bubble optimizer to resolve spatial collisions."
-    n5_cells = [
-        ("md", "## 🔍 1. Initialize YOLOv8 Optimizer"),
-        ("code", """from ultimate_comic_pipeline import SpeechBubbleOptimizer
-optimizer = SpeechBubbleOptimizer()"""),
-        ("md", "## 🗣️ 2. Detect Collisions and Shift Layout"),
-        ("code", """print("YOLOv8 is analyzing the image for 'person' and 'face' bounding boxes.")
-print("Calculating negative space. If Intersection over Union (IoU) > 0, text coordinates are shifted outwards.")""")
-    ]
-    create_notebook("05_Final_Changes_and_Spatial_Layout.ipynb", n5_title, n5_desc, n5_cells)
-    
-    # =========================================================================
-    # Notebook 6: Output
-    # =========================================================================
-    n6_title = "🔬 Research Phase 6: Output Generation"
-    n6_desc = "Compiling the final, validated image into CBZ/HTML and injecting the Text-to-Speech audio."
-    n6_cells = [
-        ("md", "## 🔊 1. Audio Integrator (TTS)"),
-        ("code", """from audio_integration import AudioIntegrator
-from IPython.display import Audio, display
-
-audio_engine = AudioIntegrator()
-audio_path = audio_engine.generate_audio_dialogue("Uncle Ben... this city is darker than New York.", "Spider-Man")
-
-if audio_path:
-    display(Audio(audio_path, autoplay=False))"""),
-        ("md", "## 📦 2. Export to CBZ and Web Comic HTML"),
-        ("code", """from comic_exporter import ComicExporter
+    create_notebook(
+        "02_Phase_2_Reference_Free_Anchoring.ipynb",
+        "🚀 Phase 2: Reference-Free Anchoring",
+        "This notebook isolates the first generated panel as the primary visual anchor and extracts identity embedding tokens (facial topology, wardrobe features) for downstream panels.",
+        [
+            ("md", "## ⚓ 1. Isolate Visual Anchor & Extract Identity Tokens"),
+            ("code", """import os
 from PIL import Image
+from core.memory import StorySectionMemory
+from core.anchoring import ReferenceFreeAnchor
 
-exporter = ComicExporter()
-mock_page = {'page_image': Image.new('RGB', (1024, 1024), color='white')}
+memory = StorySectionMemory()
+memory.register_character("Akira")
+
+# Create mock panel 1 image
+img = Image.new("RGB", (512, 512), (120, 140, 160))
+anchor_dir = "outputs/anchors"
+os.makedirs(anchor_dir, exist_ok=True)
+mock_path = os.path.join(anchor_dir, "anchor_panel_1.png")
+img.save(mock_path)
+
+anchor_system = ReferenceFreeAnchor(device="cpu")
+tokens = anchor_system.establish_anchor(img, panel_id=1, character_name="Akira", memory=memory)
+
+print("Anchor established. Extracted features:")
+print("Aesthetic score:", tokens.get("aesthetic_score"))
+print("Mean brightness:", tokens.get("mean_brightness"))""")
+        ]
+    )
+
+    # =========================================================================
+    # Phase 3 & 4: In-Generation Consistency & Control
+    # =========================================================================
+    create_notebook(
+        "03_04_Phase_3_4_In_Generation_Consistency_and_Control.ipynb",
+        "🚀 Phase 3 & 4: In-Generation Consistency & Composable Control",
+        "This notebook demonstrates the unified panel generation loop using model weight blending (CharCom) and Advanced Attention mechanisms (L1 Heat, L2 Shared Cache, L3 STE).",
+        [
+            ("md", "## 🔬 1. Blend Model Weights & Apply Attention Hooks"),
+            ("code", """from core.memory import StorySectionMemory
+from core.advanced_attention import AdvancedAttentionManager
+from core.backends.backend_selector import BackendSelector
+from core.panel_engine import PanelEngine
+
+memory = StorySectionMemory()
+memory.register_character("Akira")
+
+# Load mock backend setup
+from integrated_pipeline import MockBackend
+mock_backend = MockBackend()
+mock_backend.load({})
+
+selector = BackendSelector()
+selector.register_backend("sdxl", mock_backend)
+
+adv_attn = AdvancedAttentionManager(enabled=True)
+engine = PanelEngine(memory=memory, backend_selector=selector, advanced_attention=adv_attn)
+
+# Generate panel 1 with active attention
+context = {"panel_id": 1, "panel_visual": "Character stands looking ahead", "panel_emotion_beat": "hopeful"}
+result = engine.generate_panel(panel_id=1, context=context)
+
+print("Panel generated with mock backend.")
+print("Advanced Attention status:")
+import json
+print(json.dumps(adv_attn.get_status(), indent=2))""")
+        ]
+    )
+
+    # =========================================================================
+    # Phase 5: Integrated Text-Image Generation
+    # =========================================================================
+    create_notebook(
+        "05_Phase_5_Integrated_Text_Image_Generation.ipynb",
+        "🚀 Phase 5: Integrated Text-Image Generation",
+        "This notebook runs the DiffSensei bubble planner, mapping text layout coordinates to avoid subject/facial visual collisions.",
+        [
+            ("md", "## 💬 1. Layout Text Bubble & Generate Overlay"),
+            ("code", """from PIL import Image
+from core.text_image_integrator import TextImageIntegrator
+
+# Create blank canvas
+img = Image.new("RGB", (768, 768), (240, 240, 245))
+
+integrator = TextImageIntegrator(output_dir="outputs/panels")
+final_img = integrator.integrate(
+    image=img,
+    dialogue="Uncle Ben... this city is darker than New York.",
+    emotion_beat="determined",
+    panel_id=1,
+    scene_desc="Spider-Man in the dark city"
+)
+print("Overlay complete. Dimensions:", final_img.size)""")
+        ]
+    )
+
+    # =========================================================================
+    # Phase 6: Quality Validation Layer
+    # =========================================================================
+    create_notebook(
+        "06_Phase_6_Quality_Validation_Layer.ipynb",
+        "🚀 Phase 6: Quality Validation Layer",
+        "This notebook demonstrates the COMIC Critic Pipeline: checking panels against visual, narrative, emotional, aesthetic, and readability thresholds.",
+        [
+            ("md", "## ⚖️ 1. Run 5-dimension Quality Critic Evaluation"),
+            ("code", """import os
+from PIL import Image
+from core.memory import StorySectionMemory
+from core.quality_critic import QualityCritic
+
+memory = StorySectionMemory()
+critic = QualityCritic(threshold=0.6, strict_threshold=0.8)
+
+img = Image.new("RGB", (512, 512), (128, 128, 128))
+panel_result = {
+    "panel_id": 2,
+    "image": img,
+    "image_path": "outputs/panels/panel_002_page_1.png",
+    "prompt": "Akira standing in the neon rain",
+    "weights": {"lora_scale": 0.8}
+}
+
+# Run evaluation
+evaluation = critic.evaluate(panel_result, memory)
+print("Critic Verdict:", evaluation["verdict"])
+print("Composite Score:", evaluation["composite_score"])
+print("Adjustments recommended on failure:", evaluation["adjustments"])""")
+        ]
+    )
+
+    # =========================================================================
+    # Phase 7: Layout & Assembly
+    # =========================================================================
+    create_notebook(
+        "07_Phase_7_Layout_and_Assembly.ipynb",
+        "🚀 Phase 7: Layout & Assembly",
+        "This notebook demonstrates the MangaFlow Layout Engine: dynamically cutting borders and arranging panel matrices based on story action intensities.",
+        [
+            ("md", "## 📐 1. Dynamic Layout Assembly"),
+            ("code", """from PIL import Image
+from core.layout_engine import MangaFlowLayoutEngine
+
+engine = MangaFlowLayoutEngine(page_width=800, page_height=1200)
+
+# 3 mock panel images
+panels = [
+    {"panel_id": 1, "image": Image.new("RGB", (400, 300), (200, 50, 50)), "page_num": 1},
+    {"panel_id": 2, "image": Image.new("RGB", (400, 300), (50, 200, 50)), "page_num": 1},
+    {"panel_id": 3, "image": Image.new("RGB", (800, 400), (50, 50, 200)), "page_num": 1},
+]
+
+page_image = engine.layout_page(panels, page_num=1)
+print("Page layout assembled. Size:", page_image.size)""")
+        ]
+    )
+
+    # =========================================================================
+    # Phase 8: Export Module & Adaptive RLHF Systems
+    # =========================================================================
+    create_notebook(
+        "08_Phase_8_Export_and_RLHF.ipynb",
+        "🚀 Phase 8: Export Module & Adaptive RLHF Systems",
+        "This notebook exports pages to PDF/CBZ/HTML and demonstrates the Human Alignment Telemetry Loop with parameter backpropagation optimization.",
+        [
+            ("md", "## 📦 1. Export Formats & Run RLHF Optimization Loop"),
+            ("code", """import os
+from PIL import Image
+from comic_exporter import ComicExporter
+from core.feedback import RLHFFeedbackLoop
+from core.optimizer import SystemOptimizer
+
+exporter = ComicExporter(output_dir="outputs/comics")
+mock_page = {'page_num': 1, 'page_image': Image.new('RGB', (800, 1200), 'white'), 'panels': []}
 pages = [mock_page]
 
-cbz_path = exporter.export_cbz(pages, title="Research_Output")
-html_path = exporter.export_web_comic(pages)
+cbz = exporter.export_cbz(pages, title="FinalComic")
+print("Exported CBZ:", cbz)
 
-print(f"✅ Comic saved to: {cbz_path}")
-print(f"✅ Interactive web format saved to: {html_path}")""")
-    ]
-    create_notebook("06_Multimedia_Output_and_Export.ipynb", n6_title, n6_desc, n6_cells)
+# Initialize telemetry
+feedback_path = "outputs/comics/test_rlhf_feedback.json"
+feedback = RLHFFeedbackLoop(feedback_path=feedback_path)
+feedback.add_panel_feedback(panel_id=1, rating=5, comment="Excellent style consistency!", prompt_used="...", generation_backend="sdxl")
+
+# Run optimizer
+optimizer = SystemOptimizer(feedback_loop=feedback, settings_path="config/settings.yaml")
+adjusts = optimizer.optimize_system_parameters()
+
+print("System Optimization Recommendations:")
+print(adjusts)""")
+        ]
+    )
 
 if __name__ == "__main__":
     main()

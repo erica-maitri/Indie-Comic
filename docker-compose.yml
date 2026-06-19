@@ -1,0 +1,31 @@
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+  comic-generator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: comic-generator
+    depends_on:
+      - ollama
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+      - PIPELINE_DRY_RUN=true
+    ports:
+      - "5000:5000"
+    volumes:
+      # Bind mount output and source directories to access generated assets on the host
+      - ./indie_comic_pipeline/outputs:/app/indie_comic_pipeline/outputs
+      - ./Story-Weaver:/app/Story-Weaver
+    restart: unless-stopped
+
+volumes:
+  ollama_data:

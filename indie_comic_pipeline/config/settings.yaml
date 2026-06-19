@@ -190,3 +190,48 @@ logging:
   console_output: true
   log_timings: true
   log_vram: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NEW METHODOLOGY CONFIGURATION SECTIONS
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Multi-Agent Settings (Phase 1)
+agents:
+  storyboard:
+    enabled: true
+  character:
+    enabled: true
+  scene:
+    enabled: true
+  layout:
+    enabled: true
+
+# Story Section Memory Blackboard Settings (Phase 1)
+memory:
+  retention_window: 20
+  serialize_checkpoint: true
+  checkpoint_dir: "outputs/checkpoints"
+
+# Quality Critic Settings (Phase 6)
+quality_critic:
+  threshold: 0.55
+  strict_threshold: 0.70
+  max_retries: 2
+  weights:
+    visual_consistency: 0.30
+    emotional_engagement: 0.15
+    narrative_coherence: 0.20
+    aesthetic_quality: 0.25
+    readability: 0.10
+
+# MangaFlow Layout Engine Settings (Phase 7)
+layout_engine:
+  page_width: 1000
+  page_height: 1500
+  gutter_width: 12
+  margin: 40
+  bg_color: "white"
+
+# RLHF Telemetry Settings (Phase 8)
+feedback:
+  feedback_file: "outputs/comics/rlhf_feedback.json"
