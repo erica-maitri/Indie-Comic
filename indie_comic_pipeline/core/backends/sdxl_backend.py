@@ -152,7 +152,7 @@ class SDXLBackend(BaseBackend):
         """
         import torch
 
-        if not self.is_loaded():
+        if self._pipe is None:
             raise RuntimeError("SDXL backend not loaded. Call load() first.")
 
         width = config.get("width", 768)

@@ -4,10 +4,13 @@ Helper functions for processing, resizing, and validating images
 """
 
 from PIL import Image, ImageDraw, ImageFont
-
 import numpy as np
-
 import os
+
+try:
+    LANCZOS = Image.Resampling.LANCZOS
+except AttributeError:
+    LANCZOS = Image.LANCZOS
 
 def resize_image(image_path, output_path, size=(512, 512)):
 
@@ -15,7 +18,7 @@ def resize_image(image_path, output_path, size=(512, 512)):
 
     img = Image.open(image_path)
 
-    img_resized = img.resize(size, Image.LANCZOS)
+    img_resized = img.resize(size, LANCZOS)
 
     img_resized.save(output_path)
 
@@ -39,7 +42,7 @@ def create_comic_grid(images_paths, output_path, grid_size=(2, 2), cell_size=(51
 
         if os.path.exists(img_path):
 
-            img = Image.open(img_path).resize(cell_size, Image.LANCZOS)
+            img = Image.open(img_path).resize(cell_size, LANCZOS)
 
             row = idx // grid_size[1]
 

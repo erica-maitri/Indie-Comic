@@ -14,6 +14,8 @@ try:
 except ImportError:
     print("Warning: ultimate_comic_pipeline.py not found. Running in mock mode.")
     PIPELINE_AVAILABLE = False
+    UltimateComicGenerator = None
+    ComicConfig = None
 
 
 @app.route('/')
@@ -27,7 +29,7 @@ def generate():
     character = request.args.get('character', 'Spider-Man')
     world = request.args.get('world', 'Cyberpunk 2077')
     
-    if PIPELINE_AVAILABLE:
+    if PIPELINE_AVAILABLE and ComicConfig is not None and UltimateComicGenerator is not None:
         config = ComicConfig(
             character_name=character,
             story_world=world,
@@ -64,8 +66,9 @@ def generate():
 @app.route('/feedback/<panel_id>', methods=['POST'])
 def feedback(panel_id):
     try:
-        rating = request.json.get('rating')
-        comment = request.json.get('comment')
+        req_data = request.json or {}
+        rating = req_data.get('rating')
+        comment = req_data.get('comment')
         
         # Here we would normally connect to IncrementalLearner
         print(f"Feedback received for panel {panel_id}: {rating}/5 - {comment}")

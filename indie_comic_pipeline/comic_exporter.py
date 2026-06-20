@@ -1,5 +1,6 @@
 import os
 import zipfile
+from typing import Optional
 
 class ComicExporter:
     """Exports generated comics into standard reader formats like CBZ and CBR"""
@@ -8,7 +9,7 @@ class ComicExporter:
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
     
-    def export_cbz(self, pages: list, title: str = "Comic") -> str:
+    def export_cbz(self, pages: list, title: str = "Comic") -> Optional[str]:
         """
         Export to CBZ (ZIP archive of images)
         This is the most universally supported comic book format.
@@ -41,14 +42,14 @@ class ComicExporter:
             print(f"[!] Failed to export CBZ: {e}")
             return None
     
-    def export_cbr(self, pages: list, title: str = "Comic") -> str:
+    def export_cbr(self, pages: list, title: str = "Comic") -> Optional[str]:
         """
         Export to CBR (RAR archive of images)
         Requires a system-level RAR utility (like WinRAR) or the rarfile library if RAR is in PATH.
         Usually, CBZ is preferred because zip is natively supported in Python.
         """
         try:
-            import rarfile
+            import rarfile  # type: ignore
             # Note: Creating RAR files typically requires an external executable.
             # rarfile library is primarily for reading. 
             # If the user absolutely needs CBR, we would shell out to 'rar a'.
@@ -60,9 +61,10 @@ class ComicExporter:
                 output_cbr = output_cbz.replace(".cbz", ".cbr")
                 os.rename(output_cbz, output_cbr)
                 return output_cbr
+            return None
                 
-        except ImportError:
-            print("[!] rarfile not installed. Cannot process native CBR. Exporting CBZ instead.")
+        except (ImportError, Exception) as e:
+            print(f"[!] Cannot process native CBR ({e}). Exporting CBZ instead.")
             return self.export_cbz(pages, title)
 
     def export_web_comic(self, pages: list, output_path: str = "outputs/exports/web_comic.html"):

@@ -62,7 +62,7 @@ The pipeline uses a rigorous, sequential **8-Phase Architecture** to turn an emo
 
 ## 🛠 Installation & Usage (Docker)
 
-The entire environment is containerized using `python:3.11-slim` with CPU-optimized PyTorch wheels. You do **not** need an NVIDIA GPU to run the dry-run pipeline tests!
+The entire environment is containerized using `python:3.10-slim` with CPU-optimized PyTorch wheels. You do **not** need an NVIDIA GPU to run the dry-run pipeline tests!
 
 ### 1. Build and Start the Environment
 ```bash

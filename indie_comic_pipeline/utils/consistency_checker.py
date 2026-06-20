@@ -11,11 +11,13 @@ import cv2
 import torch
 import gc
 
+from typing import Any
+
 # Global model cache - prevents reloading models for every comparison
-_CLIP_MODEL = None
-_CLIP_PROCESSOR = None
-_DINOV2_MODEL = None
-_DINOV2_PROCESSOR = None
+_CLIP_MODEL: Any = None
+_CLIP_PROCESSOR: Any = None
+_DINOV2_MODEL: Any = None
+_DINOV2_PROCESSOR: Any = None
 
 class ConsistencyChecker:
 
@@ -331,7 +333,8 @@ class ConsistencyChecker:
                 
             try:
                 from skimage.metrics import structural_similarity as ssim
-                ssim_score = ssim(ref_gray, feat_gray)
+                ssim_res = ssim(ref_gray, feat_gray)
+                ssim_score = float(ssim_res[0] if isinstance(ssim_res, tuple) else ssim_res)
             except Exception:
                 ssim_score = self._fallback_ssim(ref_gray, feat_gray)
             ssim_score = max(0.0, min(1.0, ssim_score))
