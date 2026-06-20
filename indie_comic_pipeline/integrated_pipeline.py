@@ -278,6 +278,9 @@ class IntegratedComicPipeline:
                     if "steps_delta" in adjusts:
                         context["steps_override"] = 25 + adjusts["steps_delta"]
                         
+            if not panel_result:
+                raise RuntimeError(f"Failed to generate panel {panel_id} after {max_retries} retries.")
+                        
             # Once accepted, run Phase 5: Text-Image bubble overlay
             log.info(f"  Phase 5: Overlaying text on Panel {panel_id}")
             final_img = self.text_integrator.integrate(

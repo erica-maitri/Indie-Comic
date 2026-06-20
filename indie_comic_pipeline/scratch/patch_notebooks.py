@@ -12,7 +12,7 @@ SETUP_CELL = {
         '# ============================================================\n',
         '# Universal Colab/Local Setup — run this first in every notebook\n',
         '# ============================================================\n',
-        'import os, sys\n',
+        'import os, sys, urllib.request\n',
         '\n',
         'try:\n',
         '    from google.colab import files  # type: ignore\n',
@@ -21,22 +21,27 @@ SETUP_CELL = {
         '    _IN_COLAB = False\n',
         '\n',
         'if _IN_COLAB:\n',
-        '    import subprocess\n',
+        '    print("🚀 Detected Google Colab. Setting up environment...")\n',
         '    _repo = "/content/Indie-Comic"\n',
         '    if not os.path.exists(_repo):\n',
+        '        import subprocess\n',
         '        subprocess.run(["git", "clone", "--depth", "1",\n',
         '            "https://github.com/Cyberpunk-San/Indie-Comic.git", _repo], check=True)\n',
-        '    exec(open(f"{_repo}/indie_comic_pipeline/colab_setup.py").read())\n',
+        '    \n',
+        '    # Run the setup script in the main kernel context\n',
+        '    setup_file = f"{_repo}/indie_comic_pipeline/colab_setup.py"\n',
+        '    exec(open(setup_file).read(), globals())\n',
         'else:\n',
+        '    print("💻 Detected Local Jupyter. Setting up path...")\n',
         '    _candidates = [\n',
         '        os.path.join(os.getcwd(), "colab_setup.py"),\n',
         '        os.path.join(os.getcwd(), "indie_comic_pipeline", "colab_setup.py"),\n',
         '    ]\n',
         '    _found = next((p for p in _candidates if os.path.exists(p)), None)\n',
         '    if _found:\n',
-        '        exec(open(_found).read())\n',
+        '        exec(open(_found).read(), globals())\n',
         '    else:\n',
-        '        print("colab_setup.py not found — run from repo root")\n',
+        '        print("⚠️ colab_setup.py not found — run from repo root")\n',
     ]
 }
 
@@ -48,8 +53,20 @@ for nb_path in notebooks:
     
     cells = nb.get('cells', [])
     
-    if cells and cells[0].get('id') == 'colab_setup_cell':
-        print(f'  (skip, already patched) {os.path.basename(nb_path)}')
+    # Check if a setup cell already exists in the notebook cells
+    has_setup = any(cell.get('id') == 'colab_setup_cell' for cell in cells)
+    if has_setup:
+        # Check if the setup cell matches the updated source. If not, replace it.
+        for idx, cell in enumerate(cells):
+            if cell.get('id') == 'colab_setup_cell':
+                # Update source if it's the old one
+                if not any('urllib.request' in line for line in cell.get('source', [])):
+                    cells[idx] = SETUP_CELL
+                    print(f'  updated setup cell: {os.path.basename(nb_path)}')
+                    with open(nb_path, 'w', encoding='utf-8') as f_out:
+                        json.dump(nb, f_out, indent=1)
+                else:
+                    print(f'  (skip, already patched with correct version) {os.path.basename(nb_path)}')
         continue
     
     # Insert after leading markdown section headers

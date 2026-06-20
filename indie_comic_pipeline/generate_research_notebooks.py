@@ -8,26 +8,44 @@ def create_notebook(filename, title, description, cells_data):
     cells = [nbf.v4.new_markdown_cell(f"# {title}\n\n{description}")]
     
     # Environment Setup Cell
-    setup_code = """import os, sys, subprocess
+    setup_code = """# ============================================================
+# Universal Colab/Local Setup — run this first in every notebook
+# ============================================================
+import os, sys, urllib.request
 
 try:
-    import google.colab
-    IN_COLAB = True
+    from google.colab import files  # type: ignore
+    _IN_COLAB = True
 except ImportError:
-    IN_COLAB = False
+    _IN_COLAB = False
 
-if IN_COLAB:
+if _IN_COLAB:
     print("🚀 Detected Google Colab. Setting up environment...")
-    subprocess.run([sys.executable, "-c", "import urllib.request; exec(urllib.request.urlopen('https://raw.githubusercontent.com/Cyberpunk-San/Indie-Comic/main/indie_comic_pipeline/colab_setup.py').read())"], check=False)
+    _repo = "/content/Indie-Comic"
+    if not os.path.exists(_repo):
+        import subprocess
+        subprocess.run(["git", "clone", "--depth", "1",
+            "https://github.com/Cyberpunk-San/Indie-Comic.git", _repo], check=True)
+    
+    # Run the setup script in the main kernel context
+    setup_file = f"{_repo}/indie_comic_pipeline/colab_setup.py"
+    exec(open(setup_file).read(), globals())
 else:
     print("💻 Detected Local Jupyter. Setting up path...")
-    if os.path.exists("colab_setup.py"):
-        exec(open("colab_setup.py").read())
+    _candidates = [
+        os.path.join(os.getcwd(), "colab_setup.py"),
+        os.path.join(os.getcwd(), "indie_comic_pipeline", "colab_setup.py"),
+    ]
+    _found = next((p for p in _candidates if os.path.exists(p)), None)
+    if _found:
+        exec(open(_found).read(), globals())
     else:
-        print("⚠️ colab_setup.py not found. Please ensure you are running from the correct directory.")"""
+        print("⚠️ colab_setup.py not found — run from repo root")"""
     
     cells.append(nbf.v4.new_markdown_cell("## 🔧 0. Universal Environment Setup\nRun this cell first to configure Colab or local Jupyter environments."))
-    cells.append(nbf.v4.new_code_cell(setup_code))
+    setup_cell = nbf.v4.new_code_cell(setup_code)
+    setup_cell['id'] = 'colab_setup_cell'
+    cells.append(setup_cell)
     
     # Custom Cells
     for cell_type, content in cells_data:
@@ -149,7 +167,8 @@ print("Mean brightness:", tokens.get("mean_brightness"))""")
         "This notebook demonstrates the unified panel generation loop using model weight blending (CharCom) and Advanced Attention mechanisms (L1 Heat, L2 Shared Cache, L3 STE).",
         [
             ("md", "## 🔬 1. Blend Model Weights & Apply Attention Hooks"),
-            ("code", """from core.memory import StorySectionMemory
+            ("code", """import torch
+from core.memory import StorySectionMemory
 from core.advanced_attention import AdvancedAttentionManager
 from core.backends.backend_selector import BackendSelector
 from core.panel_engine import PanelEngine
@@ -157,13 +176,39 @@ from core.panel_engine import PanelEngine
 memory = StorySectionMemory()
 memory.register_character("Akira")
 
-# Load mock backend setup
-from integrated_pipeline import MockBackend
-mock_backend = MockBackend()
-mock_backend.load({})
-
+# Set up backend selector
 selector = BackendSelector()
-selector.register_backend("sdxl", mock_backend)
+
+# Check if GPU (CUDA) is available
+use_gpu = torch.cuda.is_available()
+
+if use_gpu:
+    print("🚀 GPU detected! Initializing real SDXL Backend...")
+    from core.backends.sdxl_backend import SDXLBackend
+    
+    # Real SDXL configuration optimized for T4 GPU / Colab
+    sdxl_config = {
+        "model_name": "stabilityai/stable-diffusion-xl-base-1.0",
+        "device": "cuda",
+        "enable_cpu_offload": True,  # Enables CPU offloading to save VRAM
+        "enable_attention_slicing": True,
+        "enable_vae_slicing": True,
+        "safety_checker": False,
+    }
+    
+    # Optional LoRA adapter can be specified here
+    # sdxl_config["lora_name"] = "artificialguybr/LineAniRedmond-LinearMangaSDXL-V2"
+    # sdxl_config["lora_scale"] = 0.8
+    
+    real_backend = SDXLBackend()
+    real_backend.load(sdxl_config)
+    selector.register_backend("sdxl", real_backend)
+else:
+    print("💻 No GPU detected. Falling back to MockBackend for dry-run...")
+    from integrated_pipeline import MockBackend
+    mock_backend = MockBackend()
+    mock_backend.load({})
+    selector.register_backend("sdxl", mock_backend)
 
 adv_attn = AdvancedAttentionManager(enabled=True)
 engine = PanelEngine(memory=memory, backend_selector=selector, advanced_attention=adv_attn)
@@ -172,7 +217,8 @@ engine = PanelEngine(memory=memory, backend_selector=selector, advanced_attentio
 context = {"panel_id": 1, "panel_visual": "Character stands looking ahead", "panel_emotion_beat": "hopeful"}
 result = engine.generate_panel(panel_id=1, context=context)
 
-print("Panel generated with mock backend.")
+active_backend = selector.select(context)
+print(f"Panel generated successfully using {active_backend.name} backend.")
 print("Advanced Attention status:")
 import json
 print(json.dumps(adv_attn.get_status(), indent=2))""")

@@ -512,8 +512,44 @@ class ModelEnsemble:
     
     def _load_sdxl_base(self):
         """Load base SDXL pipeline"""
-        # Similar to above but without LoRA
-        pass
+        from diffusers import StableDiffusionXLPipeline, DPMSolverMultistepScheduler, AutoencoderKL
+        
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        
+        # Load VAE
+        try:
+            vae = AutoencoderKL.from_pretrained("madebyollin/sdxl-vae-fp16-fix", torch_dtype=torch.float16)
+        except:
+            vae = None
+        
+        # Load pipeline
+        pipe = StableDiffusionXLPipeline.from_pretrained(
+            "stabilityai/stable-diffusion-xl-base-1.0",
+            vae=vae,
+            torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+            use_safetensors=True,
+            variant="fp16" if device == "cuda" else None,
+            add_watermarker=False
+        )
+        
+        # Scheduler
+        pipe.scheduler = DPMSolverMultistepScheduler.from_config(
+            pipe.scheduler.config,
+            use_karras_sigmas=True,
+            algorithm_type="sde-dpmsolver++",
+            solver_order=2
+        )
+        
+        # Memory optimizations
+        if device == "cuda":
+            try:
+                pipe.enable_model_cpu_offload()
+                pipe.enable_attention_slicing("max")
+                pipe.enable_vae_slicing()
+            except:
+                pipe = pipe.to(device)
+        
+        return pipe
     
     def _load_sd15(self):
         """Load SD 1.5 pipeline"""

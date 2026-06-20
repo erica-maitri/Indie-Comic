@@ -61,20 +61,30 @@ class SDXLBackend(BaseBackend):
         model_name = config.get("model_name", "stabilityai/stable-diffusion-xl-base-1.0")
         device = config.get("device", "cuda")
 
-        log.info(f"Loading SDXL pipeline: {model_name}")
+        # Resolve device based on availability
+        if device == "cuda" and not torch.cuda.is_available():
+            log.warning("CUDA is requested but not available. Falling back to CPU.")
+            device = "cpu"
+
+        log.info(f"Loading SDXL pipeline: {model_name} on device: {device}")
+
+        # Choose dtype and variant based on target device
+        # CPU does not support float16 for many torch operations; use float32.
+        dtype = torch.float32 if device == "cpu" else torch.float16
+        variant = None if device == "cpu" else "fp16"
 
         try:
             self._pipe = StableDiffusionXLPipeline.from_pretrained(
                 model_name,
-                torch_dtype=torch.float16,
+                torch_dtype=dtype,
                 use_safetensors=True,
-                variant="fp16",
+                variant=variant,
             )
         except Exception:
-            log.warning("FP16 variant not available, trying without variant")
+            log.warning(f"{variant or 'FP16'} variant not available, trying without variant")
             self._pipe = StableDiffusionXLPipeline.from_pretrained(
                 model_name,
-                torch_dtype=torch.float16,
+                torch_dtype=dtype,
                 use_safetensors=True,
             )
 
@@ -84,12 +94,20 @@ class SDXLBackend(BaseBackend):
             use_karras_sigmas=True,
         )
 
-        # T4 optimizations
-        if config.get("enable_cpu_offload", True):
-            self._pipe.enable_model_cpu_offload()
-            log.info("  CPU offload enabled")
+        # Optimizations and device placement
+        if device == "cpu":
+            self._pipe = self._pipe.to("cpu")
+            log.info("  Moved pipeline to CPU")
         else:
-            self._pipe = self._pipe.to(device)
+            if config.get("enable_cpu_offload", True):
+                try:
+                    self._pipe.enable_model_cpu_offload()
+                    log.info("  CPU offload enabled")
+                except (ImportError, RuntimeError) as e:
+                    log.warning(f"  CPU offload failed (likely missing 'accelerate' package): {e}. Falling back to .to({device})")
+                    self._pipe = self._pipe.to(device)
+            else:
+                self._pipe = self._pipe.to(device)
 
         if config.get("enable_attention_slicing", True):
             self._pipe.enable_attention_slicing()
@@ -144,7 +162,7 @@ class SDXLBackend(BaseBackend):
         seed = config.get("seed", 42)
         lora_scale = config.get("lora_scale", 0.8)
 
-        generator = torch.Generator(device="cuda").manual_seed(seed)
+        generator = torch.Generator(device=self._pipe.device).manual_seed(seed)
 
         gen_kwargs = {
             "prompt": prompt,
@@ -170,10 +188,13 @@ class SDXLBackend(BaseBackend):
             log.info(f"  [SDXL] Advanced attention callback ACTIVE ({steps} steps)")
 
         with torch.inference_mode():
+            if self._pipe is None:
+                raise RuntimeError("SDXL pipeline is not loaded. Call load() first.")
             result = self._pipe(**gen_kwargs)
 
         # Clean up VRAM
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
         return result.images[0]
 
@@ -186,7 +207,7 @@ class SDXLBackend(BaseBackend):
             self._pipe = None
             self._lora_loaded = False
             gc.collect()
-            if hasattr(torch, 'cuda'):
+            if hasattr(torch, 'cuda') and torch.cuda.is_available():
                 torch.cuda.empty_cache()
             log.info("SDXL pipeline unloaded")
 

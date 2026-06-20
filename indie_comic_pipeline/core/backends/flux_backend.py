@@ -54,7 +54,11 @@ class FluxBackend(BaseBackend):
                  config: Dict[str, Any]) -> Image.Image:
         """Generate using Flux (SDXL enhanced fallback)."""
         if not self.is_loaded():
-            raise RuntimeError("Flux backend not loaded. Call load() first.")
+            log.info("Flux backend not fully loaded — auto-loading fallback")
+            self.load(config)
+
+        if not self.is_loaded():
+            raise RuntimeError("Flux backend failed to load. Call load() first.")
 
         # Enhance config for higher fidelity output
         enhanced_config = config.copy()
@@ -75,7 +79,7 @@ class FluxBackend(BaseBackend):
         self._loaded = False
 
     def is_loaded(self) -> bool:
-        return self._loaded
+        return self._loaded and self._sdxl_fallback is not None and self._sdxl_fallback.is_loaded()
 
     def get_vram_estimate_mb(self) -> int:
         return 7000  # Slightly more than SDXL due to enhanced settings

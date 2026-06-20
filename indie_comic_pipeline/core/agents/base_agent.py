@@ -7,8 +7,11 @@ its specialized planning task, and writes results back.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any
+from typing import Dict, Any, TYPE_CHECKING
 import logging
+
+if TYPE_CHECKING:
+    from core.memory import StorySectionMemory
 
 log = logging.getLogger("pipeline.agents")
 

@@ -194,6 +194,7 @@ class PanelEngine:
             "generation_time": elapsed,
             "backend": backend.name,
             "weights": weights,
+            "action_intensity": panel_record.action_intensity,
         }
 
     def generate_all_panels(self, coordinator: "AgentCoordinator",

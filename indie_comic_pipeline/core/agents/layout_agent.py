@@ -6,9 +6,12 @@ Determines dynamic panel sizing based on scene action intensity.
 Writes LayoutDirectives into the Story Section Memory blackboard.
 """
 
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, TYPE_CHECKING
 from core.agents.base_agent import BaseAgent
 from core.memory import LayoutDirective
+
+if TYPE_CHECKING:
+    from core.memory import StorySectionMemory
 
 
 # Camera angle selection rules based on pacing phase and intensity

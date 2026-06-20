@@ -8,6 +8,7 @@ into the Story Section Memory, and provides a unified planning interface.
 
 import time
 import logging
+import copy
 from typing import Dict, Any, List, Optional
 
 from core.memory import StorySectionMemory
@@ -61,6 +62,7 @@ class AgentCoordinator:
         log.info("PHASE 1: NARRATIVE PLANNING LAYER — Multi-Agent System")
         log.info("=" * 60)
 
+        story_config = copy.deepcopy(story_config)
         start_time = time.time()
 
         for agent in self.agents:

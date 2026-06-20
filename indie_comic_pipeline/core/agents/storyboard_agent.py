@@ -90,6 +90,7 @@ class StoryboardAgent(BaseAgent):
             page_plans.append(page_plan)
 
         # Write to memory blackboard
+        story_config["panels"] = panels
         memory.mood_journey = story_config.get("mood_journey", "")
         memory.recurring_motif = story_config.get("recurring_motif", "")
         memory.arc_beats = [p.get("emotion_beat", "neutral") for p in panels]

@@ -104,6 +104,14 @@ class TestComicPipeline(unittest.TestCase):
         self.assertEqual(context["panel_id"], 1)
         self.assertEqual(context["panel_emotion_beat"], "lonely")
         self.assertEqual(context["panel_dialogue"], "Is there anyone out there?")
+
+        # Check context retrieval for padded panel (panel 3)
+        context_padded = coordinator.get_generation_context(3)
+        self.assertEqual(context_padded["panel_id"], 3)
+        self.assertEqual(context_padded["panel_emotion_beat"], "fade")
+        self.assertIn("Akira", context_padded["character_visual_note"])
+        self.assertIn("Leather jacket", context_padded["character_visual_note"])
+        self.assertNotEqual(context_padded["scene_atmosphere"], "")
         print("  [PASSED] AgentCoordinator tests")
 
     def test_advanced_attention_manager(self):
