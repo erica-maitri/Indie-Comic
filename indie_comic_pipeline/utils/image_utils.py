@@ -10,7 +10,7 @@ import os
 try:
     LANCZOS = Image.Resampling.LANCZOS
 except AttributeError:
-    LANCZOS = Image.LANCZOS
+    LANCZOS = getattr(Image, 'LANCZOS')
 
 def resize_image(image_path, output_path, size=(512, 512)):
 
