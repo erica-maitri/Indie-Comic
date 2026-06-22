@@ -48,12 +48,16 @@ pipe = StableDiffusionXLPipeline.from_pretrained(
     low_cpu_mem_usage=True
 )
 
+
 if device == "cuda":
     pipe.enable_attention_slicing()
     pipe.enable_vae_slicing()
     pipe.enable_model_cpu_offload() # Safely manages T4 VRAM allocations
 
-pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config, use_karras_sigmas=True)
+scheduler_config = dict(pipe.scheduler.config)
+scheduler_config.pop("_class_name", None)
+scheduler_config.pop("algorithm_type", None)
+pipe.scheduler = DPMSolverMultistepScheduler.from_config(scheduler_config, use_karras_sigmas=True)
 
 print("\\n VRAM Shield Active! Starting loop sequence for all 8 panels...\\n")
 

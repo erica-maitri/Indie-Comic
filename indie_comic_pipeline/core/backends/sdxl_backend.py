@@ -89,8 +89,11 @@ class SDXLBackend(BaseBackend):
             )
 
         # Configure scheduler
+        scheduler_config = dict(self._pipe.scheduler.config)
+        scheduler_config.pop("_class_name", None)
+        scheduler_config.pop("algorithm_type", None)
         self._pipe.scheduler = DPMSolverMultistepScheduler.from_config(
-            self._pipe.scheduler.config,
+            scheduler_config,
             use_karras_sigmas=True,
             algorithm_type="sde-dpmsolver++",
             solver_order=2

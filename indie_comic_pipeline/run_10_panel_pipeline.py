@@ -53,7 +53,10 @@ sdxl_settings = settings.get("models", {}).get("sdxl", {})
 model_name = sdxl_settings.get("name", "stabilityai/stable-diffusion-xl-base-1.0")
 
 pipe = StableDiffusionXLPipeline.from_pretrained(model_name, torch_dtype=torch.float16, use_safetensors=True, variant="fp16")
-pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config, use_karras_sigmas=True)
+scheduler_config = dict(pipe.scheduler.config)
+scheduler_config.pop("_class_name", None)
+scheduler_config.pop("algorithm_type", None)
+pipe.scheduler = DPMSolverMultistepScheduler.from_config(scheduler_config, use_karras_sigmas=True)
 pipe = pipe.to("cuda")
 
 # GPU Slicing layers allocation to ensure zero memory crashes

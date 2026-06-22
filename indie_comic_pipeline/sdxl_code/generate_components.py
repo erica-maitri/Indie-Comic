@@ -80,8 +80,11 @@ def get_pipeline(settings, device, force_reload=False):
     )
     
     # Use DPM++ scheduler for faster inference
+    scheduler_config = dict(pipe.scheduler.config)
+    scheduler_config.pop("_class_name", None)
+    scheduler_config.pop("algorithm_type", None)
     pipe.scheduler = DPMSolverMultistepScheduler.from_config(
-        pipe.scheduler.config, 
+        scheduler_config, 
         use_karras_sigmas=True,
         algorithm_type="sde-dpmsolver++",
         solver_order=2
