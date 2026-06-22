@@ -198,7 +198,7 @@ else:
         print("   python langchain_code/run_full_pipeline.py")
         sys.exit(1)
     
-    with open(fusion_path, "r") as f:
+    with open(fusion_path, "r", encoding="utf-8") as f:
         fusion_data = json.load(f)
 
     personality = fusion_data.get('personality', {})

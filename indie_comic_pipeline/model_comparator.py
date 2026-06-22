@@ -60,7 +60,7 @@ class ModelComparator:
         """Generates an HTML and JSON report of the model comparison"""
         # Save JSON
         json_path = os.path.join(self.output_dir, "report.json")
-        with open(json_path, 'w') as f:
+        with open(json_path, 'w', encoding='utf-8') as f:
             json.dump({'prompt': prompt, 'results': results}, f, indent=4)
             
         # Save HTML
@@ -100,7 +100,7 @@ class ModelComparator:
         </html>
         """
         
-        with open(html_path, 'w') as f:
+        with open(html_path, 'w', encoding='utf-8') as f:
             f.write(html_content)
             
         print(f"[*] Comparison report generated: {html_path}")

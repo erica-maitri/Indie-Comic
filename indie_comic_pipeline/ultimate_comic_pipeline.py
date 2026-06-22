@@ -230,7 +230,7 @@ class LayoutOptimizer:
         for obj in objects:
             if obj['class'] in ['person', 'face']:
                 x1, y1, x2, y2 = obj['bbox']
-                zones.append((x1, y1, x2-x1, y2-y1))
+                zones.append((x1, y1, x2, y2))
         return zones
     
     def _get_candidate_positions(self, width, height, speaker_pos):
@@ -1024,7 +1024,7 @@ class UltimateComicGenerator:
                 panel['image'].save(os.path.join(output_dir, f"panel_{panel_num}.png"))
         
         # Save metadata
-        with open(os.path.join(output_dir, "metadata.json"), 'w') as f:
+        with open(os.path.join(output_dir, "metadata.json"), 'w', encoding='utf-8') as f:
             json.dump({
                 'config': self.config.__dict__,
                 'overall_quality': result['overall_quality'],

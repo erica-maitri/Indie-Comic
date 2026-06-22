@@ -95,7 +95,7 @@ else:
         print("   cd ../langchain_code && python run_full_pipeline.py")
         sys.exit(1)
     
-    with open(fusion_path, "r") as f:
+    with open(fusion_path, "r", encoding="utf-8") as f:
         prompt_data = json.load(f)
     
     character_name = prompt_data.get('character_name', 'Unknown')
