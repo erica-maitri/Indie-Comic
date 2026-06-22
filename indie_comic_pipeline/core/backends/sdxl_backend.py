@@ -79,6 +79,7 @@ class SDXLBackend(BaseBackend):
                 torch_dtype=dtype,
                 use_safetensors=True,
                 variant=variant,
+                low_cpu_mem_usage=True,
             )
         except Exception:
             log.warning(f"{variant or 'FP16'} variant not available, trying without variant")
@@ -86,6 +87,7 @@ class SDXLBackend(BaseBackend):
                 model_name,
                 torch_dtype=dtype,
                 use_safetensors=True,
+                low_cpu_mem_usage=True,
             )
 
         # Configure scheduler

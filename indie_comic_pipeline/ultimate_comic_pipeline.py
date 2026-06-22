@@ -479,7 +479,8 @@ class ModelEnsemble:
             torch_dtype=torch.float16 if device == "cuda" else torch.float32,
             use_safetensors=True,
             variant="fp16" if device == "cuda" else None,
-            add_watermarker=False
+            add_watermarker=False,
+            low_cpu_mem_usage=True
         )
         
         # Load LoRA
