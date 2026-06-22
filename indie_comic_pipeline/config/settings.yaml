@@ -7,7 +7,7 @@ pipeline:
 # Model Settings
 models:
   sdxl:
-    name: "stabilityai/stable-diffusion-xl-base-1.0"
+    name: "Lykon/dreamshaper-xl-1-0"
     variant: "fp16"
     device: "cuda"
     memory_optimization: true

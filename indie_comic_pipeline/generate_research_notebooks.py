@@ -1,13 +1,14 @@
 import nbformat as nbf
 import os
+import glob
 
-def create_notebook(filename, title, description, cells_data):
+def create_unified_notebook(filename, title, description, phases):
     nb = nbf.v4.new_notebook()
     
-    # Title & Description
+    # Title & Description of the entire pipeline
     cells = [nbf.v4.new_markdown_cell(f"# {title}\n\n{description}")]
     
-    # Environment Setup Cell
+    # Environment Setup Cell (run once at the start)
     setup_code = """# ============================================================
 # Universal Colab/Local Setup — run this first in every notebook
 # ============================================================
@@ -47,29 +48,113 @@ else:
     setup_cell['id'] = 'colab_setup_cell'
     cells.append(setup_cell)
     
-    # Custom Cells
-    for cell_type, content in cells_data:
-        if cell_type == "md":
-            cells.append(nbf.v4.new_markdown_cell(content))
-        elif cell_type == "code":
-            cells.append(nbf.v4.new_code_cell(content))
-            
+    # Add each phase
+    for phase_title, phase_desc, phase_cells in phases:
+        cells.append(nbf.v4.new_markdown_cell(f"---\n\n## {phase_title}\n\n{phase_desc}"))
+        for cell_type, content in phase_cells:
+            if cell_type == "md":
+                cells.append(nbf.v4.new_markdown_cell(content))
+            elif cell_type == "code":
+                cells.append(nbf.v4.new_code_cell(content))
+                
     nb['cells'] = cells
     with open(filename, 'w', encoding='utf-8') as f:
         nbf.write(nb, f)
-    print(f"Generated: {filename}")
+    print(f"Generated unified notebook: {filename}")
+
+def clean_old_notebooks(directory):
+    old_notebooks = [
+        "00_Phase_0_Story_Intake.ipynb",
+        "01_Phase_1_Narrative_Planning.ipynb",
+        "02_Phase_2_Reference_Free_Anchoring.ipynb",
+        "03_04_Phase_3_4_In_Generation_Consistency_and_Control.ipynb",
+        "05_Phase_5_Integrated_Text_Image_Generation.ipynb",
+        "06_Phase_6_Quality_Validation_Layer.ipynb",
+        "07_Phase_7_Layout_and_Assembly.ipynb",
+        "08_Phase_8_Export_and_RLHF.ipynb"
+    ]
+    for nb in old_notebooks:
+        path = os.path.join(directory, nb)
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+                print(f"Removed old notebook: {path}")
+            except Exception as e:
+                print(f"Error removing {path}: {e}")
 
 def main():
-    # =========================================================================
-    # Phase 0: Story Intake
-    # =========================================================================
-    create_notebook(
-        "00_Phase_0_Story_Intake.ipynb",
-        "🚀 Phase 0: Story Intake Engine",
-        "This notebook demonstrates Phase 0 of the pipeline: processing raw narrative and emotional user prompts through the Story-Weaver LLM to generate structured story configs.",
-        [
-            ("md", "## ⚙️ 1. Process story prompt through Story Intake"),
-            ("code", """from core.story_intake import StoryIntakeEngine
+    pipeline_dir = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
+    
+    print("Cleaning up old individual notebooks...")
+    clean_old_notebooks(pipeline_dir)
+    
+    phases = [
+        # Hugging Face Auth
+        (
+            "🔑 Hugging Face Authentication",
+            "This section handles authentication with Hugging Face. Gated models (like the official SDXL base model) require an active token. Paste your token in the field below or run the cell to login interactively.",
+            [
+                ("md", "### 🔑 Authenticate with Hugging Face Hub (Optional)"),
+                ("code", """import os
+# @markdown You can get a free token from: https://huggingface.co/settings/tokens
+hf_token = "" # @param {type:"string"}
+
+if hf_token:
+    os.environ["HF_TOKEN"] = hf_token
+    print("✅ Hugging Face Token configured in environment!")
+else:
+    try:
+        from huggingface_hub import notebook_login
+        notebook_login()
+    except Exception:
+        print("ℹ️ Hugging Face login skipped. Unauthenticated downloads will be used.")""")
+            ]
+        ),
+        # End-to-End Pipeline Execution
+        (
+            "🎬 Complete End-to-End Pipeline Execution",
+            "This section runs the entire 8-phase pipeline in a single step. It automatically detects if a GPU is available to run real SDXL generation; otherwise, it runs a fast dry-run using mock panels with real dialogue and speech bubble layout optimization.",
+            [
+                ("md", "### ⚡ Configure and Run the Comic Generator"),
+                ("code", """from integrated_pipeline import IntegratedComicPipeline
+import torch
+from PIL import Image
+from IPython.display import display
+
+# --- Customize Your Story & Characters here ---
+prompt = "A lone wanderer discovers hope" # @param {type:"string"}
+character_name = "Wanderer" # @param {type:"string"}
+story_world = "The Abstract" # @param {type:"string"}
+panel_count = 4 # @param {type:"integer"}
+
+# Auto-detect hardware. Use GPU if available, fallback to mock dry-run on CPU.
+dry_run = not torch.cuda.is_available()
+
+print(f"🎬 Running pipeline with: prompt='{prompt}', character='{character_name}', world='{story_world}'")
+print(f"🖥️ GPU detected: {torch.cuda.is_available()} (Running {'Real GPU Generation' if not dry_run else 'Fast Mock Dry-Run'})")
+
+# Initialize and execute the master pipeline
+pipeline = IntegratedComicPipeline(dry_run=dry_run)
+results = pipeline.run(
+    prompt=prompt,
+    character_name=character_name,
+    story_world=story_world,
+    panel_count=panel_count
+)
+
+# Display the assembled comic pages directly in the notebook
+for page in results["pages"]:
+    print(f"\\n📖 Page {page['page_num']} Layout:")
+    display(page["page_image"])""")
+            ]
+        ),
+        # Phase 0
+        (
+            "🚀 Phase 0: Story Intake Engine",
+            "This section demonstrates Phase 0 of the pipeline: processing raw narrative and emotional user prompts through the Story-Weaver LLM to generate structured story configs.",
+            [
+                ("md", "### ⚙️ 1. Process story prompt through Story Intake"),
+                ("code", """from core.story_intake import StoryIntakeEngine
 # Initialize the intake engine (uses local Ollama by default)
 intake = StoryIntakeEngine()
 print("Intake engine initialized.")
@@ -85,19 +170,15 @@ config = intake.process_prompt(
 print("Structured Story Config:")
 import json
 print(json.dumps(config, indent=2))""")
-        ]
-    )
-
-    # =========================================================================
-    # Phase 1: Narrative Planning Layer
-    # =========================================================================
-    create_notebook(
-        "01_Phase_1_Narrative_Planning.ipynb",
-        "🚀 Phase 1: Narrative Planning Layer",
-        "This notebook demonstrates Phase 1 of the pipeline: orchestrating the Storyboard, Character, Scene, and Layout agents through the shared Memory Blackboard.",
-        [
-            ("md", "## 🧠 1. Run multi-agent planning coordinator"),
-            ("code", """from core.memory import StorySectionMemory
+            ]
+        ),
+        # Phase 1
+        (
+            "🚀 Phase 1: Narrative Planning Layer",
+            "This section demonstrates Phase 1 of the pipeline: orchestrating the Storyboard, Character, Scene, and Layout agents through the shared Memory Blackboard.",
+            [
+                ("md", "### 🧠 1. Run multi-agent planning coordinator"),
+                ("code", """from core.memory import StorySectionMemory
 from core.agents.agent_coordinator import AgentCoordinator
 
 memory = StorySectionMemory()
@@ -122,19 +203,15 @@ coordinator.run_planning(story_config)
 print("Memory populated with page plans:")
 for plan in memory.page_plans:
     print(f"Page {plan['page_number']}: phase={plan['pacing_phase']}, panels={len(plan['panels'])}")""")
-        ]
-    )
-
-    # =========================================================================
-    # Phase 2: Reference-Free Anchoring
-    # =========================================================================
-    create_notebook(
-        "02_Phase_2_Reference_Free_Anchoring.ipynb",
-        "🚀 Phase 2: Reference-Free Anchoring",
-        "This notebook isolates the first generated panel as the primary visual anchor and extracts identity embedding tokens (facial topology, wardrobe features) for downstream panels.",
-        [
-            ("md", "## ⚓ 1. Isolate Visual Anchor & Extract Identity Tokens"),
-            ("code", """import os
+            ]
+        ),
+        # Phase 2
+        (
+            "🚀 Phase 2: Reference-Free Anchoring",
+            "This section isolates the first generated panel as the primary visual anchor and extracts identity embedding tokens (facial topology, wardrobe features) for downstream panels.",
+            [
+                ("md", "### ⚓ 1. Isolate Visual Anchor & Extract Identity Tokens"),
+                ("code", """import os
 from PIL import Image
 from core.memory import StorySectionMemory
 from core.anchoring import ReferenceFreeAnchor
@@ -155,19 +232,15 @@ tokens = anchor_system.establish_anchor(img, panel_id=1, character_name="Akira",
 print("Anchor established. Extracted features:")
 print("Aesthetic score:", tokens.get("aesthetic_score"))
 print("Mean brightness:", tokens.get("mean_brightness"))""")
-        ]
-    )
-
-    # =========================================================================
-    # Phase 3 & 4: In-Generation Consistency & Control
-    # =========================================================================
-    create_notebook(
-        "03_04_Phase_3_4_In_Generation_Consistency_and_Control.ipynb",
-        "🚀 Phase 3 & 4: In-Generation Consistency & Composable Control",
-        "This notebook demonstrates the unified panel generation loop using model weight blending (CharCom) and Advanced Attention mechanisms (L1 Heat, L2 Shared Cache, L3 STE).",
-        [
-            ("md", "## 🔬 1. Blend Model Weights & Apply Attention Hooks"),
-            ("code", """import torch
+            ]
+        ),
+        # Phase 3 & 4
+        (
+            "🚀 Phase 3 & 4: In-Generation Consistency & Composable Control",
+            "This section demonstrates the unified panel generation loop using model weight blending (CharCom) and Advanced Attention mechanisms (L1 Heat, L2 Shared Cache, L3 STE).",
+            [
+                ("md", "### 🔬 1. Blend Model Weights & Apply Attention Hooks"),
+                ("code", """import torch
 from core.memory import StorySectionMemory
 from core.advanced_attention import AdvancedAttentionManager
 from core.backends.backend_selector import BackendSelector
@@ -188,7 +261,7 @@ if use_gpu:
     
     # Real SDXL configuration optimized for T4 GPU / Colab
     sdxl_config = {
-        "model_name": "stabilityai/stable-diffusion-xl-base-1.0",
+        "model_name": "Lykon/dreamshaper-xl-1-0",
         "device": "cuda",
         "enable_cpu_offload": True,  # Enables CPU offloading to save VRAM
         "enable_attention_slicing": True,
@@ -222,19 +295,15 @@ print(f"Panel generated successfully using {active_backend.name} backend.")
 print("Advanced Attention status:")
 import json
 print(json.dumps(adv_attn.get_status(), indent=2))""")
-        ]
-    )
-
-    # =========================================================================
-    # Phase 5: Integrated Text-Image Generation
-    # =========================================================================
-    create_notebook(
-        "05_Phase_5_Integrated_Text_Image_Generation.ipynb",
-        "🚀 Phase 5: Integrated Text-Image Generation",
-        "This notebook runs the DiffSensei bubble planner, mapping text layout coordinates to avoid subject/facial visual collisions.",
-        [
-            ("md", "## 💬 1. Layout Text Bubble & Generate Overlay"),
-            ("code", """from PIL import Image
+            ]
+        ),
+        # Phase 5
+        (
+            "🚀 Phase 5: Integrated Text-Image Generation",
+            "This section runs the DiffSensei bubble planner, mapping text layout coordinates to avoid subject/facial visual collisions.",
+            [
+                ("md", "### 💬 1. Layout Text Bubble & Generate Overlay"),
+                ("code", """from PIL import Image
 from core.text_image_integrator import TextImageIntegrator
 
 # Create blank canvas
@@ -249,19 +318,15 @@ final_img = integrator.integrate(
     scene_desc="Spider-Man in the dark city"
 )
 print("Overlay complete. Dimensions:", final_img.size)""")
-        ]
-    )
-
-    # =========================================================================
-    # Phase 6: Quality Validation Layer
-    # =========================================================================
-    create_notebook(
-        "06_Phase_6_Quality_Validation_Layer.ipynb",
-        "🚀 Phase 6: Quality Validation Layer",
-        "This notebook demonstrates the COMIC Critic Pipeline: checking panels against visual, narrative, emotional, aesthetic, and readability thresholds.",
-        [
-            ("md", "## ⚖️ 1. Run 5-dimension Quality Critic Evaluation"),
-            ("code", """import os
+            ]
+        ),
+        # Phase 6
+        (
+            "🚀 Phase 6: Quality Validation Layer",
+            "This section demonstrates the COMIC Critic Pipeline: checking panels against visual, narrative, emotional, aesthetic, and readability thresholds.",
+            [
+                ("md", "### ⚖️ 1. Run 5-dimension Quality Critic Evaluation"),
+                ("code", """import os
 from PIL import Image
 from core.memory import StorySectionMemory
 from core.quality_critic import QualityCritic
@@ -283,19 +348,15 @@ evaluation = critic.evaluate(panel_result, memory)
 print("Critic Verdict:", evaluation["verdict"])
 print("Composite Score:", evaluation["composite_score"])
 print("Adjustments recommended on failure:", evaluation["adjustments"])""")
-        ]
-    )
-
-    # =========================================================================
-    # Phase 7: Layout & Assembly
-    # =========================================================================
-    create_notebook(
-        "07_Phase_7_Layout_and_Assembly.ipynb",
-        "🚀 Phase 7: Layout & Assembly",
-        "This notebook demonstrates the MangaFlow Layout Engine: dynamically cutting borders and arranging panel matrices based on story action intensities.",
-        [
-            ("md", "## 📐 1. Dynamic Layout Assembly"),
-            ("code", """from PIL import Image
+            ]
+        ),
+        # Phase 7
+        (
+            "🚀 Phase 7: Layout & Assembly",
+            "This section demonstrates the MangaFlow Layout Engine: dynamically cutting borders and arranging panel matrices based on story action intensities.",
+            [
+                ("md", "### 📐 1. Dynamic Layout Assembly"),
+                ("code", """from PIL import Image
 from core.layout_engine import MangaFlowLayoutEngine
 
 engine = MangaFlowLayoutEngine(page_width=800, page_height=1200)
@@ -309,19 +370,15 @@ panels = [
 
 page_image = engine.layout_page(panels, page_num=1)
 print("Page layout assembled. Size:", page_image.size)""")
-        ]
-    )
-
-    # =========================================================================
-    # Phase 8: Export Module & Adaptive RLHF Systems
-    # =========================================================================
-    create_notebook(
-        "08_Phase_8_Export_and_RLHF.ipynb",
-        "🚀 Phase 8: Export Module & Adaptive RLHF Systems",
-        "This notebook exports pages to PDF/CBZ/HTML and demonstrates the Human Alignment Telemetry Loop with parameter backpropagation optimization.",
-        [
-            ("md", "## 📦 1. Export Formats & Run RLHF Optimization Loop"),
-            ("code", """import os
+            ]
+        ),
+        # Phase 8
+        (
+            "🚀 Phase 8: Export Module & Adaptive RLHF Systems",
+            "This section exports pages to PDF/CBZ/HTML and demonstrates the Human Alignment Telemetry Loop with parameter backpropagation optimization.",
+            [
+                ("md", "### 📦 1. Export Formats & Run RLHF Optimization Loop"),
+                ("code", """import os
 from PIL import Image
 from comic_exporter import ComicExporter
 from core.feedback import RLHFFeedbackLoop
@@ -345,7 +402,16 @@ adjusts = optimizer.optimize_system_parameters()
 
 print("System Optimization Recommendations:")
 print(adjusts)""")
-        ]
+            ]
+        )
+    ]
+    
+    notebook_path = os.path.join(pipeline_dir, "Indie_Comic_Pipeline.ipynb")
+    create_unified_notebook(
+        notebook_path,
+        "🎨 Ultimate AI Indie Comic Generator Complete Pipeline",
+        "This unified notebook integrates the end-to-end research and execution workflow of the Indie Comic Generator pipeline. It covers story intake, narrative planning, visual anchoring, in-generation attention controls, text-image integration, quality validation, layout assembly, comic exporting, and RLHF parameters optimization.",
+        phases
     )
 
 if __name__ == "__main__":
