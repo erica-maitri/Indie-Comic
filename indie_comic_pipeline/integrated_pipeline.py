@@ -31,6 +31,27 @@ log = logging.getLogger("pipeline.orchestrator")
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(PROJECT_ROOT)
 
+# Load environment variables from .env file if it exists at the repo root
+try:
+    from dotenv import load_dotenv
+    dotenv_path = os.path.join(os.path.dirname(PROJECT_ROOT), ".env")
+    if os.path.exists(dotenv_path):
+        load_dotenv(dotenv_path=dotenv_path)
+except Exception:
+    pass
+
+# Suppress Hugging Face/Transformers tokenization warnings
+try:
+    import logging as py_logging
+    py_logging.getLogger("transformers.tokenization_utils_base").setLevel(py_logging.ERROR)
+    import warnings
+    warnings.filterwarnings("ignore", category=UserWarning, module="transformers")
+    # Set Hugging Face verbosity
+    from transformers.utils import logging as tf_logging
+    tf_logging.set_verbosity_error()
+except Exception:
+    pass
+
 from utils.config_helper import load_settings, get_output_path
 from core.memory import StorySectionMemory, PanelRecord
 from core.story_intake import StoryIntakeEngine

@@ -89,19 +89,22 @@ def main():
     clean_old_notebooks(pipeline_dir)
     
     phases = [
-        # Hugging Face Auth
+        # Hugging Face Authentication
         (
             "🔑 Hugging Face Authentication",
-            "This section handles authentication with Hugging Face. Gated models (like the official SDXL base model) require an active token. Paste your token in the field below or run the cell to login interactively.",
+            "This section handles authentication with Hugging Face. Gated models (like the official SDXL base model) require an active token. Paste your token in the field below, or run the cell to login interactively. Alternatively, you can define it in a `.env` file at the repository root.",
             [
                 ("md", "### 🔑 Authenticate with Hugging Face Hub (Optional)"),
                 ("code", """import os
 # @markdown You can get a free token from: https://huggingface.co/settings/tokens
 hf_token = "" # @param {type:"string"}
 
-if hf_token:
+# First, check if HF_TOKEN is already set in the environment (e.g. from .env file)
+if "HF_TOKEN" in os.environ and not hf_token:
+    print("✅ Hugging Face Token already configured from environment/.env file!")
+elif hf_token:
     os.environ["HF_TOKEN"] = hf_token
-    print("✅ Hugging Face Token configured in environment!")
+    print("✅ Hugging Face Token configured in environment from parameter!")
 else:
     try:
         from huggingface_hub import notebook_login

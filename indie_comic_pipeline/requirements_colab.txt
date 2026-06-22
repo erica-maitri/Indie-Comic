@@ -17,3 +17,5 @@ langchain
 langchain-ollama
 langchain-core
 rarfile>=4.0
+python-dotenv
+

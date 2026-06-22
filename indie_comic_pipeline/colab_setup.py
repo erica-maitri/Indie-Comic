@@ -78,6 +78,11 @@ print(f"🐍 Python path includes: {PIPELINE_DIR}")
 # ── 4. Install requirements (Colab only) ────────────────────────────────────
 
 if IN_COLAB:
+    # Google Colab pre-installs torchao==0.10.0, but newer diffusers/peft require >0.16.0.
+    # Uninstalling torchao solves the version conflict crash completely.
+    print("🧹 Removing incompatible pre-installed torchao version to avoid conflicts...")
+    subprocess.run([sys.executable, "-m", "pip", "uninstall", "torchao", "-y", "-q"], check=False)
+
     # Prefer the slim colab requirements to avoid version conflicts
     req_file = os.path.join(PIPELINE_DIR, "requirements_colab.txt")
     if not os.path.exists(req_file):
@@ -166,5 +171,29 @@ if IN_COLAB:
             print(f"✅ Model '{model_name}' is ready.")
         except Exception as e:
             print(f"❌ Failed to pull model '{model_name}': {e}")
+
+# ── 6. Load .env file & Suppress Tokenizer Warnings ──────────────────────────
+# Load .env file from the repo root if it exists
+dotenv_path = os.path.join(REPO_ROOT, ".env")
+if os.path.exists(dotenv_path):
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(dotenv_path=dotenv_path)
+        if "HF_TOKEN" in os.environ:
+            print("🔑 Hugging Face Token loaded from .env into environment.")
+    except Exception as e:
+        print(f"⚠️ Failed to load .env: {e}")
+
+# Suppress Hugging Face/Transformers tokenization warnings
+try:
+    import logging as py_logging
+    py_logging.getLogger("transformers.tokenization_utils_base").setLevel(py_logging.ERROR)
+    import warnings
+    warnings.filterwarnings("ignore", category=UserWarning, module="transformers")
+    # Set Hugging Face verbosity
+    from transformers.utils import logging as tf_logging
+    tf_logging.set_verbosity_error()
+except Exception:
+    pass
 
 print("\n🚀 Setup complete! You can now import from indie_comic_pipeline freely.\n")
