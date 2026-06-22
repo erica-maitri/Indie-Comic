@@ -119,9 +119,7 @@ else:
             "This section runs the entire 8-phase pipeline in a single step. It automatically detects if a GPU is available to run real SDXL generation; otherwise, it runs a fast dry-run using mock panels with real dialogue and speech bubble layout optimization.",
             [
                 ("md", "### ⚡ Configure and Run the Comic Generator"),
-                ("code", """%load_ext autoreload
-%autoreload 2
-from integrated_pipeline import IntegratedComicPipeline
+                ("code", """from integrated_pipeline import IntegratedComicPipeline
 import torch
 from PIL import Image
 from IPython.display import display
