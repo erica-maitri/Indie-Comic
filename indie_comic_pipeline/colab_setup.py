@@ -92,4 +92,79 @@ if IN_COLAB:
     else:
         print("⚠️  requirements.txt not found — skipping install.")
 
+    # ── 5. Setup Ollama (Colab only) ──────────────────────────────────────────
+    print("\n🦙 Setting up Ollama in Colab context...")
+    
+    # Check if ollama binary is installed, install if missing
+    import shutil
+    if not shutil.which("ollama"):
+        print("📥 Ollama not found. Installing Ollama (this will take less than a minute)...")
+        try:
+            install_cmd = "curl -fsSL https://ollama.com/install.sh | sh"
+            subprocess.run(install_cmd, shell=True, check=True)
+            print("✅ Ollama installed successfully.")
+        except Exception as e:
+            print(f"❌ Failed to install Ollama: {e}")
+    else:
+        print("✅ Ollama binary is already installed.")
+
+    # Check if Ollama service is running, start if not
+    import urllib.request
+    import json
+    import time
+    
+    ollama_running = False
+    for _ in range(3):
+        try:
+            with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=2) as response:
+                if response.status == 200:
+                    ollama_running = True
+                    break
+        except Exception:
+            time.sleep(1)
+            
+    if not ollama_running:
+        print("⚠️ Ollama service not running. Starting Ollama daemon in background...")
+        try:
+            # Launch server in background
+            subprocess.Popen(
+                ["ollama", "serve"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True
+            )
+            # Wait for it to start up
+            for attempt in range(10):
+                try:
+                    with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=2) as response:
+                        if response.status == 200:
+                            ollama_running = True
+                            print("✅ Ollama daemon started successfully.")
+                            break
+                except Exception:
+                    time.sleep(2)
+            if not ollama_running:
+                print("❌ Timeout waiting for Ollama daemon to start.")
+        except Exception as e:
+            print(f"❌ Failed to start Ollama daemon: {e}")
+    else:
+        print("✅ Ollama daemon is active.")
+
+    # Pull required model (e.g. llama3.2)
+    if ollama_running:
+        model_name = "llama3.2"
+        try:
+            from utils.config_helper import load_settings
+            settings = load_settings()
+            model_name = settings.get("langchain", {}).get("model", "llama3.2")
+        except Exception:
+            pass
+            
+        print(f"📥 Pulling Ollama model '{model_name}' (this may take a minute)...")
+        try:
+            subprocess.run(["ollama", "pull", model_name], check=True)
+            print(f"✅ Model '{model_name}' is ready.")
+        except Exception as e:
+            print(f"❌ Failed to pull model '{model_name}': {e}")
+
 print("\n🚀 Setup complete! You can now import from indie_comic_pipeline freely.\n")
