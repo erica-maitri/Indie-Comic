@@ -92,6 +92,8 @@ class SDXLBackend(BaseBackend):
         self._pipe.scheduler = DPMSolverMultistepScheduler.from_config(
             self._pipe.scheduler.config,
             use_karras_sigmas=True,
+            algorithm_type="sde-dpmsolver++",
+            solver_order=2
         )
 
         # Optimizations and device placement
