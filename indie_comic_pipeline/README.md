@@ -68,7 +68,7 @@ indie_comic_pipeline/
 │── Environment & Config ──────────────────────────────────────
 ├── colab_setup.py                  # Universal Colab/Jupyter bootstrap helper
 ├── install_all.py                  # One-click dependency installer
-├── generate_research_notebooks.py  # Generates 6 research notebooks with Colab checks
+├── generate_research_notebooks.py  # Generates the unified research notebook with Colab checks
 ├── requirements.txt                # Full pinned dependencies
 ├── requirements_colab.txt          # Slim Colab-compatible dependencies
 ├── config/
@@ -109,13 +109,8 @@ indie_comic_pipeline/
 │   ├── app.py                      # Flask server (port 5000)
 │   └── templates/comic_generator.html
 │
-│── Research Notebooks ────────────────────────────────────────
-├── 01_Metrics_Build_and_Setup.ipynb
-├── 02_Initial_Generation_and_Consistency_Check.ipynb
-├── 03_First_Changes_and_Refinement.ipynb
-├── 04_Apply_IP_Adapter.ipynb
-├── 05_Final_Changes_and_Spatial_Layout.ipynb
-├── 06_Multimedia_Output_and_Export.ipynb
+│── Research Notebook ─────────────────────────────────────────
+└── Indie_Comic_Pipeline.ipynb      # Unified end-to-end comic generation pipeline
 ```
 
 ---
@@ -160,25 +155,18 @@ Constructs single-panel visual structures, organizes panels into high-fidelity p
 
 ---
 
-## 🧠 Core Experimental Phases & Notebook Walkthrough
+## 🧠 Core Experimental Phases (Indie_Comic_Pipeline.ipynb)
 
-### Phase 1: Metrics Build (`01_Metrics_Build_and_Setup.ipynb`)
-Initializes evaluation algorithms. Establishes baseline metrics (FID, Structural SSIM, and Gram Matrix) to score visual quality before any optimizations are introduced.
+The unified notebook is organized sequentially, allowing you to run the entire pipeline in one go or execute individual cells step-by-step:
 
-### Phase 2: Check Consistency (`02_Initial_Generation_and_Consistency_Check.ipynb`)
-Executes baseline image generations. Pushes generated panels through `utils/consistency_checker.py` to calculate raw structural amnesia and color drift.
-
-### Phase 3: Initial Changes (`03_First_Changes_and_Refinement.ipynb`)
-Introduces reinforcement feedback via `IncrementalLearner` and `log_feedback(prompt, rating, feedback)`. Adjusts prompt composition, weights, and negative anchors based on recorded performance.
-
-### Phase 4: Apply IP-Adapter (`04_Apply_IP_Adapter.ipynb`)
-Activates cross-attention image conditioning using an anchor image. Aligns facial structure, outfits, and styling throughout varying camera angles and scenes.
-
-### Phase 5: Final Changes & Spatial Layout (`05_Final_Changes_and_Spatial_Layout.ipynb`)
-Combines YOLOv8 target detection with collision avoidance math inside `SpeechBubbleOptimizer` to dynamically layout panel dialogue bubbles cleanly.
-
-### Phase 6: Final Output & Export (`06_Multimedia_Output_and_Export.ipynb`)
-Compiles final PDF grids, bundles web-friendly HTML pages, saves `.cbz` archives, and builds per-panel TTS audio files via `audio_integration.py`.
+* **Phase 0: Story Intake Engine**: Processes raw narrative and emotional user prompts through the Story-Weaver LLM to generate structured story configurations.
+* **Phase 1: Narrative Planning Layer**: Orchestrates the Storyboard, Character, Scene, and Layout agents through the shared Memory Blackboard.
+* **Phase 2: Reference-Free Anchoring**: Isolates the first generated panel as the primary visual anchor and extracts identity embedding tokens (facial topology, wardrobe features).
+* **Phase 3 & 4: In-Generation Consistency & Composable Control**: Runs the unified panel generation loop using model weight blending (CharCom) and Advanced Attention mechanisms.
+* **Phase 5: Integrated Text-Image Generation**: Runs the DiffSensei bubble planner, mapping text layout coordinates to avoid subject/facial visual collisions.
+* **Phase 6: Quality Validation Layer**: Runs the COMIC Critic Pipeline to check panels against visual, narrative, emotional, aesthetic, and readability thresholds.
+* **Phase 7: Layout & Assembly**: Arranges panel matrices dynamically based on story action intensities using the MangaFlow Layout Engine.
+* **Phase 8: Export Module & Adaptive RLHF**: Exports pages to PDF/CBZ/HTML and runs the Human Alignment Telemetry Loop with parameter backpropagation optimization.
 
 ---
 

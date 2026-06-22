@@ -45,7 +45,7 @@ SETUP_CELL = {
     ]
 }
 
-notebooks = sorted(glob.glob(os.path.join(PIPELINE_DIR, '0*.ipynb')))
+notebooks = glob.glob(os.path.join(PIPELINE_DIR, '*.ipynb'))
 patched = 0
 for nb_path in notebooks:
     with open(nb_path, 'r', encoding='utf-8') as f:
