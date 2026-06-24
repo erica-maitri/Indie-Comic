@@ -30,6 +30,10 @@ if _IN_CLOUD:
         import subprocess
         subprocess.run(["git", "clone", "--depth", "1",
             "https://github.com/Cyberpunk-San/Indie-Comic.git", _repo], check=True)
+    else:
+        print("🔄 Repo already exists. Pulling latest changes...")
+        import subprocess
+        subprocess.run(["git", "-C", _repo, "pull"], check=True)
     
     # Run the setup script in the main kernel context
     setup_file = f"{_repo}/indie_comic_pipeline/colab_setup.py"
