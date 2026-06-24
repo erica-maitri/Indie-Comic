@@ -100,80 +100,81 @@ if IN_COLAB:
     else:
         print("⚠️  requirements.txt not found — skipping install.")
 
-    # ── 5. Setup Ollama (Colab only) ──────────────────────────────────────────
-    print("\n🦙 Setting up Ollama in Colab context...")
+    # ── 5. Setup Ollama (Cloud only) ──────────────────────────────────────────
+    print("\n🦙 Setting up Ollama in Cloud context...")
     
-    # Check if ollama binary is installed, install if missing
     import shutil
-    if not shutil.which("ollama"):
-        print("📥 Ollama not found. Installing Ollama (this will take less than a minute)...")
-        try:
-            install_cmd = "curl -fsSL https://ollama.com/install.sh | sh"
-            subprocess.run(install_cmd, shell=True, check=True)
-            print("✅ Ollama installed successfully.")
-        except Exception as e:
-            print(f"❌ Failed to install Ollama: {e}")
-    else:
-        print("✅ Ollama binary is already installed.")
-
-    # Check if Ollama service is running, start if not
-    import urllib.request
-    import json
     import time
+    import threading
+    import socket
     
-    ollama_running = False
-    for _ in range(3):
+    ollama_installed = True
+    if not shutil.which("ollama"):
+        print("📥 Ollama not found. Installing dependencies and Ollama...")
         try:
-            with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=2) as response:
-                if response.status == 200:
-                    ollama_running = True
-                    break
-        except Exception:
-            time.sleep(1)
-            
-    if not ollama_running:
-        print("⚠️ Ollama service not running. Starting Ollama daemon in background...")
-        try:
-            # Launch server in background
-            subprocess.Popen(
-                ["ollama", "serve"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                close_fds=True
-            )
-            # Wait for it to start up
-            for attempt in range(10):
-                try:
-                    with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=2) as response:
-                        if response.status == 200:
-                            ollama_running = True
-                            print("✅ Ollama daemon started successfully.")
-                            break
-                except Exception:
-                    time.sleep(2)
-            if not ollama_running:
-                print("❌ Timeout waiting for Ollama daemon to start.")
-        except Exception as e:
-            print(f"❌ Failed to start Ollama daemon: {e}")
-    else:
-        print("✅ Ollama daemon is active.")
+            # Install zstd dependency first
+            print(" Installing zstd dependency...")
+            subprocess.run(["apt-get", "update"], check=True, capture_output=True, text=True)
+            subprocess.run(["apt-get", "install", "-y", "zstd"], check=True, capture_output=True, text=True)
+            print(" zstd installed successfully.")
 
-    # Pull required model (e.g. llama3.2)
-    if ollama_running:
-        model_name = "llama3.2"
+            install_process = subprocess.run("curl -fsSL https://ollama.com/install.sh | sh", shell=True, check=True, capture_output=True, text=True)
+            print(" Ollama successfully installed.")
+            subprocess.run(["ollama", "--version"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except subprocess.CalledProcessError as e:
+            print(f"❌ ERROR: Ollama installation failed with exit code {e.returncode}.")
+            print(f" STDERR: {e.stderr}")
+            ollama_installed = False
+        except FileNotFoundError:
+            print("❌ ERROR: 'ollama' executable not found even after successful script execution.")
+            ollama_installed = False
+
+    def start_ollama_server():
+        global ollama_installed
         try:
-            from utils.config_helper import load_settings
-            settings = load_settings()
-            model_name = settings.get("langchain", {}).get("model", "llama3.2")
-        except Exception:
-            pass
+            flags = 0x08000000 if sys.platform == 'win32' else 0
+            subprocess.Popen(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags)
+        except FileNotFoundError:
+            ollama_installed = False
+
+    thread = threading.Thread(target=start_ollama_server, daemon=True)
+    thread.start()
+    time.sleep(1.5)
+
+    if not ollama_installed:
+        print("❌ ERROR: 'ollama' executable not found on this system.")
+    else:
+        print(" Waiting for Ollama server to respond...")
+        connected = False
+        for _ in range(30):
+            try:
+                s = socket.create_connection(("localhost", 11434), timeout=1)
+                s.close()
+                connected = True
+                break
+            except OSError:
+                time.sleep(1.5)
+
+        if connected:
+            print("✅ Ollama server is running on port 11434.")
             
-        print(f"📥 Pulling Ollama model '{model_name}' (this may take a minute)...")
-        try:
-            subprocess.run(["ollama", "pull", model_name], check=True)
-            print(f"✅ Model '{model_name}' is ready.")
-        except Exception as e:
-            print(f"❌ Failed to pull model '{model_name}': {e}")
+            # Pull required model (e.g. llama3.2)
+            model_name = "llama3.2"
+            try:
+                from utils.config_helper import load_settings
+                settings = load_settings()
+                model_name = settings.get("langchain", {}).get("model", "llama3.2")
+            except Exception:
+                pass
+                
+            print(f"📥 Pulling Ollama model '{model_name}' (this may take a minute)...")
+            try:
+                subprocess.run(["ollama", "pull", model_name], check=True)
+                print(f"✅ Model '{model_name}' is ready.")
+            except Exception as e:
+                print(f"❌ Failed to pull model '{model_name}': {e}")
+        else:
+            print("❌ Ollama server failed to start within 45 seconds.")
 
 # ── 6. Load .env file & Suppress Tokenizer Warnings ──────────────────────────
 # Load .env file from the repo root if it exists
