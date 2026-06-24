@@ -75,6 +75,8 @@ llm = ChatOllama(
 
     temperature=langchain_settings.get("temperature", 0.4),
 
+    num_predict=8192,
+
     base_url=langchain_settings.get("ollama_url", "http://localhost:11434")
 
 )

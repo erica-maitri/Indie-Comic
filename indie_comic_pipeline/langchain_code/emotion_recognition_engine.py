@@ -219,6 +219,7 @@ print("\nConnecting to local Ollama server...")
 llm = ChatOllama(
     model=langchain_settings.get("model", "llama3.2"),
     temperature=0.2, # Lower temperature for stable JSON output
+    num_predict=8192,
     base_url=ollama_url
 )
 
@@ -226,21 +227,16 @@ llm = ChatOllama(
 system_prompt = """You are an expert comic book narrative director, character psychologist, and visual layout designer.
 Your task is to analyze a comic panel's narrative text, dialogue, and captions, and extract:
 1. Which characters are active in this specific panel.
-2. The primary emotion of each character (e.g. angry, fearful, joyful, sad, surprised, neutral, ecstatic, furious, terrified, curious).
+2. The primary emotion of each character (e.g. angry, fearful, joyful, sad).
 3. The intensity of that emotion (low, medium, high).
-4. A highly dramatic, descriptive visual facial expression trigger suited for drawing (e.g. "brows deeply furrowed, teeth gritted in determination, eyes wide with anger" or "crying softly with eyes closed and tears streaming"). Ensure it matches the scene's emotional context and genre (e.g. funny, gothic, tragic, heroic).
-5. The core action/posing happening, including the poses and expressions of ALL characters present.
-6. The background environment.
+4. A highly dramatic visual facial expression trigger. IMPORTANT: Use comma-separated tags only (e.g. "furrowed brows, gritted teeth, wide eyes").
+5. The core action/posing happening, using comma-separated tags only (e.g. "crawling, hands and knees, looking up").
+6. The background environment, using comma-separated tags only (e.g. "foggy, desolate, grassy hill, dark clouds").
 
-CRITICAL INSTRUCTIONS FOR GENRE STYLE & INTENSITY PROGRESSION:
-- You must analyze the emotional progression from previous panels. Escalating dialogues should result in escalating intensities and expression triggers.
-- Expressions must be vivid, dramatic, and genre-appropriate. For comedy, make them exaggerated or funny; for drama, make them intense, brooding, or poignant.
-- Return emotions for EVERY character present in the panel.
+CRITICAL REQUIREMENT FOR DIFFUSION MODELS:
+DO NOT write natural language sentences. You MUST output ONLY comma-separated tags for expression_trigger, core_action, and background_env. This prevents token dilution when passed to the SDXL model.
 
 Analyze the panel and return a JSON structure matching the example below:
-
-Example Panel Description:
-Panel 1: Peter Parker crawls out of the portal, shivering and looking up at the cold wind. Dialogue: 'By the heavens, where am I?'
 
 Example Output:
 {{
@@ -249,14 +245,14 @@ Example Output:
     "Peter Parker": {{
       "emotion": "fearful",
       "intensity": "high",
-      "expression_trigger": "shivering with eyes wide in confusion, mouth slightly open, windswept hair"
+      "expression_trigger": "shivering, wide eyes, open mouth, windswept hair"
     }}
   }},
-  "core_action": "Peter Parker crawling on hands and knees, looking up in disbelief",
-  "background_env": "foggy desolate grassy hill under dark clouds"
+  "core_action": "crawling, hands and knees, looking up, disbelief",
+  "background_env": "foggy, desolate, grassy hill, dark clouds"
 }}
 
-Respond ONLY with a valid JSON block. Do not add any text before or after the JSON payload. Do not use unescaped double quotes inside value strings (use single quotes instead).
+Respond ONLY with a valid JSON block. Do not add any text before or after the JSON payload.
 """
 
 prompt = ChatPromptTemplate.from_messages([

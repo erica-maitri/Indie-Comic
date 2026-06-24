@@ -185,6 +185,35 @@ class SDXLBackend(BaseBackend):
         if self._lora_loaded:
             gen_kwargs["cross_attention_kwargs"] = {"scale": lora_scale}
 
+        # --- COMPEL INTEGRATION FOR LONG PROMPTS (>77 tokens) ---
+        try:
+            from compel import Compel, ReturnedEmbeddingsType
+            if getattr(self, "_compel", None) is None:
+                self._compel = Compel(
+                    tokenizer=[self._pipe.tokenizer, self._pipe.tokenizer_2],
+                    text_encoder=[self._pipe.text_encoder, self._pipe.text_encoder_2],
+                    returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED,
+                    requires_pooled=[False, True]
+                )
+            
+            # Encode prompt
+            prompt_embeds, pooled_prompt_embeds = self._compel(prompt)
+            gen_kwargs.pop("prompt")
+            gen_kwargs["prompt_embeds"] = prompt_embeds
+            gen_kwargs["pooled_prompt_embeds"] = pooled_prompt_embeds
+            
+            # Encode negative prompt
+            if negative_prompt:
+                neg_prompt_embeds, neg_pooled_prompt_embeds = self._compel(negative_prompt)
+                gen_kwargs.pop("negative_prompt")
+                gen_kwargs["negative_prompt_embeds"] = neg_prompt_embeds
+                gen_kwargs["negative_pooled_prompt_embeds"] = neg_pooled_prompt_embeds
+                
+            log.info("  [SDXL] Using Compel for prompt embeddings (bypassing 77 token limit)")
+        except ImportError:
+            log.warning("  [SDXL] 'compel' library not installed. Token truncation > 77 may occur.")
+        # --------------------------------------------------------
+
         # ── Advanced Attention step callback (L1 Heat + L3 Spatiotemporal) ──
         step_callback = config.get("step_callback")
         if step_callback is not None:

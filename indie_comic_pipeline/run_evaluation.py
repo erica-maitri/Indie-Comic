@@ -12,7 +12,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Comprehensive Model Evaluation Suite")
     parser.add_argument("--gen_img", type=str, required=True, help="Path to generated image")
-    parser.add_argument("--ref_img", type=str, required=True, help="Path to reference ground-truth image (for FID, DINOv2, CLIP)")
+    parser.add_argument("--ref_img", type=str, required=False, help="Path to reference ground-truth image (for FID, DINOv2, CLIP)")
     parser.add_argument("--prompt", type=str, default="", help="Prompt used to generate image (for CLIP Text-Image)")
     parser.add_argument("--gen_text", type=str, default="", help="Generated dialogue/text")
     parser.add_argument("--ref_text", type=str, default="", help="Reference dialogue/text")
@@ -21,6 +21,11 @@ def main():
     
     args = parser.parse_args()
     
+    if not args.ref_img:
+        # Default to Panel 1 for Character/Style Consistency checking (Option 1)
+        args.ref_img = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs", "panels", "panel_001_final.png")
+        print(f"[*] No --ref_img provided. Using Panel 1 as consistency anchor: {args.ref_img}")
+
     evaluator = ModelEvaluator()
     print("="*50)
     print(" Model Evaluation Suite")

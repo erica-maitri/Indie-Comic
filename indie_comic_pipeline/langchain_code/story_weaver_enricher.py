@@ -232,40 +232,40 @@ You are an expert comic book character director and visual world-builder.
 Given a comic panel's visual description, dialogue, emotion beat, and motion/action, \
 you will produce a COMPLETE character manifest for that panel.
 
+CRITICAL REQUIREMENT for Diffusion Models:
+DO NOT WRITE NATURAL LANGUAGE SENTENCES. You MUST output ONLY comma-separated tags \
+(e.g., "1girl, short blonde hair, blue eyes, angry, shouting, pointing finger, cafe background, sunny day"). \
+This is required for the SDXL image generator to understand the prompt without token dilution.
+
 Requirements:
 1. ONE main character (the protagonist) — give them a vivid but consistent appearance.
-2. EXACTLY {min_side_chars} or more side characters — each with distinct roles, appearances, and reactions. \
-   If the scene doesn't naturally have {min_side_chars}+ side characters, INVENT contextually appropriate ones \
-   (e.g., a shopkeeper in the background, a passerby, a friend, a shadow figure).
-3. ONE detailed scenery description combining all environmental, lighting, weather, and atmospheric cues.
-4. All character fields must be filled — never leave expression, action, or clothing empty.
-
-IMPORTANT: Do NOT name emotions literally (no "sad", "angry", "happy"). \
-Express them through body language and physical description only.
+2. EXACTLY {min_side_chars} or more side characters — INVENT contextually appropriate ones if needed.
+3. ONE scenery description.
+4. All text fields MUST be concise, comma-separated Danbooru-style visual tags. Do NOT use verbs like 'is wearing' or 'looks like'.
 
 Respond ONLY with valid JSON in this exact structure. No markdown. No explanation:
 {{
   "main_character": {{
     "name": "{character_name}",
-    "description": "one-sentence physical appearance",
-    "emotion": "one descriptive word avoiding literal emotion names",
-    "mood": "one word describing inner state",
-    "expression": "detailed face and body expression trigger (3-6 descriptive phrases)",
-    "action": "what main character is physically doing right now",
-    "clothing": "clothing description matching world/mood"
+    "description": "comma-separated physical traits (e.g. 1boy, tall, messy black hair, scar on cheek)",
+    "emotion": "one descriptive emotion tag",
+    "mood": "one word tag",
+    "expression": "comma-separated face tags (e.g. furrowed brows, gritted teeth, glaring)",
+    "action": "comma-separated action tags (e.g. running, holding sword, dynamic pose)",
+    "clothing": "comma-separated clothing tags (e.g. torn red cape, black armor)"
   }},
   "side_characters": [
     {{
       "name": "Character Name",
-      "description": "one-sentence physical appearance",
-      "emotion": "one descriptive word",
-      "mood": "one word",
-      "expression": "detailed face and body expression trigger",
-      "action": "what this character is doing",
-      "clothing": "clothing description"
+      "description": "comma-separated physical traits",
+      "emotion": "one emotion tag",
+      "mood": "one word tag",
+      "expression": "comma-separated face tags",
+      "action": "comma-separated action tags",
+      "clothing": "comma-separated clothing tags"
     }}
   ],
-  "scenery": "rich multi-sentence environment description covering location, lighting, atmosphere, weather, time of day, recurring motif"
+  "scenery": "comma-separated background and lighting tags (e.g. dark alley, raining, neon lights, volumetric fog)"
 }}"""
 
 
@@ -490,6 +490,7 @@ def run_enricher():
     llm = ChatOllama(
         model=langchain_settings.get("model", "llama3.2"),
         temperature=0.25,
+        num_predict=8192,
         base_url=ollama_url
     )
 
