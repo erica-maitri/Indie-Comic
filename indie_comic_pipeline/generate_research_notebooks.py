@@ -10,7 +10,7 @@ def create_unified_notebook(filename, title, description, phases):
     
     # Environment Setup Cell (run once at the start)
     setup_code = """# ============================================================
-# Universal Colab/Local Setup — run this first in every notebook
+# Universal Cloud/Local Setup — run this first in every notebook
 # ============================================================
 import os, sys, urllib.request
 
@@ -20,9 +20,12 @@ try:
 except ImportError:
     _IN_COLAB = False
 
-if _IN_COLAB:
-    print("🚀 Detected Google Colab. Setting up environment...")
-    _repo = "/content/Indie-Comic"
+_IN_KAGGLE = os.path.exists("/kaggle/working")
+_IN_CLOUD = _IN_COLAB or _IN_KAGGLE
+
+if _IN_CLOUD:
+    print("🚀 Detected Cloud Environment (Colab/Kaggle). Setting up...")
+    _repo = "/content/Indie-Comic" if _IN_COLAB else "/kaggle/working/Indie-Comic"
     if not os.path.exists(_repo):
         import subprocess
         subprocess.run(["git", "clone", "--depth", "1",
@@ -405,6 +408,72 @@ adjusts = optimizer.optimize_system_parameters()
 
 print("System Optimization Recommendations:")
 print(adjusts)""")
+            ]
+        ),
+        # Phase 9
+        (
+            "🚀 Phase 9: Comprehensive Model Evaluation",
+            "This section calculates advanced metrics including FID, BLEU, IoU, CLIP (Text-Image and Image-Image), and DINOv2 Structural Similarity to evaluate the quality of the generated panels.",
+            [
+                ("md", "### 📊 1. Run Comprehensive Model Evaluator"),
+                ("code", """import os
+from PIL import Image
+from core.evaluation_suite import ModelEvaluator
+import json
+
+evaluator = ModelEvaluator()
+
+# We will evaluate against mock images, but in a real scenario you would point this to your actual generated panels and character sheets.
+gen_img = Image.new('RGB', (256, 256), 'red')
+ref_img = Image.new('RGB', (256, 256), 'blue')
+
+metrics = {}
+
+print("[1] Image Quality & Realism")
+metrics['Aesthetic Score'] = evaluator.compute_aesthetic_score(gen_img)
+print(f"  -> Aesthetic Score: {metrics['Aesthetic Score']:.4f}")
+
+# FID expects real/generated images
+fid_score = evaluator.compute_fid(gen_img, ref_img)
+if fid_score is not None:
+    metrics['FID'] = fid_score
+    print(f"  -> FID Score: {metrics['FID']:.4f} (lower is better)")
+else:
+    print("  -> FID Score: SKIPPED (Install torch-fidelity to use)")
+
+print("\\n[2] Semantic & Structural Consistency")
+dinov2 = evaluator.compute_dinov2_similarity(gen_img, ref_img)
+if dinov2 is not None:
+    metrics['DINOv2 Similarity'] = dinov2
+    print(f"  -> DINOv2: {metrics['DINOv2 Similarity']:.4f} (higher is better)")
+
+clip_img = evaluator.compute_clip_image_similarity(gen_img, ref_img)
+if clip_img is not None:
+    metrics['CLIP Img2Img'] = clip_img
+    print(f"  -> CLIP Img-Img: {metrics['CLIP Img2Img']:.4f} (higher is better)")
+
+print("\\n[3] Text-to-Image Alignment")
+clip_text = evaluator.compute_clip_text_alignment(gen_img, "A red square")
+if clip_text is not None:
+    metrics['CLIP Text2Img'] = clip_text
+    print(f"  -> CLIP Text-Img: {metrics['CLIP Text2Img']:.4f} (higher is better)")
+
+print("\\n[4] Text Generation Quality")
+bleu = evaluator.compute_bleu("Hello", "Hello world")
+if bleu is not None:
+    metrics['BLEU Score'] = bleu
+    print(f"  -> BLEU: {metrics['BLEU Score']:.4f} (higher is better)")
+
+print("\\n[5] Layout Accuracy")
+# Example bounding boxes: (x1, y1, x2, y2)
+iou_score = evaluator.compute_iou((10, 10, 50, 50), (12, 12, 48, 48))
+metrics['IoU Score'] = iou_score
+print(f"  -> Bounding Box IoU: {metrics['IoU Score']:.4f} (higher is better)")
+
+print("\\nFinal Metrics:")
+print(json.dumps(metrics, indent=2))
+
+evaluator.free_memory()""")
             ]
         )
     ]

@@ -623,66 +623,41 @@ class ModelEnsemble:
 # ============================================================================
 
 class QualityMetrics:
-    """Quality validation metrics"""
+    """Quality validation metrics (Wrapper for ModelEvaluator)"""
+    
+    def __init__(self):
+        self.evaluator = None
+        
+    def _get_evaluator(self):
+        if self.evaluator is None:
+            try:
+                from core.evaluation_suite import ModelEvaluator
+                self.evaluator = ModelEvaluator()
+            except ImportError:
+                print("[QualityMetrics] Warning: ModelEvaluator not found.")
+                self.evaluator = None
+        return self.evaluator
     
     def compute_fid(self, generated_img, reference_img):
         """Fréchet Inception Distance"""
-        try:
-            from torchmetrics.image.fid import FrechetInceptionDistance
-            import torchvision.transforms as transforms
-            
-            fid = FrechetInceptionDistance(feature=64)
-            
-            transform = transforms.Compose([
-                transforms.Resize((299, 299)),
-                transforms.ToTensor()
-            ])
-            
-            gen_tensor = transform(generated_img).unsqueeze(0)
-            ref_tensor = transform(reference_img).unsqueeze(0)
-            
-            fid.update(gen_tensor, real=False)
-            fid.update(ref_tensor, real=True)
-            
-            return fid.compute().item()
-        except:
-            return None
+        ev = self._get_evaluator()
+        if ev:
+            return ev.compute_fid(generated_img, reference_img)
+        return None
     
     def compute_bleu(self, generated_text, reference_text):
         """BLEU score for text quality"""
-        try:
-            from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
-            
-            reference = [reference_text.split()]
-            candidate = generated_text.split()
-            
-            smoothie = SmoothingFunction().method4
-            return sentence_bleu(reference, candidate, smoothing_function=smoothie)
-        except:
-            return None
+        ev = self._get_evaluator()
+        if ev:
+            return ev.compute_bleu(generated_text, reference_text)
+        return None
     
     def compute_iou(self, predicted_bbox, ground_truth_bbox):
         """Intersection over Union for bubble placement"""
-        try:
-            # predicted_bbox = (x1, y1, x2, y2)
-            # ground_truth_bbox = (x1, y1, x2, y2)
-            
-            x1 = max(predicted_bbox[0], ground_truth_bbox[0])
-            y1 = max(predicted_bbox[1], ground_truth_bbox[1])
-            x2 = min(predicted_bbox[2], ground_truth_bbox[2])
-            y2 = min(predicted_bbox[3], ground_truth_bbox[3])
-            
-            if x2 < x1 or y2 < y1:
-                return 0.0
-            
-            intersection = (x2 - x1) * (y2 - y1)
-            pred_area = (predicted_bbox[2] - predicted_bbox[0]) * (predicted_bbox[3] - predicted_bbox[1])
-            gt_area = (ground_truth_bbox[2] - ground_truth_bbox[0]) * (ground_truth_bbox[3] - ground_truth_bbox[1])
-            union = pred_area + gt_area - intersection
-            
-            return intersection / union if union > 0 else 0.0
-        except:
-            return None
+        ev = self._get_evaluator()
+        if ev:
+            return ev.compute_iou(predicted_bbox, ground_truth_bbox)
+        return 0.0
 
 # ============================================================================
 # PANEL GENERATOR

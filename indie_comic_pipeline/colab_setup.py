@@ -26,14 +26,17 @@ try:
 except ImportError:
     IN_COLAB = False
 
+IN_KAGGLE = os.path.exists("/kaggle/working")
+IN_CLOUD = IN_COLAB or IN_KAGGLE
+
 REPO_URL  = "https://github.com/Cyberpunk-San/Indie-Comic.git"
 REPO_NAME = "Indie-Comic"                      # folder git creates
 PIPELINE  = "indie_comic_pipeline"             # subfolder we need on sys.path
 
 # ── 2. Clone repo (Colab only) ───────────────────────────────────────────────
 
-if IN_COLAB:
-    REPO_ROOT = f"/content/{REPO_NAME}"
+if IN_CLOUD:
+    REPO_ROOT = f"/content/{REPO_NAME}" if IN_COLAB else f"/kaggle/working/{REPO_NAME}"
     if not os.path.exists(REPO_ROOT):
         print(f"📦 Cloning {REPO_URL} ...")
         subprocess.run(
