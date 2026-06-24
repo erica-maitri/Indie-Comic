@@ -43,6 +43,7 @@ class ModelEvaluator:
         try:
             import torchvision.transforms as transforms
             self._load_fid()
+            assert self.fid_metric is not None
             
             transform = transforms.Compose([
                 transforms.Resize((299, 299)),
@@ -75,7 +76,7 @@ class ModelEvaluator:
         sharp_score = min(1.0, lap_var / 500.0)
         
         # 2. Contrast
-        std_brightness = np.std(img_gray)
+        std_brightness = float(np.std(img_gray))  # type: ignore
         contrast_score = min(1.0, std_brightness / 75.0)
         
         # 3. Colorfulness
@@ -90,6 +91,8 @@ class ModelEvaluator:
     def compute_clip_image_similarity(self, img1: Image.Image, img2: Image.Image) -> Optional[float]:
         try:
             self._load_clip()
+            assert self.clip_model is not None
+            assert self.clip_processor is not None
             inputs = self.clip_processor(images=[img1, img2], return_tensors="pt", padding=True).to(self.device)
             with torch.no_grad():
                 features = self.clip_model.get_image_features(**inputs)
@@ -103,6 +106,8 @@ class ModelEvaluator:
     def compute_clip_text_alignment(self, img: Image.Image, prompt: str) -> Optional[float]:
         try:
             self._load_clip()
+            assert self.clip_model is not None
+            assert self.clip_processor is not None
             inputs = self.clip_processor(text=[prompt], images=img, return_tensors="pt", padding=True).to(self.device)
             with torch.no_grad():
                 outputs = self.clip_model(**inputs)
@@ -115,6 +120,8 @@ class ModelEvaluator:
     def compute_dinov2_similarity(self, img1: Image.Image, img2: Image.Image) -> Optional[float]:
         try:
             self._load_dinov2()
+            assert self.dinov2_processor is not None
+            assert self.dinov2_model is not None
             i1 = img1.convert("RGB")
             i2 = img2.convert("RGB")
             inputs1 = self.dinov2_processor(images=i1, return_tensors="pt").to(self.device)
@@ -165,6 +172,43 @@ class ModelEvaluator:
         except Exception as e:
             print(f"[ModelEvaluator] IoU Error: {e}")
             return 0.0
+
+    def compute_ssim(self, generated_img: Image.Image, reference_img: Image.Image) -> Optional[float]:
+        try:
+            from torchmetrics.image import StructuralSimilarityIndexMeasure
+            import torchvision.transforms as transforms
+            
+            transform = transforms.Compose([
+                transforms.Resize((256, 256)),
+                transforms.ToTensor()
+            ])
+            gen_tensor = transform(generated_img).unsqueeze(0).to(self.device)
+            ref_tensor = transform(reference_img).unsqueeze(0).to(self.device)
+            
+            ssim_metric = StructuralSimilarityIndexMeasure(data_range=1.0).to(self.device)
+            return ssim_metric(gen_tensor, ref_tensor).item()
+        except Exception as e:
+            print(f"[ModelEvaluator] SSIM Error: {e}")
+            return None
+
+    def compute_psnr(self, generated_img: Image.Image, reference_img: Image.Image) -> Optional[float]:
+        try:
+            from torchmetrics.image import PeakSignalNoiseRatio
+            import torchvision.transforms as transforms
+            
+            transform = transforms.Compose([
+                transforms.Resize((256, 256)),
+                transforms.ToTensor()
+            ])
+            gen_tensor = transform(generated_img).unsqueeze(0).to(self.device)
+            ref_tensor = transform(reference_img).unsqueeze(0).to(self.device)
+            
+            psnr_metric = PeakSignalNoiseRatio(data_range=1.0).to(self.device)
+            return psnr_metric(gen_tensor, ref_tensor).item()
+        except Exception as e:
+            print(f"[ModelEvaluator] PSNR Error: {e}")
+            return None
+
             
     def free_memory(self):
         """Free loaded models from VRAM/RAM"""

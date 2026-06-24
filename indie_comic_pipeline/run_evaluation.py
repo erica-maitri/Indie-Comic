@@ -16,6 +16,8 @@ def main():
     parser.add_argument("--prompt", type=str, default="", help="Prompt used to generate image (for CLIP Text-Image)")
     parser.add_argument("--gen_text", type=str, default="", help="Generated dialogue/text")
     parser.add_argument("--ref_text", type=str, default="", help="Reference dialogue/text")
+    parser.add_argument("--gen_bbox", type=str, default="", help="Generated bounding box in format x1,y1,x2,y2 (for IoU)")
+    parser.add_argument("--ref_bbox", type=str, default="", help="Reference bounding box in format x1,y1,x2,y2 (for IoU)")
     
     args = parser.parse_args()
     
@@ -55,6 +57,16 @@ def main():
     if clip_img_score is not None:
         metrics['CLIP Img2Img'] = clip_img_score
         print(f"  -> CLIP Img-Img:    {metrics['CLIP Img2Img']:.4f} (higher is better)")
+        
+    ssim_score = evaluator.compute_ssim(gen_img, ref_img)
+    if ssim_score is not None:
+        metrics['SSIM'] = ssim_score
+        print(f"  -> SSIM:            {metrics['SSIM']:.4f} (higher is better)")
+
+    psnr_score = evaluator.compute_psnr(gen_img, ref_img)
+    if psnr_score is not None:
+        metrics['PSNR'] = psnr_score
+        print(f"  -> PSNR:            {metrics['PSNR']:.4f} (higher is better)")
 
     # Text-to-Image Alignment
     if args.prompt:
@@ -71,6 +83,18 @@ def main():
         if bleu_score is not None:
             metrics['BLEU Score'] = bleu_score
             print(f"  -> BLEU:            {metrics['BLEU Score']:.4f} (higher is better)")
+
+    # Bounding Box Evaluation
+    if args.gen_bbox and args.ref_bbox:
+        print("\n[5] Layout & Bounding Box Quality")
+        try:
+            gen_box = tuple(map(int, args.gen_bbox.split(',')))
+            ref_box = tuple(map(int, args.ref_bbox.split(',')))
+            iou_score = evaluator.compute_iou(gen_box, ref_box)
+            metrics['IoU'] = iou_score
+            print(f"  -> IoU Score:       {metrics['IoU']:.4f} (higher is better)")
+        except Exception as e:
+            print(f"  -> Error computing IoU: {e}")
 
     print("\n" + "="*50)
     print(" Final JSON Report")
