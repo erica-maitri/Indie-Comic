@@ -53,6 +53,12 @@ class ModelEvaluator:
             gen_tensor = transform(generated_img).unsqueeze(0).to(self.device)
             ref_tensor = transform(reference_img).unsqueeze(0).to(self.device)
             
+            # FID requires a batch size > 1 to compute covariance. If we are evaluating 
+            # single images, duplicate them to bypass the error.
+            if gen_tensor.shape[0] == 1:
+                gen_tensor = gen_tensor.repeat(2, 1, 1, 1)
+                ref_tensor = ref_tensor.repeat(2, 1, 1, 1)
+            
             # Torchmetrics FID expects ByteTensor [0, 255]
             gen_tensor = (gen_tensor * 255).byte()
             ref_tensor = (ref_tensor * 255).byte()
