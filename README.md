@@ -10,18 +10,20 @@
 
 The pipeline uses a rigorous, sequential **8-Phase Architecture** to turn an emotion into a fully formatted comic:
 
-### [PHASE 0: STORY INTAKE]
-* **Action:** Raw user prompt is passed to the Story-Weaver LLM.
-* **Processing:** LLM parses thematic elements, emotional pacing, and structural flow.
-* **Output:** Generates a structured timeline configuration file (`story_dynamic.json`).
+### [PHASE 0: INTELLIGENT STORY INTAKE (WRITER'S ROOM)]
+* **Action:** User prompts (character, world, traits, reference) are passed to local Ollama (default: llama3.2).
+* **Processing:** Runs a single-pass JSON-structured LLM chain to generate both a 'Story Bible' and a detailed hierarchical scene graph script (characters, actions, camera, environment).
+* **Output:** Generates an in-memory structured configuration dictionary (`story_config`).
 
 ### [PHASE 1: NARRATIVE PLANNING LAYER]
-* **Action:** Multi-agent system breaks down the structured JSON data.
-    * **Storyboard Agent:** Establishes sequence beats, narrative pacing, and scene breaks.
-    * **Character Agent:** Builds character visual profiles and tracks emotional arc drift.
-    * **Scene Agent:** Tracks environmental settings, lighting conditions, and location continuity.
-    * **Layout Agent:** Defines camera framing parameters, angles, and panel geometry limits.
-* **Shared Storage:** All agents write to a central **Story Section Memory** (Explicit RAM Blackboard), which continuously logs cross-panel character states, spatial data, and structural values.
+* **Action:** Director Swarm (Multi-Agent System) parses and loads the scene graph into memory.
+    * **Story Director:** Registers characters and sets up the base panel sequence.
+    * **Action Director:** Parses character actions, physical verbs, and interactions.
+    * **Dialogue Writer:** Details dialogue text, tone, and vector speech bubble categories.
+    * **Pose Director:** Identifies body language posture/stance mapping constraints.
+    * **Emotion Director:** Resolves granular facial taxonomies (eyes, mouth, expressions).
+    * **Camera Director:** Dictates framing layouts (camera angle, environment variables).
+* **Shared Storage:** All agents read from and write to the shared **Story Section Memory** (Explicit RAM Blackboard), which tracks active character states, visual anchors, scene settings, and layout plans.
 
 ### [PHASE 2: REFERENCE-FREE ANCHORING]
 * **Step 2.1:** Pulls initial context prompts from memory to execute Panel 1 Generation.

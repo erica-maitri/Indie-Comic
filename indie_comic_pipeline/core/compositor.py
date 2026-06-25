@@ -109,8 +109,9 @@ class CharComCompositor:
         lora_scale = max(0.3, min(1.0, lora_scale))
         steps = max(15, min(50, steps))
 
-        # Deterministic seed with panel variation
-        seed_offset = panel_id * 7 + hash(beat) % 100
+        # Deterministic seed with panel variation (process-stable hash)
+        beat_hash = sum(ord(c) for c in beat)
+        seed_offset = panel_id * 7 + beat_hash % 100
 
         result = {
             "lora_scale": round(lora_scale, 3),

@@ -253,49 +253,45 @@ class PanelEngine:
         """
         parts = []
 
-        # Style prefix
+        # Base styling
         if style_prompt:
             parts.append(style_prompt)
         else:
             parts.append("clean minimalist line art, flat color palette, "
                          "crisp continuous outlines, cel-shaded with no gradients")
 
-        # Character visual note
-        char_note = context.get("character_visual_note", "")
-        if char_note:
-            parts.append(char_note)
-
-        # Panel visual description
-        panel_visual = context.get("panel_visual", "")
-        if panel_visual:
-            parts.append(panel_visual)
-
-        # Scene atmosphere
-        atmosphere = context.get("scene_atmosphere", "")
-        if atmosphere:
-            parts.append(atmosphere)
-
-        # Character expression
-        expression = context.get("character_expression", "")
-        if expression:
-            parts.append(f"Character expression: {expression}")
-
-        # Motion/action
-        motion = context.get("panel_motion", "")
-        if motion:
-            parts.append(motion)
-
-        # Recurring motif
+        # Parse Scene Graph
+        scene_graph = context.get("scene_graph", {})
+        
+        # 1. Environment and Camera
+        if "camera" in scene_graph:
+            parts.append(scene_graph["camera"])
+        if "environment" in scene_graph:
+            parts.append(scene_graph["environment"])
+            
+        # 2. Characters (Pose and Expression)
+        for char in scene_graph.get("characters", []):
+            char_id = char.get("id", "character")
+            pose = char.get("pose", {})
+            expr = char.get("expression", {})
+            
+            # Construct body pose string
+            pose_str = f"{char_id} is {pose.get('body', 'standing')}, arms {pose.get('arms', 'relaxed')}, legs {pose.get('legs', 'normal')}, head {pose.get('head', 'forward')}."
+            parts.append(pose_str)
+            
+            # Construct expression string
+            expr_str = f"Facial expression: {expr.get('emotion', 'neutral')} (eyes: {expr.get('eyes', 'neutral')}, mouth: {expr.get('mouth', 'neutral')})."
+            parts.append(expr_str)
+            
+        # 3. Actions
+        for action in scene_graph.get("actions", []):
+            act_str = f"{action.get('actor', '')} {action.get('verb', '')} {action.get('target', '')}."
+            parts.append(act_str.strip())
+            
+        # 4. Recurring Motif
         motif = self.memory.recurring_motif
         if motif:
             parts.append(f"Recurring motif: {motif}")
-
-        # Camera framing hint
-        layout = context.get("layout", {})
-        if layout:
-            angle = layout.get("camera_angle", "medium_shot")
-            framing = layout.get("camera_framing", "center")
-            parts.append(f"Camera: {angle.replace('_', ' ')}, {framing.replace('_', ' ')} composition")
 
         return ", ".join(p for p in parts if p)
 
@@ -329,3 +325,10 @@ class PanelEngine:
 
         size_map = {"small": 0.3, "medium": 0.5, "large": 0.7, "full_page": 0.9}
         return size_map.get(layout.get("size_class", "medium"), 0.5)
+
+    def cleanup(self):
+        """Cleanup hooks and cached VRAM tensors to prevent leaks."""
+        if self.advanced_attention:
+            self.advanced_attention.remove_hooks()
+            self._hooks_installed = False
+            log.info("PanelEngine cleaned up: hooks removed and cached VRAM cleared.")

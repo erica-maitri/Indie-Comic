@@ -100,18 +100,13 @@ class HeatDiffusionPrior:
         )
 
         try:
+            _, channels, _, _ = latents.shape
             kernel_t = torch.tensor(
                 self._kernel, dtype=latents.dtype, device=latents.device
-            ).unsqueeze(0).unsqueeze(0)
+            ).unsqueeze(0).unsqueeze(0).expand(channels, 1, -1, -1)
 
             padding = self.kernel_size // 2
-            _, channels, _, _ = latents.shape
-            smoothed = torch.zeros_like(latents)
-
-            for c in range(channels):
-                smoothed[:, c:c + 1] = F.conv2d(
-                    latents[:, c:c + 1], kernel_t, padding=padding
-                )
+            smoothed = F.conv2d(latents, kernel_t, padding=padding, groups=channels)
 
             # Discrete heat equation update: u ← u + α(smoothed − u)
             latents = latents + effective_alpha * (smoothed - latents)
@@ -146,11 +141,10 @@ class SharedAttentionCache:
         self.blend_ratio = blend_ratio
         self.max_layers = max_layers
 
-        self._cached_outputs: List[Any] = []
+        self._cached_outputs: Dict[Any, Any] = {}
         self._hooks: List[Any] = []
         self._capture_mode = False
         self._apply_mode = False
-        self._layer_counter = 0
 
     # ── Public API ──────────────────────────────────────────────────────────
 
@@ -159,7 +153,6 @@ class SharedAttentionCache:
         self._capture_mode = True
         self._apply_mode = False
         self._cached_outputs.clear()
-        self._layer_counter = 0
         log.info("  [L2-Attn] Capture mode ACTIVE — recording anchor K/V")
 
     def start_apply(self):
@@ -169,7 +162,6 @@ class SharedAttentionCache:
             return
         self._capture_mode = False
         self._apply_mode = True
-        self._layer_counter = 0
         log.info(f"  [L2-Attn] Blend mode ACTIVE — {len(self._cached_outputs)} layers cached")
 
     def stop(self):
@@ -180,17 +172,17 @@ class SharedAttentionCache:
     def has_cache(self) -> bool:
         return len(self._cached_outputs) > 0
 
-    def install_hooks(self, unet) -> bool:
+    def install_hooks(self, model) -> bool:
         """
         Register forward hooks on the first `max_layers` cross-attention
-        modules of the UNet. Returns True if at least one hook was installed.
+        modules of the model. Returns True if at least one hook was installed.
         """
         try:
             count = 0
-            for name, module in unet.named_modules():
-                # Target cross-attention (attn2) layers that have projections
-                if ("attn2" in name and hasattr(module, "to_k")
-                        and count < self.max_layers):
+            for name, module in model.named_modules():
+                # Target cross-attention (attn2) layers that have projections (SDXL/Flux compatibility)
+                is_attn_layer = ("attn2" in name or ("attn" in name and "attn1" not in name))
+                if is_attn_layer and hasattr(module, "to_k") and count < self.max_layers:
                     handle = module.register_forward_hook(self._hook_fn)
                     self._hooks.append(handle)
                     count += 1
@@ -203,28 +195,26 @@ class SharedAttentionCache:
             return False
 
     def remove_hooks(self):
-        """Deregister all installed hooks."""
+        """Deregister all installed hooks and clear cached tensors to free VRAM."""
         for h in self._hooks:
             h.remove()
         self._hooks.clear()
-        log.debug("  [L2-Attn] Hooks removed")
+        self._cached_outputs.clear()
+        log.debug("  [L2-Attn] Hooks and cached VRAM tensors cleared")
 
     # ── Internal ─────────────────────────────────────────────────────────────
 
     def _hook_fn(self, module, inputs, output):
-        """Forward hook: capture or blend cross-attention outputs."""
+        """Forward hook: capture or blend attention outputs by module reference."""
         try:
-            idx = self._layer_counter % max(1, self.max_layers)
-            self._layer_counter += 1
-
             if self._capture_mode and len(self._cached_outputs) < self.max_layers:
-                # Store a detached copy of the output tensor
+                # Store a detached copy of the output tensor mapped directly by module
                 import torch
-                self._cached_outputs.append(output.detach().clone())
+                self._cached_outputs[module] = output.detach().clone()
 
-            elif self._apply_mode and idx < len(self._cached_outputs):
+            elif self._apply_mode and module in self._cached_outputs:
                 # Blend: output = (1 − β) * output + β * cached
-                cached = self._cached_outputs[idx]
+                cached = self._cached_outputs[module]
                 if cached.shape == output.shape:
                     blended = (1 - self.blend_ratio) * output + self.blend_ratio * cached.to(output.device)
                     return blended
@@ -399,7 +389,10 @@ class AdvancedAttentionManager:
         if not self.enabled:
             return False
         try:
-            return self.attn_cache.install_hooks(pipe.unet)
+            model = getattr(pipe, "unet", None) or getattr(pipe, "transformer", None)
+            if model is not None:
+                return self.attn_cache.install_hooks(model)
+            return False
         except Exception as e:
             log.debug(f"  [AdvAttn] Hook install failed: {e}")
             return False

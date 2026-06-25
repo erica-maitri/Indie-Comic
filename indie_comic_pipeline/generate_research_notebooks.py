@@ -411,7 +411,13 @@ optimizer = SystemOptimizer(feedback_loop=feedback, settings_path="config/settin
 adjusts = optimizer.optimize_system_parameters()
 
 print("System Optimization Recommendations:")
-print(adjusts)""")
+print(adjusts)
+
+print("Applying optimization adjustments back to configuration...")
+if optimizer.apply_optimizations(adjusts):
+    print("Success: Config updated successfully.")
+else:
+    print("No configuration updates required.")""")
             ]
         ),
         # Phase 9

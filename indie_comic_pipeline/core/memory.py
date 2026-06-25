@@ -126,6 +126,7 @@ class StorySectionMemory:
 
         # ── Planning Data ──
         self.page_plans: List[Dict[str, Any]] = []   # Storyboard Agent output
+        self.raw_panels: List[Dict[str, Any]] = []   # Un-enriched/base panels from Intake
         self.total_panels: int = 0
         self.total_pages: int = 0
 
@@ -200,7 +201,13 @@ class StorySectionMemory:
     # ─────────────────────────────────────────────────────────────────────
 
     def add_panel(self, record: PanelRecord):
-        """Add a generated panel to history."""
+        """Add a generated panel to history, replacing any existing record for the same panel_id."""
+        for i, p in enumerate(self.panel_history):
+            if p.panel_id == record.panel_id:
+                self.panel_history[i] = record
+                self._touch()
+                return
+
         self.panel_history.append(record)
         # Trim to retention window
         if len(self.panel_history) > self.retention_window:
@@ -312,6 +319,7 @@ class StorySectionMemory:
             "arc_beats": self.arc_beats,
             "current_beat_index": self.current_beat_index,
             "page_plans": self.page_plans,
+            "raw_panels": self.raw_panels,
             "total_panels": self.total_panels,
             "total_pages": self.total_pages,
             "anchor_panel_id": self.anchor_panel_id,
@@ -336,6 +344,7 @@ class StorySectionMemory:
             "arc_beats": self.arc_beats,
             "current_beat_index": self.current_beat_index,
             "page_plans": self.page_plans,
+            "raw_panels": self.raw_panels,
             "total_panels": self.total_panels,
             "total_pages": self.total_pages,
             "anchor_panel_id": self.anchor_panel_id,
@@ -360,6 +369,7 @@ class StorySectionMemory:
         mem.current_beat_index = data.get("current_beat_index", 0)
         mem.story_config = data.get("story_config", {})
         mem.page_plans = data.get("page_plans", [])
+        mem.raw_panels = data.get("raw_panels", [])
         mem.total_panels = data.get("total_panels", 0)
         mem.total_pages = data.get("total_pages", 0)
         mem.anchor_panel_id = data.get("anchor_panel_id")

@@ -76,16 +76,23 @@ class IdentityEmbeddingExtractor:
                 # Store serializable identity tokens
                 tokens["color_profile"] = {
                     "mean_brightness": float(features.get("mean_brightness", 0)),
-                    "edge_density": float(features.get("edge_density", 0)),
-                    "aesthetic_score": float(features.get("aesthetic_score", 0)),
                 }
                 tokens["edge_profile"] = {
                     "edge_density": float(features.get("edge_density", 0)),
                 }
+                
+                # Convert numpy Gram Matrix to serializable list
+                gram_matrix = features.get("gram_matrix")
+                if gram_matrix is not None:
+                    tokens["style_profile"] = {
+                        "gram_matrix": gram_matrix.tolist() if hasattr(gram_matrix, "tolist") else gram_matrix
+                    }
+                    
                 tokens["aesthetic_score"] = float(features.get("aesthetic_score", 0))
                 tokens["mean_brightness"] = float(features.get("mean_brightness", 0))
 
-                # Store the path for consistency checker reference
+                # Note: Semantic embeddings (CLIP / DINOv2) are computed on the fly by ConsistencyChecker
+                # using the reference_path rather than pre-calculating and saving large dense vectors in memory.
                 tokens["reference_path"] = image_path
 
                 # Set this as the reference in the consistency checker

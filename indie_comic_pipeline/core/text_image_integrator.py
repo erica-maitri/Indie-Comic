@@ -173,21 +173,26 @@ class TextImageIntegrator:
         json_filename = f"panel_{panel_id:03d}_bubble_layout.json"
         json_path = os.path.join(self.output_dir, json_filename)
         
+        # 2. Parse speaker and basic dialogue to check against cache
+        speaker, text_clean = self._parse_dialogue(dialogue)
+        if not text_clean:
+            text_clean = dialogue
+
         # 1. Load from local JSON if it exists (allows user editing of placements!)
         if os.path.exists(json_path):
             try:
                 with open(json_path, "r", encoding="utf-8") as f:
                     plan = json.load(f)
-                log.info(f"Loaded bubble layout plan from local JSON: {json_path}")
-                return plan
+                
+                # Check if cached dialogue matches the current dialogue text
+                plan_dialogue = plan.get("dialogue_clean", "")
+                if plan_dialogue.strip().lower() == text_clean.strip().lower():
+                    log.info(f"Loaded matching bubble layout plan from local JSON: {json_path}")
+                    return plan
+                else:
+                    log.info(f"Dialogue changed for panel {panel_id} — ignoring cached layout JSON")
             except Exception as e:
                 log.warning(f"Failed to read local layout JSON {json_path}: {e}")
-                
-        # 2. Parse speaker and basic dialogue as baseline/heuristic fallback
-        speaker, text_clean = self._parse_dialogue(dialogue)
-        if not text_clean:
-            text_clean = dialogue
-            
         bubble_cat = BEAT_TO_BUBBLE.get(emotion_beat, "calm")
         style = BUBBLE_STYLES.get(bubble_cat, BUBBLE_STYLES["calm"])
         

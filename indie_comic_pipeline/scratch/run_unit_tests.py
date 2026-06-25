@@ -93,8 +93,8 @@ class TestComicPipeline(unittest.TestCase):
         
         coordinator.run_planning(story_config)
         
-        # Check if memory has been populated by coordinator planning (padded to multiple of 4 panels)
-        self.assertEqual(self.memory.total_panels, 4)
+        # Check if memory has been populated by coordinator planning
+        self.assertEqual(self.memory.total_panels, 2)
         self.assertEqual(self.memory.recurring_motif, "broken_circuit" if "broken_circuit" in self.memory.recurring_motif else "broken circuit")
         self.assertIn("Akira", self.memory.characters)
         self.assertEqual(self.memory.characters["Akira"].costume_desc, "Leather jacket")
@@ -104,14 +104,6 @@ class TestComicPipeline(unittest.TestCase):
         self.assertEqual(context["panel_id"], 1)
         self.assertEqual(context["panel_emotion_beat"], "lonely")
         self.assertEqual(context["panel_dialogue"], "Is there anyone out there?")
-
-        # Check context retrieval for padded panel (panel 3)
-        context_padded = coordinator.get_generation_context(3)
-        self.assertEqual(context_padded["panel_id"], 3)
-        self.assertEqual(context_padded["panel_emotion_beat"], "fade")
-        self.assertIn("Akira", context_padded["character_visual_note"])
-        self.assertIn("Leather jacket", context_padded["character_visual_note"])
-        self.assertNotEqual(context_padded["scene_atmosphere"], "")
         print("  [PASSED] AgentCoordinator tests")
 
     def test_advanced_attention_manager(self):
@@ -209,6 +201,86 @@ class TestComicPipeline(unittest.TestCase):
         self.assertTrue(cbz_path.endswith(".cbz"))
         self.assertTrue(html_path.endswith(".html"))
         print("  [PASSED] ComicExporter tests")
+
+    def test_feedback_and_optimizer(self):
+        """Test RLHF feedback storage, parameter adjustments and config mutation."""
+        print("Testing Feedback and Optimizer...")
+        feedback_path = os.path.join(self.tmp_dir, "test_rlhf.json")
+        feedback = RLHFFeedbackLoop(feedback_path=feedback_path)
+        
+        # Add feedback records (we need >=3 rated panels to trigger optimization)
+        feedback.add_panel_feedback(panel_id=1, rating=2, comment="Consistency is bad, character looks different.", prompt_used="A wanderer walking", generation_backend="sdxl")
+        feedback.add_panel_feedback(panel_id=2, rating=2, comment="Low quality and blurry, ugly colors.", prompt_used="A wanderer sitting", generation_backend="sdxl")
+        feedback.add_panel_feedback(panel_id=3, rating=3, comment="Aesthetic style is nice but text is cluttered, overlap.", prompt_used="A wanderer speaking", generation_backend="sdxl")
+        
+        # Verify feedback works
+        summary = feedback.get_feedback_summary()
+        self.assertEqual(summary["total_panels_rated"], 3)
+        self.assertAlmostEqual(summary["average_panel_rating"], 2.33, places=2)
+        
+        # Create a mock settings.yaml file
+        settings_yaml = os.path.join(self.tmp_dir, "mock_settings.yaml")
+        mock_config = {
+            "generation": {
+                "guidance_scale": 7.5
+            },
+            "models": {
+                "lora": {
+                    "adapter_scale": 0.8
+                }
+            },
+            "quality_critic": {
+                "threshold": 0.55,
+                "strict_threshold": 0.70,
+                "weights": {
+                    "visual_consistency": 0.30,
+                    "aesthetic_quality": 0.25,
+                    "readability": 0.10,
+                    "emotional_engagement": 0.15,
+                    "narrative_coherence": 0.20
+                }
+            },
+            "style": {
+                "positive_terms": ["minimalist line art"],
+                "negative_terms": ["photorealistic"]
+            }
+        }
+        
+        import yaml
+        with open(settings_yaml, "w", encoding="utf-8") as f:
+            yaml.dump(mock_config, f)
+            
+        optimizer = SystemOptimizer(feedback_loop=feedback, settings_path=settings_yaml)
+        adjusts = optimizer.optimize_system_parameters()
+        
+        # Verify calculated deltas
+        self.assertTrue(adjusts["quality_critic_threshold_delta"] > 0.0) # low rating delta is positive
+        self.assertTrue(adjusts["guidance_scale_adjustment"] > 0.0)
+        self.assertIn("visual_consistency", adjusts["critic_weight_shifts"])
+        
+        # Verify prompt styling keywords are captured
+        self.assertIn("sharp focus", adjusts["positive_terms_to_add"])
+        self.assertIn("blurry", adjusts["negative_terms_to_add"])
+        
+        # Apply optimizations
+        success = optimizer.apply_optimizations(adjusts)
+        self.assertTrue(success)
+        
+        # Read back mutated settings
+        with open(settings_yaml, "r", encoding="utf-8") as f:
+            updated_settings = yaml.safe_load(f)
+            
+        # Verify thresholds, parameters and mutated prompt terms
+        self.assertGreater(updated_settings["quality_critic"]["threshold"], 0.55)
+        self.assertGreater(updated_settings["generation"]["guidance_scale"], 7.5)
+        self.assertIn("sharp focus", updated_settings["style"]["positive_terms"])
+        self.assertIn("blurry", updated_settings["style"]["negative_terms"])
+        
+        # Check sum of normalized quality critic weights is 1.0
+        total_weight = sum(updated_settings["quality_critic"]["weights"].values())
+        self.assertAlmostEqual(total_weight, 1.0, places=2)
+        
+        print("  [PASSED] Feedback and Optimizer tests")
 
 
 if __name__ == "__main__":

@@ -162,7 +162,6 @@ class MangaFlowLayoutEngine:
                 
                 if max_idx in (0, 1):
                     # Dominant row is at the top
-                    # Row 1 (Dominant split or single)
                     if max_idx == 0:
                         boxes.append((self.margin, self.margin, content_w, h_dom))
                         # Row 2 (Three panels split side-by-side)
@@ -174,13 +173,18 @@ class MangaFlowLayoutEngine:
                         # Row 1 is dominant, but panel 1 is dominant. Let's just do a 2x2 grid with panel 1 larger
                         self._fill_grid_layout(content_w, content_h, boxes)
                 else:
-                    # Dominant row is at the bottom
-                    # Row 1 (Three panels)
+                    # Dominant row is at the bottom (max_idx is 2 or 3)
                     pw = (content_w - 2 * self.gutter_width) // 3
-                    for idx in range(3):
-                        boxes.append((self.margin + idx * (pw + self.gutter_width), self.margin, pw, h_rest))
-                    # Row 2 (Dominant)
-                    boxes.append((self.margin, self.margin + h_rest + self.gutter_width, content_w, h_dom))
+                    if max_idx == 2:
+                        boxes.append((self.margin, self.margin, pw, h_rest))
+                        boxes.append((self.margin + pw + self.gutter_width, self.margin, pw, h_rest))
+                        boxes.append((self.margin, self.margin + h_rest + self.gutter_width, content_w, h_dom))
+                        boxes.append((self.margin + 2 * (pw + self.gutter_width), self.margin, pw, h_rest))
+                    else:  # max_idx == 3
+                        boxes.append((self.margin, self.margin, pw, h_rest))
+                        boxes.append((self.margin + pw + self.gutter_width, self.margin, pw, h_rest))
+                        boxes.append((self.margin + 2 * (pw + self.gutter_width), self.margin, pw, h_rest))
+                        boxes.append((self.margin, self.margin + h_rest + self.gutter_width, content_w, h_dom))
             else:
                 # Default: standard grid with slight offsets
                 self._fill_grid_layout(content_w, content_h, boxes)

@@ -230,7 +230,9 @@ class IntegratedComicPipeline:
         self.exporter = ComicExporter(output_dir=self.output_dir)
 
     def run(self, prompt: str, character_name: str = "Wanderer",
-            story_world: str = "The Abstract", panel_count: int = 4) -> Dict[str, Any]:
+            story_world: str = "The Abstract", panel_count: int = 4,
+            style_reference: str = "", character_characteristics: str = "",
+            story_reference: str = "", mood_shifts: List[str] = None) -> Dict[str, Any]:
         """Runs the entire 8-phase comic generation pipeline."""
         log.info("=" * 80)
         log.info("Starting Ultimate Indie Comic Generator Pipeline")
@@ -242,7 +244,11 @@ class IntegratedComicPipeline:
             user_prompt=prompt,
             panel_count=panel_count,
             character_name=character_name,
-            story_world=story_world
+            story_world=story_world,
+            style_reference=style_reference,
+            character_characteristics=character_characteristics,
+            story_reference=story_reference,
+            mood_shifts=mood_shifts
         )
         
         # ── Phase 1: Multi-Agent Planning ──
@@ -262,9 +268,12 @@ class IntegratedComicPipeline:
         log.info(f"\n--- Phases 2-6: Generation & Quality Control Loops ({total_panels} Panels) ---")
         for panel_id in range(1, total_panels + 1):
             context = self.agent_coordinator.get_generation_context(panel_id)
-            dialogue = context.get("panel_dialogue", "...")
-            emotion = context.get("panel_emotion_beat", "neutral")
+            scene_graph = context.get("scene_graph", {})
             
+            chars = scene_graph.get("characters", [])
+            dialogue = chars[0].get("dialogue", {}).get("text", "...") if chars else "..."
+            emotion = chars[0].get("expression", {}).get("emotion", "neutral") if chars else "neutral"
+            scene_desc = scene_graph.get("environment", "")
             # Reject & Regenerate Quality loop
             retry = 0
             max_retries = self.quality_critic.max_retries
@@ -309,7 +318,7 @@ class IntegratedComicPipeline:
                 dialogue=dialogue,
                 emotion_beat=emotion,
                 panel_id=panel_id,
-                scene_desc=context.get("panel_visual")
+                scene_desc=scene_desc
             )
             
             # Save visual output to disk and replace image in result
@@ -324,6 +333,9 @@ class IntegratedComicPipeline:
             
             panels_completed.append(panel_result)
             self.agent_coordinator.notify_panel_generated(panel_result)
+            
+        # Clean up hooks and cached VRAM tensors
+        self.panel_engine.cleanup()
             
         # ── Phase 7: MangaFlow Page Assembly ──
         log.info("\n--- Phase 7: MangaFlow Layout Page Assembly ---")
@@ -378,6 +390,98 @@ class IntegratedComicPipeline:
             "panels": panels_completed
         }
 
+    def run_batch(self, start_panel: int, end_panel: int, prompt: str = "", character_name: str = "Wanderer",
+                  story_world: str = "The Abstract", panel_count: int = 4,
+                  style_reference: str = "", character_characteristics: str = "",
+                  story_reference: str = "", mood_shifts: List[str] = None,
+                  load_checkpoint: str = "", save_checkpoint: str = "") -> Dict[str, Any]:
+        """Runs the pipeline in chunks, allowing for pause/resume via JSON checkpointing."""
+        log.info("=" * 80)
+        log.info(f"Starting Batch Pipeline (Panels {start_panel} to {end_panel})")
+        log.info("=" * 80)
+
+        if load_checkpoint and os.path.exists(load_checkpoint):
+            log.info(f"Loading memory checkpoint from {load_checkpoint}")
+            self.memory = StorySectionMemory.load_checkpoint(load_checkpoint)
+            self.agent_coordinator.memory = self.memory
+            self.panel_engine.memory = self.memory
+        else:
+            # ── Phase 0 & 1 ──
+            log.info("\n--- Phase 0: Story Intake ---")
+            story_config = self.story_intake.process_prompt(
+                user_prompt=prompt, panel_count=panel_count, character_name=character_name,
+                story_world=story_world, style_reference=style_reference,
+                character_characteristics=character_characteristics,
+                story_reference=story_reference, mood_shifts=mood_shifts
+            )
+            log.info("\n--- Phase 1: Multi-Agent Planning ---")
+            self.agent_coordinator.run_planning(story_config)
+
+        panels_completed = []
+        actual_end = min(end_panel, self.memory.total_panels)
+
+        log.info(f"\n--- Generating Panels {start_panel} to {actual_end} ---")
+        for panel_id in range(start_panel, actual_end + 1):
+            context = self.agent_coordinator.get_generation_context(panel_id)
+            dialogue = context.get("panel_dialogue", "...")
+            emotion = context.get("panel_emotion_beat", "neutral")
+            
+            retry = 0
+            max_retries = self.quality_critic.max_retries
+            panel_result = None
+            
+            while retry <= max_retries:
+                panel_result = self.panel_engine.generate_panel(
+                    panel_id=panel_id, context=context, style_prompt="", negative_base=""
+                )
+                evaluation = self.quality_critic.evaluate(panel_result, self.memory)
+                if not self.quality_critic.should_regenerate(evaluation) or self.dry_run:
+                    break
+                else:
+                    retry += 1
+                    adjusts = evaluation.get("adjustments", {})
+                    if "guidance_scale_delta" in adjusts:
+                        context["guidance_scale_override"] = 7.5 + adjusts["guidance_scale_delta"]
+                    if "steps_delta" in adjusts:
+                        context["steps_override"] = 25 + adjusts["steps_delta"]
+            
+            if not panel_result:
+                raise RuntimeError(f"Failed to generate panel {panel_id}")
+                        
+            final_img = self.text_integrator.integrate(
+                image=panel_result["image"], dialogue=dialogue, emotion_beat=emotion,
+                panel_id=panel_id, scene_desc=context.get("panel_visual")
+            )
+            
+            annotated_path = os.path.join(self.panels_dir, f"panel_{panel_id:03d}_final.png")
+            final_img.save(annotated_path)
+            panel_result["image"] = final_img
+            panel_result["image_path"] = annotated_path
+            panel_result["dialogue"] = dialogue
+            panel_result["emotion_beat"] = emotion
+            
+            panels_completed.append(panel_result)
+            self.agent_coordinator.notify_panel_generated(panel_result)
+            
+        # Assemble Layouts for the generated panels
+        pages = []
+        panels_by_page = {}
+        for p in panels_completed:
+            panels_by_page.setdefault(p["page_num"], []).append(p)
+            
+        for page_num, page_panels in sorted(panels_by_page.items()):
+            page_image = self.layout_engine.layout_page(page_panels, page_num)
+            page_path = os.path.join(self.output_dir, f"page_{page_num:03d}_batch_integrated.png")
+            page_image.save(page_path)
+            pages.append({"page_num": page_num, "page_image": page_image, "panels": page_panels})
+
+        if save_checkpoint:
+            self.memory.save_checkpoint(save_checkpoint)
+            log.info(f"Memory state saved to {save_checkpoint}")
+
+        self.backend_selector.unload_all()
+        return {"pages": pages, "panels": panels_completed, "last_panel_generated": actual_end}
+
     def collect_interactive_feedback(self, run_results: Dict[str, Any]):
         """Collect rating and comments from the user for RLHF tracking."""
         print("\n" + "=" * 70)
@@ -412,6 +516,12 @@ class IntegratedComicPipeline:
                 log.info(f"Recommendation: Adjust quality threshold by {adjusts['quality_critic_threshold_delta']}")
             if adjusts.get("lora_scale_adjustment", 0.0) != 0.0:
                 log.info(f"Recommendation: Adjust LoRA scale by {adjusts['lora_scale_adjustment']}")
+                
+            # Apply weight adjustments and mutate prompt templates
+            if self.optimizer.apply_optimizations(adjusts):
+                log.info("[OK] Optimization adjustments successfully applied to configuration!")
+            else:
+                log.info("Optimization adjustments evaluated, no config updates needed.")
                 
         except (KeyboardInterrupt, EOFError):
             print("\nFeedback collection skipped.")

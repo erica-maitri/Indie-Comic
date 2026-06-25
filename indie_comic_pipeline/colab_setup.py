@@ -80,11 +80,12 @@ print(f"🐍 Python path includes: {PIPELINE_DIR}")
 
 # ── 4. Install requirements (Colab only) ────────────────────────────────────
 
-if IN_COLAB:
+if IN_CLOUD:
     # Google Colab pre-installs torchao==0.10.0, but newer diffusers/peft require >0.16.0.
     # Uninstalling torchao solves the version conflict crash completely.
-    print("🧹 Removing incompatible pre-installed torchao version to avoid conflicts...")
-    subprocess.run([sys.executable, "-m", "pip", "uninstall", "torchao", "-y", "-q"], check=False)
+    if IN_COLAB:
+        print("🧹 Removing incompatible pre-installed torchao version to avoid conflicts...")
+        subprocess.run([sys.executable, "-m", "pip", "uninstall", "torchao", "-y", "-q"], check=False)
 
     # Prefer the slim colab requirements to avoid version conflicts
     req_file = os.path.join(PIPELINE_DIR, "requirements_colab.txt")

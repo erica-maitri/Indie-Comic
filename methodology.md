@@ -1,25 +1,28 @@
 [USER INPUT: Emotion / Story Prompt]
        │
        ▼
-[PHASE 0: STORY INTAKE]
-       │  • Action: Raw user prompt is passed to the Story-Weaver LLM.
-       │  • Processing: LLM parses thematic elements, emotional pacing, and structural flow.
-       │  • Output: Generates a structured timeline configuration file.
+[PHASE 0: INTELLIGENT STORY INTAKE (WRITER'S ROOM)]
+       │  • Action: User prompts (character, world, traits, reference) are passed to local Ollama (default: llama3.2).
+       │  • Processing: Runs a single-pass JSON-structured LLM chain to generate both a 'Story Bible' and 
+       │                a detailed hierarchical scene graph script (characters, actions, camera, environment).
+       │  • Output: Generates an in-memory structured configuration dictionary (story_config).
        │
        ▼
-[story_dynamic.json]
+[story_config (In-Memory)]
        │
        ▼
 [PHASE 1: NARRATIVE PLANNING LAYER]
-       │  • Action: Multi-agent system breaks down the structured JSON data.
-       │  ├─ Storyboard Agent: Establishes sequence beats, narrative pacing, and scene breaks.
-       │  ├─ Character Agent: Builds character visual profiles and tracks emotional arc drift.
-       │  ├─ Scene Agent: Tracks environmental settings, lighting conditions, and location continuity.
-       │  └─ Layout Agent: Defines camera framing parameters, angles, and panel geometry limits.
+       │  • Action: Director Swarm (Multi-Agent System) parses and loads the scene graph into memory.
+       │  ├─ Story Director: Registers characters and sets up the base panel sequence.
+       │  ├─ Action Director: Parses character actions, physical verbs, and interactions.
+       │  ├─ Dialogue Writer: Details dialogue text, tone, and vector speech bubble categories.
+       │  ├─ Pose Director: Identifies body language posture/stance mapping constraints.
+       │  ├─ Emotion Director: Resolves granular facial taxonomies (eyes, mouth, expressions).
+       │  └─ Camera Director: Dictates framing layouts (camera angle, environment variables).
        │
        ▼
 [STORY SECTION MEMORY (EXPLICIT RAM BLACKBOARD)]
-       │  • Dynamic Cache: Continuously logs cross-panel character states, spatial data, and structural values.
+       │  • Dynamic Cache: Tracks active character states, visual anchors, scene settings, and layout plans.
        │
        ▼
 [PHASE 2: REFERENCE-FREE ANCHORING]

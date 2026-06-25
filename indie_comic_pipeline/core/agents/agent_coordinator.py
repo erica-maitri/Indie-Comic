@@ -13,10 +13,10 @@ from typing import Dict, Any, List, Optional
 
 from core.memory import StorySectionMemory
 from core.agents.base_agent import BaseAgent
-from core.agents.storyboard_agent import StoryboardAgent
-from core.agents.character_agent import CharacterAgent
-from core.agents.scene_agent import SceneAgent
-from core.agents.layout_agent import LayoutAgent
+from core.agents.director_swarm import (
+    StoryDirector, ActionDirector, DialogueWriter,
+    PoseDirector, EmotionDirector, CameraDirector
+)
 
 log = logging.getLogger("pipeline.coordinator")
 
@@ -26,10 +26,12 @@ class AgentCoordinator:
     Multi-Agent Coordinator for Phase 1: Narrative Planning Layer.
 
     Orchestration flow:
-    1. Storyboard Agent → establishes page structure, pacing, beats
-    2. Character Agent  → builds character profiles, maps expression arcs
-    3. Scene Agent      → maps atmospheres, tracks spatial continuity
-    4. Layout Agent     → determines camera framing, panel geometry
+    1. Story Director    → establishes core panel event and characters
+    2. Action Director   → defines relational verbs/actions
+    3. Dialogue Writer   → structures speech schema based on action tone
+    4. Pose Director     → translates actions into explicit body states
+    5. Emotion Director  → translates dialogue/action into facial features
+    6. Camera Director   → determines cinematic framing and angle
 
     All agents read from and write to the shared StorySectionMemory blackboard.
     """
@@ -39,10 +41,12 @@ class AgentCoordinator:
 
         # Initialize agents in execution order
         self.agents: List[BaseAgent] = [
-            StoryboardAgent(),
-            CharacterAgent(),
-            SceneAgent(),
-            LayoutAgent(),
+            StoryDirector(),
+            ActionDirector(),
+            DialogueWriter(),
+            PoseDirector(),
+            EmotionDirector(),
+            CameraDirector()
         ]
 
         self._planning_results: Dict[str, Any] = {}
@@ -117,25 +121,24 @@ class AgentCoordinator:
         # Base context from memory
         context = self.memory.build_generation_context(panel_id)
 
-        # Add character-specific directives
-        char_agent = self._get_agent("character")
-        if char_agent and isinstance(char_agent, CharacterAgent):
-            context["character_expression"] = char_agent.get_expression_for_panel(panel_id)
-            context["character_visual_note"] = char_agent.get_visual_note_for_panel(panel_id)
-
-        # Add scene-specific atmosphere
-        scene_agent = self._get_agent("scene")
-        if scene_agent and isinstance(scene_agent, SceneAgent):
-            context["scene_atmosphere"] = scene_agent.get_atmosphere_for_panel(panel_id)
-
-        # Add panel-specific story data from page plans
+        # Add panel-specific story data from the new Scene Graph
         panel_data = self._get_panel_data(panel_id)
         if panel_data:
-            context["panel_visual"] = panel_data.get("visual", "")
-            context["panel_dialogue"] = panel_data.get("dialogue", "...")
-            context["panel_motion"] = panel_data.get("motion", "")
-            context["panel_emotion_beat"] = panel_data.get("emotion_beat", "neutral")
-
+            context["scene_graph"] = panel_data
+            
+            emotion = panel_data.get("emotion_beat")
+            dialogue = panel_data.get("dialogue")
+            
+            chars = panel_data.get("characters", [])
+            if not emotion and chars:
+                emotion = chars[0].get("expression", {}).get("emotion")
+            if not dialogue and chars:
+                dialogue = chars[0].get("dialogue", {}).get("text")
+                
+            context["panel_emotion_beat"] = emotion or "neutral"
+            context["panel_dialogue"] = dialogue or "..."
+            context["panel_id"] = panel_data.get("panel", panel_id)
+            
         return context
 
     def get_planning_summary(self) -> Dict[str, Any]:
@@ -161,9 +164,9 @@ class AgentCoordinator:
         return None
 
     def _get_panel_data(self, panel_id: int) -> Optional[Dict[str, Any]]:
-        """Get the raw panel data from page plans for a given panel_id."""
-        for page_plan in self.memory.page_plans:
-            for panel in page_plan.get("panels", []):
+        """Get the raw panel data for a given panel_id."""
+        if hasattr(self.memory, 'raw_panels'):
+            for panel in self.memory.raw_panels:
                 if panel.get("panel") == panel_id:
                     return panel
         return None

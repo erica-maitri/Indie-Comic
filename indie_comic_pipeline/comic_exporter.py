@@ -45,27 +45,70 @@ class ComicExporter:
     def export_cbr(self, pages: list, title: str = "Comic") -> Optional[str]:
         """
         Export to CBR (RAR archive of images)
-        Requires a system-level RAR utility (like WinRAR) or the rarfile library if RAR is in PATH.
-        Usually, CBZ is preferred because zip is natively supported in Python.
+        Requires system-level RAR utility.
+        If unavailable, falls back to standard CBZ output to prevent header corruption.
         """
-        try:
-            import rarfile  # type: ignore
-            # Note: Creating RAR files typically requires an external executable.
-            # rarfile library is primarily for reading. 
-            # If the user absolutely needs CBR, we would shell out to 'rar a'.
-            # We will fallback to CBZ internally but rename the extension for readers that just inspect headers.
-            print("[i] CBR export requested. Falling back to CBZ creation with .cbr extension for compatibility.")
-            
-            output_cbz = self.export_cbz(pages, title)
-            if output_cbz:
-                output_cbr = output_cbz.replace(".cbz", ".cbr")
-                os.rename(output_cbz, output_cbr)
-                return output_cbr
-            return None
+        import shutil
+        import subprocess
+
+        # Find rar utility
+        rar_path = shutil.which("rar") or shutil.which("rar.exe")
+        if not rar_path:
+            # Check common Windows paths
+            win_rar = r"C:\Program Files\WinRAR\rar.exe"
+            if os.path.exists(win_rar):
+                rar_path = win_rar
                 
-        except (ImportError, Exception) as e:
-            print(f"[!] Cannot process native CBR ({e}). Exporting CBZ instead.")
+        if not rar_path:
+            print("[WARNING] Native 'rar' executable not found in PATH or standard location. Cannot create valid RAR-based CBR. Falling back to exporting a standard CBZ file instead.")
             return self.export_cbz(pages, title)
+            
+        safe_title = "".join([c for c in title if c.isalpha() or c.isdigit() or c==' ']).rstrip()
+        safe_title = safe_title.replace(" ", "_")
+        output_path = os.path.join(self.output_dir, f"{safe_title}.cbr")
+        
+        # Temp directory for files to pack
+        temp_files = []
+        try:
+            for i, page in enumerate(pages):
+                img = page.get('page_image')
+                if img:
+                    temp_path = f"temp_page_{i+1:03d}.png"
+                    img.save(temp_path, "PNG")
+                    temp_files.append(temp_path)
+            
+            if not temp_files:
+                print("[!] No page images to archive.")
+                return None
+                
+            # Run RAR command: rar a -ep <output_path> <temp_files>
+            # -ep excludes paths from names (store only filenames)
+            # We delete the archive first if it exists to avoid appending
+            if os.path.exists(output_path):
+                os.remove(output_path)
+                
+            cmd = [rar_path, "a", "-ep", output_path] + temp_files
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            
+            if result.returncode == 0:
+                print(f"[OK] Successfully exported CBR: {output_path}")
+                return output_path
+            else:
+                print(f"[!] RAR execution failed (return code {result.returncode}): {result.stderr or result.stdout}")
+                print("[!] Falling back to CBZ.")
+                return self.export_cbz(pages, title)
+                
+        except Exception as e:
+            print(f"[!] Failed to export CBR: {e}. Falling back to CBZ.")
+            return self.export_cbz(pages, title)
+        finally:
+            # Cleanup temp files
+            for temp_path in temp_files:
+                if os.path.exists(temp_path):
+                    try:
+                        os.remove(temp_path)
+                    except Exception:
+                        pass
 
     def export_web_comic(self, pages: list, output_path: str = "outputs/exports/web_comic.html"):
         """Export as web-comic HTML for scrolling"""

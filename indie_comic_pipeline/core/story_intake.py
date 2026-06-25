@@ -12,7 +12,7 @@ import json
 import os
 import sys
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from pathlib import Path
 
 log = logging.getLogger("pipeline.story_intake")
@@ -111,7 +111,11 @@ class StoryIntakeEngine:
     def process_prompt(self, user_prompt: str,
                        panel_count: int = 6,
                        character_name: str = "Wanderer",
-                       story_world: str = "The Abstract") -> Dict[str, Any]:
+                       story_world: str = "The Abstract",
+                       style_reference: str = "",
+                       character_characteristics: str = "",
+                       story_reference: str = "",
+                       mood_shifts: List[str] = None) -> Dict[str, Any]:
         """
         Process a raw user prompt into a structured story configuration.
 
@@ -138,7 +142,8 @@ class StoryIntakeEngine:
         if llm is not None:
             try:
                 story_config = self._generate_with_llm(
-                    user_prompt, emotion, panel_count, character_name, story_world
+                    user_prompt, emotion, panel_count, character_name, story_world, style_reference,
+                    character_characteristics, story_reference, mood_shifts
                 )
                 if story_config and self._validate_story(story_config, panel_count):
                     # Inject metadata so downstream agents can find character/world
@@ -156,7 +161,7 @@ class StoryIntakeEngine:
         # Fallback: template-based generation
         log.info("[Phase 0] Using template-based story generation")
         return self._generate_fallback(user_prompt, emotion, panel_count,
-                                       character_name, story_world)
+                                       character_name, story_world, character_characteristics, story_reference, mood_shifts)
 
     def load_existing_story(self, path: str) -> Dict[str, Any]:
         """Load an existing story_dynamic.json from Story-Weaver."""
@@ -178,31 +183,73 @@ class StoryIntakeEngine:
 
     def _generate_with_llm(self, user_prompt: str, emotion: str,
                            panel_count: int, character_name: str,
-                           story_world: str) -> Optional[Dict[str, Any]]:
+                           story_world: str, style_reference: str = "",
+                           character_characteristics: str = "",
+                           story_reference: str = "",
+                           mood_shifts: List[str] = None) -> Optional[Dict[str, Any]]:
         """Generate story using local Ollama LLM."""
         from langchain_core.output_parsers import StrOutputParser
         from langchain_core.prompts import ChatPromptTemplate
         import re
 
-        arc = MOOD_ARCS.get(emotion, DEFAULT_ARC)
-        beats = self._distribute_beats(panel_count, arc["arc_beats"])
+        if mood_shifts and len(mood_shifts) > 0:
+            beats = self._distribute_beats(panel_count, mood_shifts)
+            arc = {"journey": "Custom User Arc", "description": "Custom sequence of emotions provided by user"}
+        else:
+            arc = MOOD_ARCS.get(emotion, DEFAULT_ARC)
+            beats = self._distribute_beats(panel_count, arc["arc_beats"])
 
-        system_prompt = f"""You are a literary graphic novelist.
+        style_str = f"STYLE ENFORCEMENT: The user has requested the exact visual style of: '{style_reference}'. Every single visual prompt you generate MUST include this style instruction and maintain its specific color palette and theme.\n" if style_reference else ""
+        char_str = f"CHARACTER CHARACTERISTICS: The main character is '{character_name}'. Here are their physical and personality traits: '{character_characteristics}'. Maintain these consistently in visual descriptions.\n" if character_characteristics else ""
+        story_ref_str = f"STORY REFERENCE & THEME: The user requested the story to follow the thematic tone and style of: '{story_reference}'. You MUST adapt the narrative pacing, tropes, and dialogue style to match this reference.\n" if story_reference else ""
+
+        system_prompt = f"""You are a master graphic novelist and cinematic director, renowned for writing gripping, emotionally resonant, and visually stunning comic book scripts.
 Respond ONLY with valid JSON. No markdown fences. No explanation.
 
 Generate a {panel_count}-panel comic story based on the user's emotional prompt.
-Every panel MUST have ALL four fields filled:
-- "visual": scene description (2-4 sentences)
-- "dialogue": spoken text OR "..." for silence
-- "emotion_beat": exactly ONE word
-- "motion": physical action (1-3 sentences)
+Your writing must be professional: use "show, don't tell" for visuals, write cinematic and highly descriptive visual prompts (lighting, camera angles, atmosphere), and craft punchy, natural, and compelling dialogue.
 
-Output this JSON structure:
+{style_str}
+{char_str}
+{story_ref_str}
+INTELLIGENT GENERATION CHAIN (WRITER'S ROOM):
+You must output a JSON object containing two main sections:
+1. "story_bible": Deconstruct the story reference to generate a plot_summary and 1-2 thematic side_characters.
+2. "panels": Write the panel-by-panel script as a HIERARCHICAL SCENE GRAPH. Do not use flat text fields.
+
+Every panel in the "panels" list MUST follow this exact schema:
+- "characters": Array of entities present in the panel. Each character must have:
+    - "id": Lowercase name (e.g. "kael")
+    - "pose": Object with "body", "head", "arms", "legs" describing physical stance.
+    - "expression": Object with "emotion", "eyes", "mouth" describing facial state.
+    - "dialogue": Object with "text" (or "..."), "tone", and "bubble" (e.g. "speech", "thought", "shout").
+- "actions": Array of events happening (e.g., {{"actor": "kael", "verb": "looking", "target": "artifact"}}).
+- "camera": Cinematic framing (e.g. "Low-angle medium shot").
+- "environment": The background setting and lighting.
+
+Output this exact JSON structure:
 {{
-  "recurring_motif": "4-8 word description of a recurring visual motif",
-  "mood_journey": "one sentence describing the emotional arc",
+  "story_bible": {{
+    "plot_summary": "...",
+    "side_characters": [ {{"name": "...", "role": "...", "description": "..."}} ]
+  }},
+  "recurring_motif": "...",
+  "mood_journey": "...",
   "panels": [
-    {{"panel": 1, "visual": "...", "dialogue": "...", "emotion_beat": "one_word", "motion": "..."}}
+    {{
+      "panel": 1,
+      "characters": [
+        {{
+          "id": "kael",
+          "pose": {{"body": "...", "head": "...", "arms": "...", "legs": "..."}},
+          "expression": {{"emotion": "...", "eyes": "...", "mouth": "..."}},
+          "dialogue": {{"text": "...", "tone": "...", "bubble": "..."}}
+        }}
+      ],
+      "actions": [ {{"actor": "...", "verb": "...", "target": "..."}} ],
+      "camera": "...",
+      "environment": "..."
+    }}
   ]
 }}"""
 
@@ -249,7 +296,17 @@ Output this JSON structure:
         if end == -1:
             return None
 
-        return json.loads(clean[start:end + 1])
+        json_str = clean[start:end + 1]
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError as e:
+            log.warning(f"Initial JSON parse failed: {e}. Attempting cleanup...")
+            # Clean trailing commas and newlines
+            import re
+            json_str = re.sub(r',\s*}', '}', json_str)
+            json_str = re.sub(r',\s*\]', ']', json_str)
+            json_str = json_str.replace('\n', ' ').replace('\r', ' ')
+            return json.loads(json_str)
 
     # ─────────────────────────────────────────────────────────────────────
     # Fallback Template Generation
@@ -257,10 +314,17 @@ Output this JSON structure:
 
     def _generate_fallback(self, user_prompt: str, emotion: str,
                            panel_count: int, character_name: str,
-                           story_world: str) -> Dict[str, Any]:
+                           story_world: str,
+                           character_characteristics: str = "",
+                           story_reference: str = "",
+                           mood_shifts: List[str] | None = None) -> Dict[str, Any]:
         """Template-based fallback when LLM is unavailable."""
-        arc = MOOD_ARCS.get(emotion, DEFAULT_ARC)
-        beats = self._distribute_beats(panel_count, arc["arc_beats"])
+        if mood_shifts and len(mood_shifts) > 0:
+            beats = self._distribute_beats(panel_count, mood_shifts)
+            arc = {"description": "Custom sequence of emotions provided by user"}
+        else:
+            arc = MOOD_ARCS.get(emotion, DEFAULT_ARC)
+            beats = self._distribute_beats(panel_count, arc["arc_beats"])
 
         motif_hints = {
             "sad": "A solitary paper boat floating in a dark puddle",
@@ -281,15 +345,20 @@ Output this JSON structure:
 
             panels.append({
                 "panel": i + 1,
-                "visual": (
-                    f"Scene {i+1} in {story_world}. {character_name} "
-                    f"in a moment of {beat}. The {motif_hints.get(emotion, 'a symbolic object')} "
-                    f"is visible."
-                ),
-                "dialogue": "..." if i % 2 == 0 else f"{character_name}: ...",
-                "emotion_beat": beat,
-                "motion": f"{character_name} expresses {beat} through body language.",
-                "_action_intensity": intensity,
+                "characters": [
+                    {
+                        "id": character_name.lower(),
+                        "pose": {"body": "neutral", "head": "neutral", "arms": "relaxed", "legs": "standing"},
+                        "expression": {"emotion": beat, "eyes": "neutral", "mouth": "neutral"},
+                        "dialogue": {"text": "..." if i % 2 == 0 else f"{character_name}: ...", "tone": "neutral", "bubble": "speech"}
+                    }
+                ],
+                "actions": [
+                    {"actor": character_name.lower(), "verb": "expresses", "target": beat}
+                ],
+                "camera": "Medium shot",
+                "environment": f"Scene {i+1} in {story_world}",
+                "_action_intensity": intensity
             })
 
         return {
@@ -350,7 +419,7 @@ Output this JSON structure:
         if len(panels) != expected_panels:
             return False
         for p in panels:
-            for key in ("visual", "dialogue", "emotion_beat", "motion"):
-                if key not in p or not str(p[key]).strip():
+            for key in ("panel", "characters", "camera", "environment"):
+                if key not in p:
                     return False
         return True

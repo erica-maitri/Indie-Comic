@@ -52,18 +52,30 @@ graph TD
 ```text
 indie_comic_pipeline/
 │
-│── Core Pipeline ─────────────────────────────────────────────
-├── ultimate_comic_pipeline.py      # Master engine: 10 classes, 1000+ lines
-│                                   # Contains: ComicConfig, StyleManager, NarrativeMemory,
-│                                   # EmotionValidator, SpeechBubbleOptimizer, QualityMetrics,
-│                                   # ModelEnsemble, PanelGenerator, PageGenerator, UltimateComicGenerator
+│── Core Pipeline Orchestration ────────────────────────────────
+├── ultimate_comic_pipeline.py      # Legacy/Combined engine reference
 ├── run_10_panel_pipeline.py        # Production 10-panel sequential generator
 ├── generate_doodle_panels.py       # Quick 8-panel test generator (T4 optimized)
 ├── compile_comic_pdf.py            # Assembles page grids into final PDF
 ├── comic_exporter.py               # Export to CBZ / CBR / HTML web comic
 ├── audio_integration.py            # TTS audio dialogue via gTTS with guard for local systems
 ├── model_comparator.py             # A/B model testing (FID, CLIP, timing)
-├── incremental_learner.py          # RLHF feedback collection & prompt learning
+│
+│── Modular Core Pipeline (core/) ──────────────────────────────
+├── core/
+│   ├── story_intake.py             # Intelligent story intake (Phase 0)
+│   ├── agents/                     # Multi-Agent Director Swarm planners (Phase 1)
+│   ├── anchoring.py                # Reference-free anchoring (Phase 2)
+│   ├── advanced_attention.py       # Physics-informed visual consistency (Phases 3 & 4)
+│   ├── compositor.py               # Runtime model weight blend / compositor (Phases 3 & 4)
+│   ├── text_image_integrator.py    # Speech bubble layout vector solver (Phase 5)
+│   ├── quality_critic.py           # COMIC validation critic loop (Phase 6)
+│   ├── layout_engine.py            # MangaFlow page geometry engine (Phase 7)
+│   ├── feedback.py                 # Telemetry loop & star rating logs (Phase 8)
+│   ├── optimizer.py                # Parameter backpropagation & prompt mutator (Phase 8)
+│   ├── memory.py                   # Blackboard state manager & checkpointing
+│   ├── panel_engine.py             # Single panel generation runner
+│   └── evaluation_suite.py         # 8-metric model evaluator (SSIM, Edge, Style, etc.)
 │
 │── Environment & Config ──────────────────────────────────────
 ├── colab_setup.py                  # Universal Colab/Jupyter bootstrap helper
