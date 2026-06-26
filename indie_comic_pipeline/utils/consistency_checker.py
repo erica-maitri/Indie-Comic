@@ -159,6 +159,12 @@ class ConsistencyChecker:
         with torch.no_grad():
             features = _CLIP_MODEL.get_image_features(**inputs)
             
+        if not isinstance(features, torch.Tensor):
+            if hasattr(features, "pooler_output"):
+                features = features.pooler_output
+            elif isinstance(features, (list, tuple)):
+                features = features[0]
+            
         # Normalize embeddings
         features = features / features.norm(p=2, dim=-1, keepdim=True)
         

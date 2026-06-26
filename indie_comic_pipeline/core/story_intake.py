@@ -188,8 +188,6 @@ class StoryIntakeEngine:
                            story_reference: str = "",
                            mood_shifts: List[str] = None) -> Optional[Dict[str, Any]]:
         """Generate story using local Ollama LLM."""
-        from langchain_core.output_parsers import StrOutputParser
-        from langchain_core.prompts import ChatPromptTemplate
         import re
 
         if mood_shifts and len(mood_shifts) > 0:
@@ -199,62 +197,84 @@ class StoryIntakeEngine:
             arc = MOOD_ARCS.get(emotion, DEFAULT_ARC)
             beats = self._distribute_beats(panel_count, arc["arc_beats"])
 
-        style_str = f"STYLE ENFORCEMENT: The user has requested the exact visual style of: '{style_reference}'. Every single visual prompt you generate MUST include this style instruction and maintain its specific color palette and theme.\n" if style_reference else ""
-        char_str = f"CHARACTER CHARACTERISTICS: The main character is '{character_name}'. Here are their physical and personality traits: '{character_characteristics}'. Maintain these consistently in visual descriptions.\n" if character_characteristics else ""
-        story_ref_str = f"STORY REFERENCE & THEME: The user requested the story to follow the thematic tone and style of: '{story_reference}'. You MUST adapt the narrative pacing, tropes, and dialogue style to match this reference.\n" if story_reference else ""
+        # ── Reference injections ──
+        style_str = (
+            f"VISUAL STYLE ENFORCEMENT: Every panel's camera and environment fields MUST "
+            f"reflect the exact visual style of '{style_reference}' — its color palette, "
+            f"linework, atmosphere, and artistic treatment.\n"
+        ) if style_reference else ""
 
-        system_prompt = f"""You are a master graphic novelist and cinematic director, renowned for writing gripping, emotionally resonant, and visually stunning comic book scripts.
-Respond ONLY with valid JSON. No markdown fences. No explanation.
+        char_str = (
+            f"CHARACTER CONSISTENCY: The main character is '{character_name}'. "
+            f"Physical description: '{character_characteristics}'. "
+            f"Every panel MUST include their clothing, hair, and physical traits "
+            f"in the pose.body field so the visual model keeps them consistent.\n"
+        ) if character_characteristics else (
+            f"CHARACTER: The main character is '{character_name}'. "
+            f"Choose a consistent visual description for them and include it in every panel's pose.body field.\n"
+        )
 
-Generate a {panel_count}-panel comic story based on the user's emotional prompt.
-Your writing must be professional: use "show, don't tell" for visuals, write cinematic and highly descriptive visual prompts (lighting, camera angles, atmosphere), and craft punchy, natural, and compelling dialogue.
+        story_ref_str = (
+            f"NARRATIVE REFERENCE: Model the story's pacing, dialogue tone, "
+            f"and dramatic structure after '{story_reference}'. "
+            f"Use its tropes, scene rhythms, and character dynamics as inspiration.\n"
+        ) if story_reference else ""
 
-{style_str}
-{char_str}
-{story_ref_str}
-INTELLIGENT GENERATION CHAIN (WRITER'S ROOM):
-You must output a JSON object containing two main sections:
-1. "story_bible": Deconstruct the story reference to generate a plot_summary and 1-2 thematic side_characters.
-2. "panels": Write the panel-by-panel script as a HIERARCHICAL SCENE GRAPH. Do not use flat text fields.
+        system_prompt = f"""You are a master graphic novelist and cinematic director.
+Respond ONLY with a single valid JSON object. No markdown fences, no explanation, no comments.
 
-Every panel in the "panels" list MUST follow this exact schema:
-- "characters": Array of entities present in the panel. Each character must have:
-    - "id": Lowercase name (e.g. "kael")
-    - "pose": Object with "body", "head", "arms", "legs" describing physical stance.
-    - "expression": Object with "emotion", "eyes", "mouth" describing facial state.
-    - "dialogue": Object with "text" (or "..."), "tone", and "bubble" (e.g. "speech", "thought", "shout").
-- "actions": Array of events happening (e.g., {{"actor": "kael", "verb": "looking", "target": "artifact"}}).
-- "camera": Cinematic framing (e.g. "Low-angle medium shot").
-- "environment": The background setting and lighting.
+{style_str}{char_str}{story_ref_str}
+VISUAL SPECIFICITY RULES — you MUST follow these for every panel:
+1. "camera" field: MUST specify angle + movement. Examples:
+   - "Extreme close-up, static, face filling frame"
+   - "Low-angle medium shot, slow upward tilt"
+   - "Wide establishing shot, handheld drift left"
+   - "Dutch tilt over-shoulder, locked off"
+   - "Bird's eye overhead, slow zoom out"
 
-Output this exact JSON structure:
+2. "environment" field: MUST include ALL four of:
+   (a) LOCATION — where exactly (rooftop, cramped subway, open field, neon alley)
+   (b) TIME — time of day and sky condition (3am overcast, golden hour, harsh noon)
+   (c) DOMINANT COLOR PALETTE — the 2-3 colours that define this scene
+   (d) LIGHT SOURCE — where the light comes from and its quality
+   Example: "Narrow rain-soaked alleyway, 2am, dominant palette deep indigo and neon pink,
+   single overhead streetlamp casting hard shadows downward"
+
+3. pose.body field: MUST include character's clothing/costume AND body position.
+   Example: "crouching forward in torn grey hoodie and black cargo pants, weight on left foot"
+
+4. dialogue.text: Write REAL dialogue. Punchy. Max 12 words. No placeholders.
+   Characters speak like real people under emotional pressure.
+
+Generate a {panel_count}-panel comic story. Output this exact JSON:
 {{
   "story_bible": {{
-    "plot_summary": "...",
+    "plot_summary": "2-3 sentence story summary",
     "side_characters": [ {{"name": "...", "role": "...", "description": "..."}} ]
   }},
-  "recurring_motif": "...",
-  "mood_journey": "...",
+  "recurring_motif": "A single specific visual object that recurs (e.g. a cracked compass)",
+  "mood_journey": "One sentence arc description",
   "panels": [
     {{
       "panel": 1,
+      "emotion_beat": "beat_name",
       "characters": [
         {{
-          "id": "kael",
-          "pose": {{"body": "...", "head": "...", "arms": "...", "legs": "..."}},
-          "expression": {{"emotion": "...", "eyes": "...", "mouth": "..."}},
-          "dialogue": {{"text": "...", "tone": "...", "bubble": "..."}}
+          "id": "character_name_lowercase",
+          "pose": {{"body": "clothing + physical stance", "head": "head direction", "arms": "arm position", "legs": "leg position"}},
+          "expression": {{"emotion": "specific emotion", "eyes": "eye description", "mouth": "mouth position"}},
+          "dialogue": {{"text": "Actual spoken words.", "tone": "tone descriptor", "bubble": "speech|thought|shout|whisper"}}
         }}
       ],
-      "actions": [ {{"actor": "...", "verb": "...", "target": "..."}} ],
-      "camera": "...",
-      "environment": "..."
+      "actions": [ {{"actor": "character_id", "verb": "action verb", "target": "what/whom"}} ],
+      "camera": "angle + movement descriptor",
+      "environment": "location, time, dominant palette, light source"
     }}
   ]
 }}"""
 
         beat_guide = "\n".join(
-            f"  Panel {i+1} → emotion_beat should evoke: {beats[i]}"
+            f"  Panel {i+1}: emotion_beat = \"{beats[i]}\""
             for i in range(panel_count)
         )
 
@@ -264,9 +284,9 @@ Output this exact JSON structure:
             f"Character: {character_name}\n"
             f"User prompt: \"{user_prompt}\"\n\n"
             f"MOOD JOURNEY: {arc['journey']} — {arc['description']}\n\n"
-            f"Write exactly {panel_count} panels following this arc:\n"
+            f"Write exactly {panel_count} panels. Assign these emotion_beat values:\n"
             f"{beat_guide}\n\n"
-            f"Write the JSON now."
+            f"Remember: real dialogue, cinematic cameras, specific environments. Output JSON only."
         )
 
         from langchain_core.messages import SystemMessage, HumanMessage
@@ -275,16 +295,24 @@ Output this exact JSON structure:
             HumanMessage(content=user_msg),
         ]
         response = self._llm.invoke(messages).content
+        return self._extract_and_repair_json(response)
 
-        # Extract JSON from response
-        clean = re.sub(r"^```(?:json)?\s*", "", response.strip())
-        clean = re.sub(r"\s*```$", "", clean).strip()
-        start = clean.find("{")
+    def _extract_and_repair_json(self, raw: str) -> Optional[Dict[str, Any]]:
+        """Multi-pass JSON extraction and repair for LLM output."""
+        import re
+
+        # Pass 1: strip markdown fences
+        text = re.sub(r'^```(?:json)?\s*', '', raw.strip(), flags=re.MULTILINE)
+        text = re.sub(r'\s*```$', '', text, flags=re.MULTILINE).strip()
+
+        # Pass 2: find the outermost JSON object
+        start = text.find("{")
         if start == -1:
+            log.warning("No JSON object found in LLM response")
             return None
 
         depth, end = 0, -1
-        for i, ch in enumerate(clean[start:], start):
+        for i, ch in enumerate(text[start:], start):
             if ch == "{":
                 depth += 1
             elif ch == "}":
@@ -294,19 +322,38 @@ Output this exact JSON structure:
                     break
 
         if end == -1:
+            log.warning("JSON object not properly closed in LLM response")
             return None
 
-        json_str = clean[start:end + 1]
+        json_str = text[start:end + 1]
+
+        # Pass 3: try direct parse
         try:
             return json.loads(json_str)
         except json.JSONDecodeError as e:
-            log.warning(f"Initial JSON parse failed: {e}. Attempting cleanup...")
-            # Clean trailing commas and newlines
-            import re
-            json_str = re.sub(r',\s*}', '}', json_str)
-            json_str = re.sub(r',\s*\]', ']', json_str)
-            json_str = json_str.replace('\n', ' ').replace('\r', ' ')
-            return json.loads(json_str)
+            log.warning(f"Direct JSON parse failed ({e}), attempting repair...")
+
+        # Pass 4: common LLM output fixes
+        repaired = json_str
+        # Remove trailing commas before } or ]
+        repaired = re.sub(r',\s*(\}|\])', r'\1', repaired)
+        # Remove single-line // comments
+        repaired = re.sub(r'//[^\n]*', '', repaired)
+        # Remove block /* */ comments
+        repaired = re.sub(r'/\*.*?\*/', '', repaired, flags=re.DOTALL)
+        # Replace smart/curly quotes with straight quotes
+        repaired = repaired.replace('\u201c', '"').replace('\u201d', '"')
+        repaired = repaired.replace('\u2018', "'").replace('\u2019', "'")
+        # Collapse newlines to spaces
+        repaired = repaired.replace('\n', ' ').replace('\r', ' ')
+        # Fix unquoted keys (e.g. {key: "val"} → {"key": "val"})
+        repaired = re.sub(r'([{,])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', repaired)
+
+        try:
+            return json.loads(repaired)
+        except json.JSONDecodeError as e2:
+            log.warning(f"JSON repair failed: {e2}")
+            raise
 
     # ─────────────────────────────────────────────────────────────────────
     # Fallback Template Generation
@@ -337,28 +384,107 @@ Output this exact JSON structure:
             "love": "Two shadows overlapping on warm pavement",
         }
 
+        # Per-beat camera and environment templates for visual variety
+        camera_by_position = [
+            "Wide establishing shot, slow drift right",          # opening
+            "Medium shot, static, character centre-frame",       # early 1
+            "Over-the-shoulder shot, locked off",               # early 2
+            "Close-up, static, face filling frame",             # midpoint
+            "Low-angle medium shot, slow upward tilt",          # rising
+            "Dutch tilt medium shot, handheld",                 # tension
+            "Extreme close-up, eyes only, static",              # climax
+            "Wide shot, slow zoom out, character small",        # resolution
+            "Medium shot, static, soft focus background",       # wind-down
+            "Wide overhead bird's eye, slow descend",           # coda
+        ]
+
+        beat_cameras = {
+            "contained_fire": "Low-angle medium shot, slow upward tilt",
+            "fracture": "Dutch tilt close-up, handheld shake",
+            "spiral": "Dutch tilt medium shot, slow clockwise rotation",
+            "peak_noise": "Extreme close-up eyes, handheld shake",
+            "breakthrough": "Low-angle wide shot, fast upward tilt",
+            "triumph": "Wide shot, slow pull-back reveal",
+            "stillness": "Wide static shot, character small in frame",
+            "drift": "Medium shot, very slow drift, soft focus",
+            "quiet_rest": "Wide overhead, slow zoom out",
+            "absence": "Wide empty room shot, static",
+            "radiance": "Low-angle medium shot, glowing backlight",
+            "transcendence": "Overhead bird's eye, slow pull back to sky",
+        }
+
+        beat_environments = {
+            "contained_fire": f"cramped rooftop of {story_world}, deep night, dominant palette crimson and charcoal, single harsh sodium streetlamp from below",
+            "fracture": f"cracked concrete wall in {story_world}, predawn darkness, dominant palette blood red and near-black, harsh single spotlight",
+            "spiral": f"narrow corridor in {story_world}, flickering fluorescent overhead, dominant palette sickly green-white, harsh top-down light",
+            "stillness": f"empty room in {story_world}, early morning grey, dominant palette muted monochrome blue-grey, flat diffused overcast light through window",
+            "drift": f"soft interior space in {story_world}, late evening, dominant palette lavender and pale grey, dim warm lamp in corner",
+            "breakthrough": f"open sky above {story_world}, sunrise, dominant palette white-gold explosion, backlit rim light",
+            "triumph": f"elevated vista above {story_world}, full golden hour, dominant palette vibrant warm spectrum, full open sunlight",
+            "quiet_rest": f"small bedroom in {story_world}, 3am, dominant palette deep indigo and silver, moonlight through curtain",
+            "absence": f"empty kitchen in {story_world}, cold daylight, dominant palette cold white and pale grey, flat cold window light",
+            "radiance": f"open hillside in {story_world}, golden hour, dominant palette gold and luminous white, warm backlit halo",
+        }
+
+        pose_by_beat = {
+            "contained_fire": {"body": "standing rigid, fists clenched at sides", "head": "jaw tight, chin slightly lowered", "arms": "locked straight down", "legs": "planted wide"},
+            "fracture": {"body": "lurching forward, off-balance", "head": "snapping upward", "arms": "one extended forward", "legs": "staggered"},
+            "spiral": {"body": "hunched, curling inward", "head": "tilted down", "arms": "wrapped around torso", "legs": "knees bent"},
+            "stillness": {"body": "standing very still, weight centred", "head": "level, forward", "arms": "hanging loose", "legs": "feet together"},
+            "drift": {"body": "lying or sitting, body slack", "head": "tilted back softly", "arms": "open, palms up", "legs": "extended relaxed"},
+            "breakthrough": {"body": "lunging forward, full extension", "head": "raised, eyes wide open", "arms": "one arm thrusting forward", "legs": "back leg extended in stride"},
+            "triumph": {"body": "standing tall, chest open, weight back", "head": "raised, face to sky", "arms": "raised wide above head", "legs": "planted strong and wide"},
+            "quiet_rest": {"body": "lying down, fully relaxed", "head": "resting sideways on pillow", "arms": "beside body or folded", "legs": "extended, uncrossed"},
+        }
+        default_pose = {"body": "standing, natural weight distribution", "head": "forward, level", "arms": "relaxed at sides", "legs": "shoulder-width apart"}
+
+        dialogue_by_beat = {
+            "contained_fire": {"text": "Not yet.", "tone": "low and controlled", "bubble": "speech"},
+            "fracture": {"text": "That's enough.", "tone": "sharp", "bubble": "shout"},
+            "spiral": {"text": "I can't — I can't stop it.", "tone": "panicked whisper", "bubble": "thought"},
+            "breakthrough": {"text": "Move.", "tone": "commanding", "bubble": "speech"},
+            "triumph": {"text": "We did it.", "tone": "breathless", "bubble": "speech"},
+            "stillness": {"text": "...", "tone": "silent", "bubble": "thought"},
+            "drift": {"text": "Just for a moment.", "tone": "murmured", "bubble": "thought"},
+            "quiet_rest": {"text": "...", "tone": "silent", "bubble": "thought"},
+            "absence": {"text": "Where did you go?", "tone": "hollow", "bubble": "thought"},
+            "radiance": {"text": "I see it now.", "tone": "soft wonder", "bubble": "speech"},
+        }
+        default_dialogue = {"text": "...", "tone": "neutral", "bubble": "speech"}
+
         panels = []
         for i in range(panel_count):
             beat = beats[i]
             progress = i / max(1, panel_count - 1)
             intensity = 0.3 + 0.4 * abs(progress - 0.5) * 2
 
+            cam_idx = min(i, len(camera_by_position) - 1)
+            camera = beat_cameras.get(beat, camera_by_position[cam_idx])
+            environment = beat_environments.get(
+                beat,
+                f"{story_world}, {'dawn' if i == 0 else 'dusk' if i == panel_count - 1 else 'midday'}, "
+                f"dominant palette neutral warm tones, natural ambient light"
+            )
+            pose = pose_by_beat.get(beat, default_pose)
+            dialogue = dialogue_by_beat.get(beat, default_dialogue)
+
             panels.append({
                 "panel": i + 1,
+                "emotion_beat": beat,
                 "characters": [
                     {
                         "id": character_name.lower(),
-                        "pose": {"body": "neutral", "head": "neutral", "arms": "relaxed", "legs": "standing"},
-                        "expression": {"emotion": beat, "eyes": "neutral", "mouth": "neutral"},
-                        "dialogue": {"text": "..." if i % 2 == 0 else f"{character_name}: ...", "tone": "neutral", "bubble": "speech"}
+                        "pose": pose,
+                        "expression": {"emotion": beat, "eyes": "focused", "mouth": "neutral"},
+                        "dialogue": dialogue,
                     }
                 ],
                 "actions": [
-                    {"actor": character_name.lower(), "verb": "expresses", "target": beat}
+                    {"actor": character_name.lower(), "verb": "moves through", "target": beat}
                 ],
-                "camera": "Medium shot",
-                "environment": f"Scene {i+1} in {story_world}",
-                "_action_intensity": intensity
+                "camera": camera,
+                "environment": environment,
+                "_action_intensity": intensity,
             })
 
         return {

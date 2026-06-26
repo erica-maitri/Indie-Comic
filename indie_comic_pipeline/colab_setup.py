@@ -18,6 +18,14 @@ import os
 import sys
 import subprocess
 
+# Prevent crash when parent process working directory has been deleted.
+try:
+    os.getcwd()
+except FileNotFoundError:
+    print("⚠️ Current working directory was invalid/deleted. Resetting to a safe location...")
+    _safe_dir = "/content" if os.path.exists("/content") else ("/kaggle/working" if os.path.exists("/kaggle/working") else "/")
+    os.chdir(_safe_dir)
+
 # ── 1. Detect environment ────────────────────────────────────────────────────
 
 try:
