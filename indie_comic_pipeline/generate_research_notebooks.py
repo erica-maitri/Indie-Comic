@@ -137,8 +137,8 @@ character_name = "Wanderer" # @param {type:"string"}
 story_world = "The Abstract" # @param {type:"string"}
 panel_count = 4 # @param {type:"integer"}
 
-# Auto-detect hardware. Use GPU if available, fallback to mock dry-run on CPU.
-dry_run = not torch.cuda.is_available()
+# Force GPU generation (disable dry-run mock fallback)
+dry_run = False
 
 print(f"🎬 Running pipeline with: prompt='{prompt}', character='{character_name}', world='{story_world}'")
 print(f"🖥️ GPU detected: {torch.cuda.is_available()} (Running {'Real GPU Generation' if not dry_run else 'Fast Mock Dry-Run'})")

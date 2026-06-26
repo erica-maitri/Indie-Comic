@@ -602,8 +602,8 @@ class ModelEnsemble:
         guidance = kwargs.get('guidance', self.config.guidance_scale)
         seed = kwargs.get('seed', self.config.seed)
         
-        # Always create generator on CPU for cross-device compatibility
-        generator = torch.Generator(device="cpu").manual_seed(seed)
+        # Create generator on target device for performance
+        generator = torch.Generator(device=device).manual_seed(seed)
         
         # Generate
         image = pipe(

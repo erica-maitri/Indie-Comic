@@ -115,7 +115,7 @@ class StoryIntakeEngine:
                        style_reference: str = "",
                        character_characteristics: str = "",
                        story_reference: str = "",
-                       mood_shifts: List[str] = None) -> Dict[str, Any]:
+                       mood_shifts: Optional[List[str]] = None) -> Dict[str, Any]:
         """
         Process a raw user prompt into a structured story configuration.
 
@@ -186,7 +186,7 @@ class StoryIntakeEngine:
                            story_world: str, style_reference: str = "",
                            character_characteristics: str = "",
                            story_reference: str = "",
-                           mood_shifts: List[str] = None) -> Optional[Dict[str, Any]]:
+                           mood_shifts: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
         """Generate story using local Ollama LLM."""
         import re
 

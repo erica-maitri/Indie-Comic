@@ -246,7 +246,7 @@ class IntegratedComicPipeline:
     def run(self, prompt: str, character_name: str = "Wanderer",
             story_world: str = "The Abstract", panel_count: int = 4,
             style_reference: str = "", character_characteristics: str = "",
-            story_reference: str = "", mood_shifts: List[str] = None) -> Dict[str, Any]:
+            story_reference: str = "", mood_shifts: Optional[List[str]] = None) -> Dict[str, Any]:
         """Runs the entire 8-phase comic generation pipeline."""
         log.info("=" * 80)
         log.info("Starting Ultimate Indie Comic Generator Pipeline")
@@ -406,7 +406,7 @@ class IntegratedComicPipeline:
     def run_batch(self, start_panel: int, end_panel: int, prompt: str = "", character_name: str = "Wanderer",
                   story_world: str = "The Abstract", panel_count: int = 4,
                   style_reference: str = "", character_characteristics: str = "",
-                  story_reference: str = "", mood_shifts: List[str] = None,
+                  story_reference: str = "", mood_shifts: Optional[List[str]] = None,
                   load_checkpoint: str = "", save_checkpoint: str = "") -> Dict[str, Any]:
         """Runs the pipeline in chunks, allowing for pause/resume via JSON checkpointing."""
         log.info("=" * 80)
