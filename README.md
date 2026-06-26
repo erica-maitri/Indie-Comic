@@ -1,10 +1,16 @@
 # Cyberpunk-San / Indie Comic Generator 🚀
 
-> **A fully local, end-to-end 8-Phase AI system** that reads an emotion from you, writes a multi-panel story, orchestrates a full ensemble of narrative agents, enforces visual consistency with Advanced Attention, and renders everything as a compiled comic strip. 
-> 
-> Fully dockerized. **CPU-compatible by default.**
+> **A unified, local end-to-end AI comic publishing system** that maps a multilingual user prompt to a structured narrative script, orchestrates a swarm of director agents, enforces frame-to-frame visual consistency, and renders compiled multi-panel comics.
+>
+> This repository integrates three core subsystems:
+> 1. **Mood Weaver**: A multilingual emotion classifier (XLM-RoBERTa) that identifies the prompt's core emotional state.
+> 2. **Story Weaver**: A fine-tuned narrative storyboard generator (Qwen2.5/Mistral SFT) that designs rich character plots and panel-by-panel action flows.
+> 3. **Indie Comic Pipeline**: A multi-phase rendering engine that manages visual consistency, text integration, quality critiques, and layout assembly.
+>
+> All systems share a single source of configuration truth: [arcs_config.json](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/config/arcs_config.json).
 
 ---
+
 
 ## 🏗 System Architecture (The 8 Phases)
 

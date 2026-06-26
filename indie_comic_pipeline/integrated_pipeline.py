@@ -246,24 +246,44 @@ class IntegratedComicPipeline:
     def run(self, prompt: str, character_name: str = "Wanderer",
             story_world: str = "The Abstract", panel_count: int = 4,
             style_reference: str = "", character_characteristics: str = "",
-            story_reference: str = "", mood_shifts: Optional[List[str]] = None) -> Dict[str, Any]:
-        """Runs the entire 8-phase comic generation pipeline."""
+            story_reference: str = "", mood_shifts: Optional[List[str]] = None,
+            _prebuilt_story: Optional[Dict[str, Any]] = None,
+            **_kwargs) -> Dict[str, Any]:
+        """Runs the entire 8-phase comic generation pipeline.
+
+        Parameters
+        ----------
+        _prebuilt_story : dict, optional
+            A pre-built story config (from PipelineLauncher / StoryWeaverBridge)
+            that bypasses Phase 0 (StoryIntakeEngine). Must conform to the
+            StoryIntakeEngine output format (has ``"panels"``, ``"recurring_motif"``).
+        **_kwargs
+            Extra keyword arguments are silently ignored for forward compatibility.
+        """
         log.info("=" * 80)
         log.info("Starting Ultimate Indie Comic Generator Pipeline")
         log.info("=" * 80)
-        
-        # ── Phase 0: Story Intake ──
-        log.info("\n--- Phase 0: Story Intake ---")
-        story_config = self.story_intake.process_prompt(
-            user_prompt=prompt,
-            panel_count=panel_count,
-            character_name=character_name,
-            story_world=story_world,
-            style_reference=style_reference,
-            character_characteristics=character_characteristics,
-            story_reference=story_reference,
-            mood_shifts=mood_shifts
-        )
+
+        # ── Phase 0: Story Intake (skipped when a pre-built story is supplied) ──
+        if _prebuilt_story is not None:
+            log.info("\n--- Phase 0: Story Intake [BYPASSED — using pre-built story] ---")
+            story_config = _prebuilt_story
+            # Patch panel_count from pre-built script if available
+            if "panels" in story_config:
+                panel_count = len(story_config["panels"])
+                log.info(f"[Phase 0] Using {panel_count} panels from pre-built story")
+        else:
+            log.info("\n--- Phase 0: Story Intake ---")
+            story_config = self.story_intake.process_prompt(
+                user_prompt=prompt,
+                panel_count=panel_count,
+                character_name=character_name,
+                story_world=story_world,
+                style_reference=style_reference,
+                character_characteristics=character_characteristics,
+                story_reference=story_reference,
+                mood_shifts=mood_shifts
+            )
         
         # ── Phase 1: Multi-Agent Planning ──
         log.info("\n--- Phase 1: Multi-Agent Planning ---")

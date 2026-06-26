@@ -6,6 +6,8 @@ Story-Weaver LLM to parse thematic elements, emotional pacing,
 and structural flow. Outputs a structured story configuration.
 
 Uses local Ollama for LLM inference.
+Arc definitions are loaded from config/arcs_config.json (shared
+source of truth with Story Weaver); inline dict is the fallback.
 """
 
 import json
@@ -18,7 +20,53 @@ from pathlib import Path
 log = logging.getLogger("pipeline.story_intake")
 
 
-# Default mood arc definitions (mirrored from Story-Weaver)
+def _load_arcs_config() -> dict:
+    """Load the shared arcs_config.json. Returns {} on any failure."""
+    candidates = [
+        Path(__file__).parent.parent / "config" / "arcs_config.json",
+        Path(__file__).parent / "config" / "arcs_config.json",
+    ]
+    for p in candidates:
+        if p.exists():
+            try:
+                with open(p, "r", encoding="utf-8-sig") as f:
+                    cfg = json.load(f)
+                log.info(f"[Phase 0] Loaded arc config from {p}")
+                return cfg
+            except Exception as e:
+                log.warning(f"[Phase 0] Could not parse arcs_config.json at {p}: {e}")
+    log.debug("[Phase 0] arcs_config.json not found — using inline MOOD_ARCS fallback")
+    return {}
+
+
+def _build_mood_arcs(cfg: dict) -> dict:
+    """Convert arcs_config.json into MOOD_ARCS format expected by StoryIntakeEngine."""
+    result = {}
+    mood_to_arc = cfg.get("mood_to_arc", {})
+    for _label, entry in mood_to_arc.items():
+        arc_key = entry.get("arc_key")
+        if not arc_key:
+            continue  # surprise uses fallback arc; no key to register
+        result[arc_key] = {
+            "journey":     entry.get("journey", ""),
+            "description": entry.get("description", ""),
+            "arc_beats":   entry.get("arc_beats", []),
+        }
+    # tired is a top-level key (not inside mood_to_arc)
+    if "tired" in cfg:
+        t = cfg["tired"]
+        result["tired"] = {
+            "journey":     t.get("journey", ""),
+            "description": t.get("description", ""),
+            "arc_beats":   t.get("arc_beats", []),
+        }
+    return result
+
+
+_ARCS_CONFIG = _load_arcs_config()
+_config_arcs = _build_mood_arcs(_ARCS_CONFIG) if _ARCS_CONFIG else {}
+
+
 MOOD_ARCS = {
     "sad": {
         "journey": "uplifting",
@@ -69,6 +117,9 @@ MOOD_ARCS = {
                       "trust", "embrace", "unity"],
     },
 }
+
+if _config_arcs:
+    MOOD_ARCS.update(_config_arcs)
 
 DEFAULT_ARC = {
     "journey": "reflective",
