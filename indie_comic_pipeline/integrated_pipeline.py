@@ -105,7 +105,14 @@ class MockBackend(BaseBackend):
         except Exception:
             font = ImageFont.load_default()
             
-        draw.text((20, 20), f"[Mock Panel Image]", fill=(80, 80, 80), font=font)
+        # Center title
+        title = "[Mock Panel Image]"
+        try:
+            bbox = font.getbbox(title)
+            title_w = bbox[2] - bbox[0]
+        except Exception:
+            title_w = len(title) * 8
+        draw.text(((w - title_w) // 2, 20), title, fill=(80, 80, 80), font=font)
         
         # Wrap prompt text
         words = prompt.split()
@@ -122,7 +129,14 @@ class MockBackend(BaseBackend):
             
         y_text = 50
         for line in lines[:8]:
-            draw.text((20, y_text), line, fill=(50, 50, 50), font=font)
+            # Center prompt text lines
+            try:
+                bbox = font.getbbox(line)
+                line_w = bbox[2] - bbox[0]
+            except Exception:
+                line_w = len(line) * 8
+            x_text = (w - line_w) // 2
+            draw.text((x_text, y_text), line, fill=(50, 50, 50), font=font)
             y_text += 22
             
         return img
@@ -270,9 +284,8 @@ class IntegratedComicPipeline:
             context = self.agent_coordinator.get_generation_context(panel_id)
             scene_graph = context.get("scene_graph", {})
             
-            chars = scene_graph.get("characters", [])
-            dialogue = chars[0].get("dialogue", {}).get("text", "...") if chars else "..."
-            emotion = chars[0].get("expression", {}).get("emotion", "neutral") if chars else "neutral"
+            dialogue = context.get("panel_dialogue", "...")
+            emotion = context.get("panel_emotion_beat", "neutral")
             scene_desc = scene_graph.get("environment", "")
             # Reject & Regenerate Quality loop
             retry = 0
