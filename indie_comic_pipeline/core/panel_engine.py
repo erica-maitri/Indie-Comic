@@ -265,9 +265,20 @@ class PanelEngine:
         
         # 1. Environment and Camera
         if "camera" in scene_graph:
-            parts.append(scene_graph["camera"])
+            cam = scene_graph["camera"]
+            if isinstance(cam, dict):
+                cam = ", ".join(f"{k}: {v}" for k, v in cam.items())
+            elif isinstance(cam, list):
+                cam = ", ".join(str(x) for x in cam)
+            parts.append(str(cam))
+            
         if "environment" in scene_graph:
-            parts.append(scene_graph["environment"])
+            env = scene_graph["environment"]
+            if isinstance(env, dict):
+                env = ", ".join(f"{k}: {v}" for k, v in env.items())
+            elif isinstance(env, list):
+                env = ", ".join(str(x) for x in env)
+            parts.append(str(env))
             
         # 2. Characters (Pose and Expression)
         for char in scene_graph.get("characters", []):
