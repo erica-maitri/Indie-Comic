@@ -165,14 +165,14 @@ class StoryIntakeEngine:
 
     def load_existing_story(self, path: str) -> Dict[str, Any]:
         """Load an existing story_dynamic.json from Story-Weaver."""
-        path = Path(path)
-        if not path.exists():
-            raise FileNotFoundError(f"Story file not found: {path}")
+        story_path = Path(path)
+        if not story_path.exists():
+            raise FileNotFoundError(f"Story file not found: {story_path}")
 
-        with open(path, "r", encoding="utf-8") as f:
+        with open(story_path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        log.info(f"[Phase 0] Loaded existing story from {path}")
+        log.info(f"[Phase 0] Loaded existing story from {story_path}")
         log.info(f"  Motif: {data.get('recurring_motif', 'N/A')}")
         log.info(f"  Panels: {len(data.get('panels', []))}")
         return data
@@ -289,12 +289,17 @@ Generate a {panel_count}-panel comic story. Output this exact JSON:
             f"Remember: real dialogue, cinematic cameras, specific environments. Output JSON only."
         )
 
+        llm = self._get_llm()
+        if llm is None:
+            log.warning("Ollama LLM connection not available — cannot generate with LLM")
+            return None
+
         from langchain_core.messages import SystemMessage, HumanMessage
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_msg),
         ]
-        response = self._llm.invoke(messages).content
+        response = llm.invoke(messages).content
         return self._extract_and_repair_json(response)
 
     def _extract_and_repair_json(self, raw: str) -> Optional[Dict[str, Any]]:
@@ -525,7 +530,7 @@ Generate a {panel_count}-panel comic story. Output this exact JSON:
                 scores[emotion] = score
 
         if scores:
-            return max(scores, key=scores.get)
+            return max(scores, key=lambda k: scores[k])
         return "determined"  # Default for action/adventure prompts
 
     def _distribute_beats(self, n: int, beats: list) -> list:
