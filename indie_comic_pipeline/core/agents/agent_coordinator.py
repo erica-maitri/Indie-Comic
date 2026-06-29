@@ -83,6 +83,7 @@ class AgentCoordinator:
             except Exception as e:
                 log.error(f"  ✗ {agent.name} agent failed: {e}")
                 self._planning_results[agent.name] = {"error": str(e)}
+                raise RuntimeError(f"Critical planning agent '{agent.name}' failed: {e}")
 
         self._planning_time = time.time() - start_time
 

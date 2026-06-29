@@ -124,6 +124,7 @@ class StoryDirector(BaseAgent):
         metadata = story_config.get("_metadata", {})
         main_char = metadata.get("character")
         if main_char:
+            memory.main_character = main_char
             memory.register_character(main_char)
             memory.register_character(main_char.lower())
             memory.register_character(main_char.capitalize())

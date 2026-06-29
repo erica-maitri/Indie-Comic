@@ -175,25 +175,30 @@ class MangaFlowLayoutEngine:
                     if max_idx == 0:
                         boxes.append((self.margin, self.margin, content_w, h_dom))
                         # Row 2 (Three panels split side-by-side)
-                        pw = (content_w - 2 * self.gutter_width) // 3
-                        for idx in range(3):
-                            boxes.append((self.margin + idx * (pw + self.gutter_width), 
-                                          self.margin + h_dom + self.gutter_width, pw, h_rest))
+                        pw1 = (content_w - 2 * self.gutter_width) // 3
+                        pw2 = pw1
+                        pw3 = content_w - 2 * self.gutter_width - pw1 - pw2
+                        boxes.append((self.margin, self.margin + h_dom + self.gutter_width, pw1, h_rest))
+                        boxes.append((self.margin + pw1 + self.gutter_width, self.margin + h_dom + self.gutter_width, pw2, h_rest))
+                        boxes.append((self.margin + pw1 + pw2 + 2 * self.gutter_width, self.margin + h_dom + self.gutter_width, pw3, h_rest))
                     else:
-                        # Row 1 is dominant, but panel 1 is dominant. Let's just do a 2x2 grid with panel 1 larger
+                        # Row 1 is dominant, but panel 2 is dominant (index 1).
                         self._fill_grid_layout(content_w, content_h, boxes)
                 else:
                     # Dominant row is at the bottom (max_idx is 2 or 3)
-                    pw = (content_w - 2 * self.gutter_width) // 3
+                    pw1 = (content_w - 2 * self.gutter_width) // 3
+                    pw2 = pw1
+                    pw3 = content_w - 2 * self.gutter_width - pw1 - pw2
+                    
                     if max_idx == 2:
-                        boxes.append((self.margin, self.margin, pw, h_rest))
-                        boxes.append((self.margin + pw + self.gutter_width, self.margin, pw, h_rest))
+                        boxes.append((self.margin, self.margin, pw1, h_rest))
+                        boxes.append((self.margin + pw1 + self.gutter_width, self.margin, pw2, h_rest))
                         boxes.append((self.margin, self.margin + h_rest + self.gutter_width, content_w, h_dom))
-                        boxes.append((self.margin + 2 * (pw + self.gutter_width), self.margin, pw, h_rest))
+                        boxes.append((self.margin + pw1 + pw2 + 2 * self.gutter_width, self.margin, pw3, h_rest))
                     else:  # max_idx == 3
-                        boxes.append((self.margin, self.margin, pw, h_rest))
-                        boxes.append((self.margin + pw + self.gutter_width, self.margin, pw, h_rest))
-                        boxes.append((self.margin + 2 * (pw + self.gutter_width), self.margin, pw, h_rest))
+                        boxes.append((self.margin, self.margin, pw1, h_rest))
+                        boxes.append((self.margin + pw1 + self.gutter_width, self.margin, pw2, h_rest))
+                        boxes.append((self.margin + pw1 + pw2 + 2 * self.gutter_width, self.margin, pw3, h_rest))
                         boxes.append((self.margin, self.margin + h_rest + self.gutter_width, content_w, h_dom))
             else:
                 # Default: standard grid with slight offsets
@@ -223,13 +228,16 @@ class MangaFlowLayoutEngine:
 
     def _fill_grid_layout(self, content_w: int, content_h: int, boxes: list):
         """Helper to create a standard 2x2 grid layout."""
-        pw = content_w // 2 - self.gutter_width // 2
-        ph = content_h // 2 - self.gutter_width // 2
+        pw1 = content_w // 2 - self.gutter_width // 2
+        pw2 = content_w - pw1 - self.gutter_width
         
-        boxes.append((self.margin, self.margin, pw, ph))
-        boxes.append((self.margin + pw + self.gutter_width, self.margin, pw, ph))
-        boxes.append((self.margin, self.margin + ph + self.gutter_width, pw, ph))
-        boxes.append((self.margin + pw + self.gutter_width, self.margin + ph + self.gutter_width, pw, ph))
+        ph1 = content_h // 2 - self.gutter_width // 2
+        ph2 = content_h - ph1 - self.gutter_width
+        
+        boxes.append((self.margin, self.margin, pw1, ph1))
+        boxes.append((self.margin + pw1 + self.gutter_width, self.margin, pw2, ph1))
+        boxes.append((self.margin, self.margin + ph1 + self.gutter_width, pw1, ph2))
+        boxes.append((self.margin + pw1 + self.gutter_width, self.margin + ph1 + self.gutter_width, pw2, ph2))
 
     def _get_weight(self, panel: Dict[str, Any]) -> float:
         """Extract size weight based on action intensity."""
@@ -248,7 +256,7 @@ class MangaFlowLayoutEngine:
         if img_aspect > box_aspect:
             # Image is too wide, fit height and crop sides
             new_h = bh
-            new_w = int(bh * img_aspect)
+            new_w = int(bh * img_w // img_h)
             resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
             
             # Crop horizontal center
@@ -257,7 +265,7 @@ class MangaFlowLayoutEngine:
         else:
             # Image is too tall, fit width and crop top/bottom
             new_w = bw
-            new_h = int(bw / img_aspect)
+            new_h = int(bw * img_h // img_w)
             resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
             
             # Crop vertical center

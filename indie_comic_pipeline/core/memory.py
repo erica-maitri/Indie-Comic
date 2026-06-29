@@ -123,6 +123,7 @@ class StorySectionMemory:
         self.recurring_motif: str = ""
         self.arc_beats: List[str] = []
         self.current_beat_index: int = 0
+        self.main_character: Optional[str] = None
 
         # ── Planning Data ──
         self.page_plans: List[Dict[str, Any]] = []   # Storyboard Agent output
@@ -260,6 +261,30 @@ class StorySectionMemory:
     # Context Generation (for prompt building)
     # ─────────────────────────────────────────────────────────────────────
 
+    def get_page_num(self, panel_id: int) -> int:
+        """Dynamically compute page number for a panel based on layout directives."""
+        current_page = 1
+        current_page_slots = 0.0
+        for pid in range(1, panel_id + 1):
+            layout = self.get_layout_directive(pid)
+            size_class = layout.size_class if layout else "medium"
+            
+            if size_class == "full_page":
+                weight = 4.0
+            elif size_class == "large":
+                weight = 2.0
+            else:
+                weight = 1.0
+                
+            if current_page_slots > 0 and current_page_slots + weight > 4.0:
+                current_page += 1
+                current_page_slots = 0.0
+                
+            current_page_slots += weight
+            if size_class == "full_page":
+                current_page_slots = 4.0
+        return current_page
+
     def build_generation_context(self, panel_id: int) -> Dict[str, Any]:
         """
         Build a comprehensive context dict for Panel Engine prompt construction.
@@ -287,7 +312,7 @@ class StorySectionMemory:
             "panel_id": panel_id,
             "total_panels": self.total_panels,
             "total_pages": self.total_pages,
-            "current_page": (panel_id - 1) // 4 + 1 if self.total_panels > 0 else 1,
+            "current_page": self.get_page_num(panel_id) if self.total_panels > 0 else 1,
             "mood_journey": self.mood_journey,
             "recurring_motif": self.recurring_motif,
             "current_beat": self.arc_beats[self.current_beat_index]
@@ -318,6 +343,7 @@ class StorySectionMemory:
             "recurring_motif": self.recurring_motif,
             "arc_beats": self.arc_beats,
             "current_beat_index": self.current_beat_index,
+            "main_character": self.main_character,
             "page_plans": self.page_plans,
             "raw_panels": self.raw_panels,
             "total_panels": self.total_panels,
@@ -329,7 +355,6 @@ class StorySectionMemory:
         }
 
     def save_checkpoint(self, path: str):
-
         """Serialize the entire blackboard to JSON for checkpoint/resume."""
         data = {
             "characters": {n: cs.to_dict() for n, cs in self.characters.items()},
@@ -343,6 +368,7 @@ class StorySectionMemory:
             "recurring_motif": self.recurring_motif,
             "arc_beats": self.arc_beats,
             "current_beat_index": self.current_beat_index,
+            "main_character": self.main_character,
             "page_plans": self.page_plans,
             "raw_panels": self.raw_panels,
             "total_panels": self.total_panels,
@@ -367,6 +393,7 @@ class StorySectionMemory:
         mem.recurring_motif = data.get("recurring_motif", "")
         mem.arc_beats = data.get("arc_beats", [])
         mem.current_beat_index = data.get("current_beat_index", 0)
+        mem.main_character = data.get("main_character")
         mem.story_config = data.get("story_config", {})
         mem.page_plans = data.get("page_plans", [])
         mem.raw_panels = data.get("raw_panels", [])

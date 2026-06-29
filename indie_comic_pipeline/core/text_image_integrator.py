@@ -50,13 +50,67 @@ BUBBLE_STYLES = {
 
 # Map emotion beats to bubble categories
 BEAT_TO_BUBBLE = {
-    "contained_fire": "intense", "fracture": "intense", "peak_noise": "shout",
-    "breakthrough": "shout", "momentum": "intense", "triumph": "shout",
-    "spiral": "intense", "rage": "shout",
-    "stillness": "whisper", "drift": "thought", "quiet_rest": "whisper",
-    "softness": "calm", "surrender": "whisper", "fade": "whisper",
-    "memory": "thought", "absence": "thought", "ache": "whisper",
-    "luminous_still": "thought", "transcendence": "thought",
+    # Sad / Grief arc
+    "heaviness": "whisper",
+    "stillness": "whisper",
+    "faint_warmth": "calm",
+    "tentative_light": "thought",
+    "soft_openness": "calm",
+    "quiet_hope": "calm",
+    # Angry arc
+    "contained_fire": "intense",
+    "fracture": "intense",
+    "exhale": "intense",
+    "cooling": "intense",
+    "ground": "intense",
+    # Tired / Exhausted arc
+    "drag": "intense",
+    "surrender": "intense",
+    "softness": "calm",
+    "drift": "thought",
+    "quiet_rest": "whisper",
+    "renewal": "shout",
+    # Happy / Elation arc
+    "spark": "shout",
+    "expansion": "shout",
+    "overflow": "shout",
+    "radiance": "shout",
+    "luminous_still": "shout",
+    "transcendence": "shout",
+    # Anxious arc
+    "spiral": "intense",
+    "peak_noise": "shout",
+    "pause": "intense",
+    "breath": "intense",
+    "root": "intense",
+    "present": "calm",
+    # Grief arc
+    "absence": "thought",
+    "ache": "whisper",
+    "memory": "thought",
+    "held": "thought",
+    "continuance": "shout",
+    "carried_forward": "shout",
+    # Determined arc
+    "doubt": "intense",
+    "challenge": "intense",
+    "resistance": "intense",
+    "breakthrough": "shout",
+    "momentum": "intense",
+    "triumph": "shout",
+    # Love arc
+    "recognition": "calm",
+    "vulnerability": "thought",
+    "trust": "calm",
+    "embrace": "shout",
+    "unity": "shout",
+    # Generic / Fallbacks
+    "neutral": "calm",
+    "resolution": "calm",
+    "acknowledgment": "calm",
+    "presence": "calm",
+    "shift": "thought",
+    "openness": "calm",
 }
 
 
@@ -97,21 +151,21 @@ class TextImageIntegrator:
             
             try:
                 if provider == "openai":
-                    from langchain_openai import ChatOpenAI
+                    from langchain_openai import ChatOpenAI  # type: ignore
                     self._llm = ChatOpenAI(
                         model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
                         temperature=0.1
                     )
                     log.info(f"Connected to OpenAI for TextImageIntegrator: {self._llm.model_name}")
                 elif provider == "gemini":
-                    from langchain_google_genai import ChatGoogleGenerativeAI
+                    from langchain_google_genai import ChatGoogleGenerativeAI  # type: ignore
                     self._llm = ChatGoogleGenerativeAI(
                         model=os.environ.get("GEMINI_MODEL", "gemini-1.5-flash"),
                         temperature=0.1
                     )
                     log.info(f"Connected to Gemini for TextImageIntegrator: {self._llm.model}")
                 elif provider == "anthropic":
-                    from langchain_anthropic import ChatAnthropic
+                    from langchain_anthropic import ChatAnthropic  # type: ignore
                     self._llm = ChatAnthropic(
                         model=os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest"),
                         temperature=0.1
@@ -191,7 +245,8 @@ class TextImageIntegrator:
     def get_layout_plan(self, dialogue: str,
                         emotion_beat: str = "neutral",
                         panel_id: int = 0,
-                        scene_desc: Optional[str] = None) -> Dict[str, Any]:
+                        scene_desc: Optional[str] = None,
+                        speaker_position: str = "center") -> Dict[str, Any]:
         """
         Get bubble placement and styling plan using Ollama and local JSON files.
         
@@ -224,11 +279,15 @@ class TextImageIntegrator:
         bubble_cat = BEAT_TO_BUBBLE.get(emotion_beat, "calm")
         style = BUBBLE_STYLES.get(bubble_cat, BUBBLE_STYLES["calm"])
         
-        speaker_pos = "center"
-        if panel_id % 3 == 1:
-            speaker_pos = "left"
-        elif panel_id % 3 == 2:
-            speaker_pos = "right"
+        # Heuristic positioning to avoid overlays on faces
+        if not speaker_position or speaker_position == "center":
+            val = panel_id
+            if speaker:
+                val += sum(ord(c) for c in speaker)
+            pos_options = ["left", "right", "center"]
+            speaker_pos = pos_options[val % len(pos_options)]
+        else:
+            speaker_pos = speaker_position
             
         x_ratio = 0.5
         if speaker_pos == "left":
@@ -236,7 +295,7 @@ class TextImageIntegrator:
         elif speaker_pos == "right":
             x_ratio = 0.75
             
-        y_ratio = 0.15 + (panel_id % 3) * 0.05
+        y_ratio = 0.15 + ((panel_id * 7) % 3) * 0.08
         
         plan = {
             "speaker": speaker,
@@ -340,7 +399,23 @@ Please design the speech bubble layout. Determine the speaker, clean dialogue, b
         Returns:
             Image with integrated speech bubbles
         """
-        if not dialogue or dialogue.strip() in ("...", ""):
+        if isinstance(dialogue, dict):
+            speaker = dialogue.get("speaker") or dialogue.get("id") or dialogue.get("character")
+            text = dialogue.get("text") or dialogue.get("dialogue") or ""
+            if speaker and text:
+                dialogue_str = f"{speaker}: {text}"
+            elif text:
+                dialogue_str = text
+            else:
+                found_str = ""
+                for k, v in dialogue.items():
+                    if isinstance(v, str):
+                        found_str = v
+                        break
+                dialogue_str = found_str if found_str else str(dialogue)
+            dialogue = dialogue_str
+
+        if not dialogue or not isinstance(dialogue, str) or dialogue.strip() in ("...", ""):
             return image  # Silent panel
 
         if self.dry_run:
@@ -376,7 +451,7 @@ Please design the speech bubble layout. Determine the speaker, clean dialogue, b
             return result.convert("RGB")
 
         # Get bubble layout plan (Ollama / Local JSON)
-        plan = self.get_layout_plan(dialogue, emotion_beat, panel_id, scene_desc)
+        plan = self.get_layout_plan(dialogue, emotion_beat, panel_id, scene_desc, speaker_position)
         
         # Extract variables from plan
         speaker = plan.get("speaker")
@@ -582,7 +657,7 @@ Please design the speech bubble layout. Determine the speaker, clean dialogue, b
             else:
                 x = (img_w - bubble_w) // 2
 
-            y_offset = (panel_id % 3) * 8
+            y_offset = (panel_id % 3) * 60
             y = margin + y_offset
 
         # Clamp to image bounds
@@ -614,8 +689,10 @@ Please design the speech bubble layout. Determine the speaker, clean dialogue, b
         """Parse 'Speaker: text' format. Returns (speaker, text)."""
         if ":" in dialogue:
             parts = dialogue.split(":", 1)
-            if len(parts[0].strip()) < 30:
-                return parts[0].strip(), parts[1].strip()
+            speaker_candidate = parts[0].strip()
+            # Must be relatively short, no sentence punctuation to avoid narrative text false positives
+            if len(speaker_candidate) < 60 and not any(char in speaker_candidate for char in (".", "?", "!")):
+                return speaker_candidate, parts[1].strip()
         return None, dialogue.strip()
 
     def _wrap_text(self, text: str, font, max_width: int) -> List[str]:

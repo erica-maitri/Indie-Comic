@@ -311,7 +311,7 @@ class PanelEngine:
         log.info(f"  [5] Image generated ({image.size[0]}x{image.size[1]})")
 
         # Save the generated image
-        page_num = (panel_id - 1) // 4 + 1
+        page_num = self.memory.get_page_num(panel_id)
         filename = f"panel_{panel_id:03d}_page_{page_num}.png"
         image_path = os.path.join(self.output_dir, filename)
         image.save(image_path)
@@ -319,7 +319,7 @@ class PanelEngine:
 
         # ── Step 6: Phase 2 Anchoring (if first panel) ──
         if panel_id == 1:
-            char_name = list(self.memory.characters.keys())[0] if self.memory.characters else "Wanderer"
+            char_name = self.memory.main_character or (list(self.memory.characters.keys())[0] if self.memory.characters else "Wanderer")
             self.anchor_system.establish_anchor(image, panel_id, char_name, self.memory)
             log.info(f"  [6] Anchor established from Panel 1")
 

@@ -357,10 +357,15 @@ class IntegratedComicPipeline:
                         
             # Once accepted, run Phase 5: Text-Image bubble overlay
             log.info(f"  Phase 5: Overlaying text on Panel {panel_id}")
+            speaker_pos = "center"
+            if context.get("scene_graph", {}).get("characters"):
+                speaker_pos = context["scene_graph"]["characters"][0].get("position", "center")
+                
             final_img = self.text_integrator.integrate(
                 image=panel_result["image"],
                 dialogue=dialogue,
                 emotion_beat=emotion,
+                speaker_position=speaker_pos,
                 panel_id=panel_id,
                 scene_desc=scene_desc
             )
@@ -374,9 +379,16 @@ class IntegratedComicPipeline:
             panel_result["image_path"] = annotated_path
             panel_result["dialogue"] = dialogue
             panel_result["emotion_beat"] = emotion
+            panel_result["page_num"] = self.memory.get_page_num(panel_id)
             
             panels_completed.append(panel_result)
             self.agent_coordinator.notify_panel_generated(panel_result)
+            
+            # Save checkpoint to prevent memory loss
+            checkpoint_name = "storyboard_checkpoint_latest.json"
+            checkpoint_path = os.path.join(self.output_dir, checkpoint_name)
+            self.memory.save_checkpoint(checkpoint_path)
+            log.info(f"Saved mid-generation checkpoint for panel {panel_id} to: {checkpoint_path}")
             
         # Clean up hooks and cached VRAM tensors
         self.panel_engine.cleanup()

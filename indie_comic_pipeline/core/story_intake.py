@@ -192,7 +192,7 @@ class StoryIntakeEngine:
             
             if provider == "openai":
                 try:
-                    from langchain_openai import ChatOpenAI
+                    from langchain_openai import ChatOpenAI  # type: ignore
                     self._llm = ChatOpenAI(
                         model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
                         temperature=0.3
@@ -203,7 +203,7 @@ class StoryIntakeEngine:
                     return TemplateStoryGenerator()
             elif provider == "gemini":
                 try:
-                    from langchain_google_genai import ChatGoogleGenerativeAI
+                    from langchain_google_genai import ChatGoogleGenerativeAI  # type: ignore
                     self._llm = ChatGoogleGenerativeAI(
                         model=os.environ.get("GEMINI_MODEL", "gemini-1.5-flash"),
                         temperature=0.3
@@ -214,7 +214,7 @@ class StoryIntakeEngine:
                     return TemplateStoryGenerator()
             elif provider == "anthropic":
                 try:
-                    from langchain_anthropic import ChatAnthropic
+                    from langchain_anthropic import ChatAnthropic  # type: ignore
                     self._llm = ChatAnthropic(
                         model=os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest"),
                         temperature=0.3
@@ -259,7 +259,7 @@ class StoryIntakeEngine:
             Structured story config dict with:
             - recurring_motif, mood_journey, panels[], metadata
         """
-        panel_count = max(4, min(10, panel_count))
+        panel_count = max(1, min(10, panel_count))
         log.info(f"[Phase 0] Processing prompt: '{user_prompt[:80]}...'")
         log.info(f"  Character: {character_name}, World: {story_world}, Panels: {panel_count}")
 
@@ -671,9 +671,15 @@ Generate a {panel_count}-panel comic story. Output this exact JSON:
 
     def _distribute_beats(self, n: int, beats: list) -> list:
         """Distribute arc beats across N panels."""
+        if not beats:
+            return ["neutral"] * n
+        if n <= 1:
+            return [beats[len(beats) // 2]] * n
         if n <= len(beats):
-            step = len(beats) / n
-            return [beats[int(i * step)] for i in range(n)]
+            # Evenly sample beats without skipping middle sequences
+            indices = [int(i * (len(beats) - 1) / (n - 1)) for i in range(n)]
+            return [beats[idx] for idx in indices]
+        # If more panels than beats, stretch them out evenly
         result = []
         for i in range(n):
             idx = int(i * (len(beats) - 1) / (n - 1))
