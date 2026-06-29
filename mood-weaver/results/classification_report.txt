@@ -1,0 +1,13 @@
+Final Evaluation on held-out test set:
+            precision    recall  f1-score   support
+
+sadness       0.70      0.74      0.72       503
+joy           0.80      0.78      0.79      1058
+anger         0.72      0.69      0.71       778
+fear          0.69      0.66      0.67       125
+love          0.77      0.82      0.79       840
+surprise      0.76      0.74      0.75       703
+
+accuracy                           0.76      4007
+macro avg      0.74      0.74      0.74      4007
+weighted avg   0.76      0.76      0.75      4007

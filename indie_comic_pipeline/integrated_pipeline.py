@@ -541,7 +541,21 @@ class IntegratedComicPipeline:
                         prompt_used=p["prompt"],
                         generation_backend=backend
                     )
-            
+
+            # Auto-train user preference model if sufficient feedback exists
+            try:
+                from core.user_preference_critic import UserPreferenceCritic
+                pref_critic = UserPreferenceCritic(
+                    model_path=self.quality_critic.user_pref_model_path
+                )
+                pref_critic.train_from_feedback_file(
+                    feedback_file=self.feedback_loop.feedback_path,
+                    panels_dir=self.panels_dir,
+                    min_records=3
+                )
+            except Exception as e:
+                log.warning(f"Failed to auto-train user preference critic: {e}")
+
             # Suggest updates
             log.info("RLHF entries logged. Suggesting pipeline optimizations...")
             adjusts = self.optimizer.optimize_system_parameters()

@@ -33,10 +33,12 @@ class QualityCritic:
     def __init__(self, threshold: float = 0.55,
                  strict_threshold: float = 0.70,
                  max_retries: int = 2,
-                 weights: Optional[Dict[str, float]] = None):
+                 weights: Optional[Dict[str, float]] = None,
+                 user_pref_model_path: str = "outputs/user_preference_model.pt"):
         self.threshold = threshold
         self.strict_threshold = strict_threshold
         self.max_retries = max_retries
+        self.user_pref_model_path = user_pref_model_path
 
         # Dimension weights (must sum to 1.0)
         self.weights = weights or {
@@ -48,6 +50,17 @@ class QualityCritic:
         }
 
         self._consistency_checker = None
+        self._user_pref_critic = None
+
+    def _get_user_pref_critic(self):
+        """Lazy-load user preference critic."""
+        if self._user_pref_critic is None:
+            try:
+                from core.user_preference_critic import UserPreferenceCritic
+                self._user_pref_critic = UserPreferenceCritic(model_path=self.user_pref_model_path)
+            except Exception as e:
+                log.warning(f"Failed to load user preference critic: {e}")
+        return self._user_pref_critic
 
     def evaluate(self, panel_result: Dict[str, Any],
                  memory: "StorySectionMemory") -> Dict[str, Any]:
@@ -72,10 +85,25 @@ class QualityCritic:
             "readability": self._eval_readability(panel_result),
         }
 
-        # Compute weighted composite score
+        # Lazy evaluate user preference score if model is trained
+        user_pref_critic = self._get_user_pref_critic()
+        if user_pref_critic and user_pref_critic.is_trained():
+            image = panel_result.get("image")
+            if image:
+                scores["user_preference"] = user_pref_critic.predict(image)
+
+        # Compute weighted composite score (handling dynamic user_preference weight redistribution)
+        current_weights = dict(self.weights)
+        if "user_preference" in scores:
+            current_weights["user_preference"] = 0.20
+            sum_other = sum(self.weights.values())
+            scale = 0.80 / sum_other if sum_other > 0 else 1.0
+            for k in self.weights:
+                current_weights[k] = self.weights[k] * scale
+
         composite = sum(
-            scores[dim] * self.weights.get(dim, 0.2)
-            for dim in scores
+            scores[dim] * current_weights.get(dim, 0.2)
+            for dim in scores if dim in current_weights
         )
 
         # Determine verdict
@@ -99,21 +127,27 @@ class QualityCritic:
             "adjustments": adjustments,
         }
 
-        log.info(
+        log_msg = (
             f"  Critic evaluation panel {panel_id}: "
             f"composite={composite:.3f} [{verdict}] "
             f"(vis={scores['visual_consistency']:.2f}, "
             f"emo={scores['emotional_engagement']:.2f}, "
             f"nar={scores['narrative_coherence']:.2f}, "
             f"aes={scores['aesthetic_quality']:.2f}, "
-            f"read={scores['readability']:.2f})"
+            f"read={scores['readability']:.2f}"
         )
+        if "user_preference" in scores:
+            log_msg += f", pref={scores['user_preference']:.2f})"
+        else:
+            log_msg += ")"
+        log.info(log_msg)
 
         return evaluation
 
     def should_regenerate(self, evaluation: Dict[str, Any]) -> bool:
         """Check if the panel should be regenerated."""
         return evaluation.get("verdict") == "fail"
+
 
     # ─────────────────────────────────────────────────────────────────────
     # Dimension Evaluators

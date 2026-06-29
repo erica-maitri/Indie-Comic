@@ -1,0 +1,22 @@
+Model: XLM-RoBERTa Base
+
+Dataset:
+- GoEmotions (English)
+- EmoHi (Hindi)
+
+Total Samples:
+40068
+
+Accuracy:
+76%
+
+Macro F1:
+0.74
+
+Per-Class F1:
+Sadness: 0.72
+Joy: 0.79
+Anger: 0.71
+Fear: 0.67
+Love: 0.79
+Surprise: 0.75

@@ -1,0 +1,14 @@
+torch>=2.0.0
+transformers==4.52.4
+datasets==2.19.2
+sentencepiece>=0.1.99
+protobuf==3.20.3
+tiktoken>=0.7.0
+
+pandas>=2.0.0
+numpy==1.26.4
+scikit-learn>=1.3.0
+
+matplotlib>=3.8.0
+accelerate>=0.30.0
+safetensors>=0.4.0

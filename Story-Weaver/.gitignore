@@ -1,0 +1,16 @@
+__pycache__
+.vscode
+unsloth_compiled_cache
+
+moodweaver_stage2_finetuned
+moodweaver_stage2_merged
+moodweaver_data
+
+py10
+
+stories/
+trial/
+.env
+.env_old
+
+moodweaver_stage2_train.jsonl

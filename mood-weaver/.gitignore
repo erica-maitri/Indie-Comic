@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environments
+venv/
+env/
+
+# Model files
+model/
+*.zip
+
+# Large datasets
+datasets/emoHi-train.csv
+datasets/emoHi-valid.csv
+datasets/emoHi-test.csv
+datasets/combined_emotions.csv
+
+# Optional: combined dataset if large
+# datasets/combined_emotions.csv
+
+# VS Code
+.vscode/

@@ -1,0 +1,42 @@
+# ============================================================
+# MoodWeaver — Requirements
+# ============================================================
+# Install all:  pip install -r requirements.txt
+# GPU (CUDA 12.1): pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cu121
+# CPU only:     pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
+# ============================================================
+
+# --- Core ML ---
+torch>=2.2.0
+transformers>=4.46.0
+accelerate>=0.33.0
+sentencepiece>=0.2.0
+protobuf>=4.25.0
+
+# --- Quantization (4-bit, required for training + inference) ---
+bitsandbytes>=0.43.0
+auto-gptq>=0.7.1
+optimum>=1.19.0
+
+# --- Fine-tuning ---
+unsloth>=2024.11.4
+trl>=0.11.0
+peft>=0.12.0
+datasets>=2.20.0
+
+# --- Evaluation: NLP metrics ---
+rouge-score>=0.1.2
+bert-score>=0.3.13
+nltk>=3.9.1
+
+# --- Evaluation: LLM judge ---
+anthropic>=0.34.0
+
+# --- Env + config ---
+python-dotenv>=1.0.1
+
+# --- Utilities ---
+numpy>=1.26.0
+scipy>=1.13.0
+tqdm>=4.66.0
+packaging>=24.0
