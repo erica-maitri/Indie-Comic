@@ -75,31 +75,59 @@ class TextImageIntegrator:
                  max_bubble_width_ratio: float = 0.45,
                  output_dir: str = "outputs/panels",
                  ollama_model: str = "llama3.2",
-                 ollama_url: str = "http://localhost:11434"):
+                 ollama_url: str = "http://localhost:11434",
+                 dry_run: bool = False):
         self.font_path = font_path
         self.base_font_size = base_font_size
         self.max_bubble_width_ratio = max_bubble_width_ratio
         self.output_dir = output_dir
         self.ollama_model = ollama_model
         self.ollama_url = os.environ.get("OLLAMA_URL") or ollama_url
+        self.dry_run = dry_run
         self._font_cache: Dict[int, Any] = {}
         self._llm = None
         
         Path(self.output_dir).mkdir(parents=True, exist_ok=True)
 
     def _get_llm(self):
-        """Lazy-load the Ollama LLM connection."""
+        """Lazy-load the appropriate LLM connection based on provider configuration."""
         if self._llm is None:
+            provider = os.environ.get("LLM_PROVIDER", "ollama").lower()
+            log.info(f"[TextImageIntegrator] Initializing LLM provider: {provider}")
+            
             try:
-                from langchain_ollama import ChatOllama
-                self._llm = ChatOllama(
-                    model=self.ollama_model,
-                    temperature=0.1,
-                    base_url=self.ollama_url,
-                )
-                log.info(f"Connected to Ollama for TextImageIntegrator: {self.ollama_model}")
-            except ImportError:
-                log.warning("langchain_ollama not installed in TextImageIntegrator — using manual HTTP/json fallback")
+                if provider == "openai":
+                    from langchain_openai import ChatOpenAI
+                    self._llm = ChatOpenAI(
+                        model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+                        temperature=0.1
+                    )
+                    log.info(f"Connected to OpenAI for TextImageIntegrator: {self._llm.model_name}")
+                elif provider == "gemini":
+                    from langchain_google_genai import ChatGoogleGenerativeAI
+                    self._llm = ChatGoogleGenerativeAI(
+                        model=os.environ.get("GEMINI_MODEL", "gemini-1.5-flash"),
+                        temperature=0.1
+                    )
+                    log.info(f"Connected to Gemini for TextImageIntegrator: {self._llm.model}")
+                elif provider == "anthropic":
+                    from langchain_anthropic import ChatAnthropic
+                    self._llm = ChatAnthropic(
+                        model=os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest"),
+                        temperature=0.1
+                    )
+                    log.info(f"Connected to Anthropic for TextImageIntegrator: {self._llm.model}")
+                else:
+                    # Default: Ollama
+                    from langchain_ollama import ChatOllama
+                    self._llm = ChatOllama(
+                        model=self.ollama_model,
+                        temperature=0.1,
+                        base_url=self.ollama_url,
+                    )
+                    log.info(f"Connected to Ollama for TextImageIntegrator: {self.ollama_model}")
+            except Exception as e:
+                log.warning(f"Failed to load LLM provider '{provider}' in TextImageIntegrator: {e}. Using manual/json fallback.")
                 self._llm = None
         return self._llm
 
@@ -314,6 +342,38 @@ Please design the speech bubble layout. Determine the speaker, clean dialogue, b
         """
         if not dialogue or dialogue.strip() in ("...", ""):
             return image  # Silent panel
+
+        if self.dry_run:
+            result = image.copy().convert("RGBA")
+            overlay = Image.new("RGBA", result.size, (0, 0, 0, 0))
+            draw = ImageDraw.Draw(overlay)
+            
+            w, h = result.size
+            font_size = self.base_font_size
+            font = self._get_font(font_size)
+            
+            speaker, text_clean = self._parse_dialogue(dialogue)
+            if not text_clean:
+                text_clean = dialogue
+                
+            display_text = f"{speaker}: {text_clean}" if speaker else text_clean
+            wrapped_lines = self._wrap_text(display_text, font, w - 40)
+            
+            line_height = font_size + 4
+            text_height = len(wrapped_lines) * line_height
+            rect_h = text_height + 20
+            
+            # Semi-transparent rectangle overlay
+            draw.rectangle([10, h - rect_h - 10, w - 10, h - 10], fill=(0, 0, 0, 180), outline=(255, 255, 255, 255), width=2)
+            
+            # Render lines
+            y_pos = h - rect_h
+            for line in wrapped_lines:
+                draw.text((20, y_pos), line, fill=(255, 255, 255, 255), font=font)
+                y_pos += line_height
+                
+            result = Image.alpha_composite(result, overlay)
+            return result.convert("RGB")
 
         # Get bubble layout plan (Ollama / Local JSON)
         plan = self.get_layout_plan(dialogue, emotion_beat, panel_id, scene_desc)

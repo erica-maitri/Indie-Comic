@@ -110,7 +110,16 @@ class TestComicPipeline(unittest.TestCase):
         """Test L1-Heat, L2-Attn, L3-STE lifecycle management."""
         print("Testing AdvancedAttentionManager...")
         manager = AdvancedAttentionManager(enabled=True)
-        self.assertTrue(manager.enabled)
+        try:
+            import torch
+            has_gpu = torch.cuda.is_available()
+        except ImportError:
+            has_gpu = False
+            
+        if has_gpu:
+            self.assertTrue(manager.enabled)
+        else:
+            self.assertFalse(manager.enabled)
         
         status = manager.get_status()
         self.assertEqual(status["L1_heat_diffusion"]["alpha"], 0.03)

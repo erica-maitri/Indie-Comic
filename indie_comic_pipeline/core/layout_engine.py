@@ -35,16 +35,12 @@ class MangaFlowLayoutEngine:
         self.margin = margin
         self.bg_color = bg_color
 
-    def layout_page(self, panels: List[Dict[str, Any]], page_num: int) -> Image.Image:
+    def layout_page(self, panels: List[Any], page_num: int) -> Image.Image:
         """
         Dynamically layouts panel images onto a single comic page.
         
         Args:
-            panels: List of dicts representing panels on this page.
-                    Each dict should contain:
-                    - 'image': PIL Image of the panel
-                    - 'action_intensity': float (0.0 to 1.0)
-                    - 'layout': dict (optional camera/size metadata)
+            panels: List of dicts or PIL Images representing panels on this page.
             page_num: Page number for typesetting
             
         Returns:
@@ -54,7 +50,21 @@ class MangaFlowLayoutEngine:
             # Empty page
             return Image.new("RGB", (self.page_width, self.page_height), self.bg_color)
             
-        n = len(panels)
+        # Standardize panels: handle dicts, PIL Images, or other objects with image attribute
+        standardized_panels = []
+        for p in panels:
+            if isinstance(p, dict):
+                standardized_panels.append(p)
+            elif isinstance(p, Image.Image):
+                standardized_panels.append({"image": p, "action_intensity": 0.5})
+            else:
+                img = getattr(p, "image", None)
+                if img is not None:
+                    standardized_panels.append({"image": img, "action_intensity": getattr(p, "action_intensity", 0.5)})
+                else:
+                    standardized_panels.append({"image": p, "action_intensity": 0.5})
+                    
+        n = len(standardized_panels)
         log.info(f"MangaFlow Layout: Assembling Page {page_num} with {n} panels")
         
         # Create blank page canvas
@@ -62,10 +72,10 @@ class MangaFlowLayoutEngine:
         draw = ImageDraw.Draw(page)
         
         # Calculate panel boxes
-        boxes = self._calculate_panel_boxes(panels)
+        boxes = self._calculate_panel_boxes(standardized_panels)
         
         # Place panels
-        for i, panel in enumerate(panels):
+        for i, panel in enumerate(standardized_panels):
             if i >= len(boxes):
                 break
                 

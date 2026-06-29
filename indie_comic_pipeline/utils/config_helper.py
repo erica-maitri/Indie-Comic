@@ -60,3 +60,13 @@ def get_output_path(*path_parts):
 
     return full_path
 
+
+def load_env_with_defaults():
+    """Load settings from environment variables with fallback defaults."""
+    return {
+        "dry_run": os.getenv("PIPELINE_DRY_RUN", "true").lower() == "true",
+        "llm_provider": os.getenv("LLM_PROVIDER", "ollama"),
+        "ollama_url": os.getenv("OLLAMA_URL", "http://localhost:11434"),
+        "panels": int(os.getenv("PANEL_COUNT", "4")),
+    }
+

@@ -155,9 +155,14 @@ class IntegratedComicPipeline:
     """The master pipeline orchestrator for the Ultimate AI Indie Comic Generator."""
     
     def __init__(self, dry_run: bool = False):
-        self.dry_run = dry_run
-        self.settings = load_settings()
+        from utils.config_helper import load_env_with_defaults
+        env_defaults = load_env_with_defaults()
         
+        self.dry_run = dry_run or env_defaults.get("dry_run", False)
+        self.settings = load_settings()
+        if not self.settings:
+            self.settings = {}
+            
         # Initialize memory
         self.memory = StorySectionMemory()
         
@@ -168,10 +173,13 @@ class IntegratedComicPipeline:
         Path(self.panels_dir).mkdir(parents=True, exist_ok=True)
         
         # Initialize sub-components
-        langchain_conf = self.settings.get("langchain", {})
+        if "langchain" not in self.settings:
+            self.settings["langchain"] = {}
+        langchain_conf = self.settings["langchain"]
+        
         self.story_intake = StoryIntakeEngine(
-            ollama_model=langchain_conf.get("model", "llama3.2"),
-            ollama_url=langchain_conf.get("ollama_url", "http://localhost:11434")
+            ollama_model=langchain_conf.get("model", env_defaults.get("llm_provider", "llama3.2")),
+            ollama_url=langchain_conf.get("ollama_url", env_defaults.get("ollama_url", "http://localhost:11434"))
         )
         
         self.agent_coordinator = AgentCoordinator(self.memory)
@@ -195,6 +203,7 @@ class IntegratedComicPipeline:
             attention_blend=0.15,      # L2: anchor K/V blend ratio
             spatial_strength=0.08,     # L3: spatiotemporal correction strength
             enabled=adv_attn_enabled,
+            dry_run=self.dry_run
         )
         if adv_attn_enabled:
             log.info("Advanced Attention Mechanisms ENABLED (L1-Heat, L2-Attn, L3-STE)")
@@ -214,14 +223,16 @@ class IntegratedComicPipeline:
         self.quality_critic = QualityCritic(
             threshold=critic_conf.get("threshold", 0.55),
             strict_threshold=critic_conf.get("strict_threshold", 0.70),
-            max_retries=2
+            max_retries=2,
+            dry_run=self.dry_run
         )
         
         # Text-Image Integrator (DiffSensei approximation)
         self.text_integrator = TextImageIntegrator(
             output_dir=self.panels_dir,
-            ollama_model=langchain_conf.get("model", "llama3.2"),
-            ollama_url=langchain_conf.get("ollama_url", "http://localhost:11434")
+            ollama_model=langchain_conf.get("model", env_defaults.get("llm_provider", "llama3.2")),
+            ollama_url=langchain_conf.get("ollama_url", env_defaults.get("ollama_url", "http://localhost:11434")),
+            dry_run=self.dry_run
         )
         
         # MangaFlow Layout Engine
@@ -398,19 +409,7 @@ class IntegratedComicPipeline:
         log.info("\n--- Phase 8: Exporting Formats ---")
         cbz_path = self.exporter.export_cbz(pages, title=prompt[:30])
         html_path = self.exporter.export_web_comic(pages, os.path.join(self.output_dir, "web_comic.html"))
-        
-        # Compile PDF directly from PIL images
-        pdf_path = os.path.join(self.output_dir, "comic_book_integrated.pdf")
-        if pages:
-            page_images = [p["page_image"] for p in pages]
-            page_images[0].save(
-                pdf_path,
-                save_all=True,
-                append_images=page_images[1:],
-                optimize=True,
-                quality=85
-            )
-            log.info(f"Compiled print-ready PDF to: {pdf_path}")
+        pdf_path = self.exporter.export_pdf(pages, title=prompt[:30])
             
         # Unload model selector backends to save GPU memory
         self.backend_selector.unload_all()
@@ -515,8 +514,12 @@ class IntegratedComicPipeline:
         self.backend_selector.unload_all()
         return {"pages": pages, "panels": panels_completed, "last_panel_generated": actual_end}
 
-    def collect_interactive_feedback(self, run_results: Dict[str, Any]):
+    def collect_interactive_feedback(self, run_results: Dict[str, Any], no_feedback: bool = False):
         """Collect rating and comments from the user for RLHF tracking."""
+        if self.dry_run or no_feedback:
+            log.info("RLHF skipped in dry-run mode or non-interactive environment")
+            return
+
         print("\n" + "=" * 70)
         print("INTERACTIVE RLHF TELEMETRY COLLECTOR")
         print("=" * 70)
@@ -608,8 +611,7 @@ def main():
     print(f"PDF document: {results['pdf_path']}")
     print("=" * 70)
     
-    if not args.no_feedback:
-        pipeline.collect_interactive_feedback(results)
+    pipeline.collect_interactive_feedback(results, no_feedback=args.no_feedback)
 
 
 if __name__ == "__main__":

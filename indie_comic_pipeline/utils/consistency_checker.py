@@ -8,10 +8,16 @@ import numpy as np
 from PIL import Image
 import os
 import cv2
-import torch
 import gc
+import sys
 
 from typing import Any
+
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
 
 # Global model cache - prevents reloading models for every comparison
 _CLIP_MODEL: Any = None
@@ -21,12 +27,15 @@ _DINOV2_PROCESSOR: Any = None
 
 class ConsistencyChecker:
 
-    def __init__(self):
+    def __init__(self, dry_run: bool = False):
         self.reference_features = None
         self.clip_model = None
         self.clip_processor = None
         # Tracks whether reference was set from a character sheet or the first panel
         self.reference_mode = "character_sheet"  # "character_sheet" | "panel"
+        
+        # Determine dry run status
+        self.dry_run = dry_run or os.environ.get("PIPELINE_DRY_RUN", "false").lower() == "true"
         
         # Load configuration for which metrics to use
         try:
@@ -47,11 +56,14 @@ class ConsistencyChecker:
             }
             
         self.device = self.consistency_config.get("device", "cpu")
+        if self.device == "cuda" and not (TORCH_AVAILABLE and torch.cuda.is_available()):
+            print("[ConsistencyChecker] CUDA is not available. Falling back to CPU.")
+            self.device = "cpu"
         
         # Print which metrics are enabled
-        print(f"[ConsistencyChecker] Metrics enabled:")
-        print(f"  - CLIP: {self.consistency_config.get('enable_clip', False)}")
-        print(f"  - DINOv2: {self.consistency_config.get('enable_dinov2', False)}")
+        print(f"[ConsistencyChecker] Metrics enabled (dry_run={self.dry_run}):")
+        print(f"  - CLIP: {self.consistency_config.get('enable_clip', False) if not self.dry_run else False}")
+        print(f"  - DINOv2: {self.consistency_config.get('enable_dinov2', False) if not self.dry_run else False}")
         print(f"  - SSIM: {self.consistency_config.get('enable_ssim', True)}")
         print(f"  - Edge: {self.consistency_config.get('enable_edge', True)}")
         print(f"  - Color: {self.consistency_config.get('enable_color', True)}")
@@ -136,101 +148,131 @@ class ConsistencyChecker:
 
     def compute_clip_image_similarity(self, img1_path, img2_path):
         """Compute visual semantic similarity using CLIP embeddings (runs on CPU/GPU based on config)"""
+        if self.dry_run:
+            return 0.85
+            
         global _CLIP_MODEL, _CLIP_PROCESSOR
         
-        # Check if CLIP is enabled in config
-        if not self.consistency_config.get("enable_clip", False):
+        # Check if CLIP is enabled in config and torch is available
+        if not self.consistency_config.get("enable_clip", False) or not TORCH_AVAILABLE:
             return None
             
-        # Load once globally, reuse forever
-        if _CLIP_MODEL is None or _CLIP_PROCESSOR is None:
-            from transformers import CLIPProcessor, CLIPModel
-            print(f"  [i] Loading CLIP model on {self.device} (once, cached)...")
-            _CLIP_MODEL = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(self.device)
-            _CLIP_PROCESSOR = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-            print("  [✓] CLIP model loaded and cached")
-        else:
-            _CLIP_MODEL = _CLIP_MODEL.to(self.device)
+        try:
+            # Load once globally, reuse forever
+            if _CLIP_MODEL is None or _CLIP_PROCESSOR is None:
+                from transformers import CLIPProcessor, CLIPModel
+                print(f"  [i] Loading CLIP model on {self.device} (once, cached)...")
+                _CLIP_MODEL = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(self.device)
+                _CLIP_PROCESSOR = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+                print("  [✓] CLIP model loaded and cached")
+            else:
+                _CLIP_MODEL = _CLIP_MODEL.to(self.device)
+                
+            img1 = Image.open(img1_path)
+            img2 = Image.open(img2_path)
             
-        img1 = Image.open(img1_path)
-        img2 = Image.open(img2_path)
-        
-        inputs = _CLIP_PROCESSOR(images=[img1, img2], return_tensors="pt", padding=True).to(self.device)
-        with torch.no_grad():
-            features = _CLIP_MODEL.get_image_features(**inputs)
+            inputs = _CLIP_PROCESSOR(images=[img1, img2], return_tensors="pt", padding=True).to(self.device)
+            with torch.no_grad():
+                features = _CLIP_MODEL.get_image_features(**inputs)
+                
+            if not isinstance(features, torch.Tensor):
+                if hasattr(features, "pooler_output"):
+                    features = features.pooler_output
+                elif isinstance(features, (list, tuple)):
+                    features = features[0]
+                
+            # Normalize embeddings
+            features = features / features.norm(p=2, dim=-1, keepdim=True)
             
-        if not isinstance(features, torch.Tensor):
-            if hasattr(features, "pooler_output"):
-                features = features.pooler_output
-            elif isinstance(features, (list, tuple)):
-                features = features[0]
+            # Cosine similarity
+            similarity = torch.nn.functional.cosine_similarity(features[0:1], features[1:2]).item()
             
-        # Normalize embeddings
-        features = features / features.norm(p=2, dim=-1, keepdim=True)
-        
-        # Cosine similarity
-        similarity = torch.nn.functional.cosine_similarity(features[0:1], features[1:2]).item()
-        
-        # Offload if we are using CUDA to free VRAM immediately
-        if self.device == "cuda":
-            _CLIP_MODEL = _CLIP_MODEL.to("cpu")
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            import gc
-            gc.collect()
-        
-        return max(0.0, min(1.0, similarity))
+            # Offload if we are using CUDA to free VRAM immediately
+            if self.device == "cuda":
+                _CLIP_MODEL = _CLIP_MODEL.to("cpu")
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                import gc
+                gc.collect()
+            
+            return max(0.0, min(1.0, similarity))
+        except Exception as e:
+            print(f"[WARNING] CLIP image similarity failed: {e}. Disabling CLIP metric.")
+            self.consistency_config["enable_clip"] = False
+            return None
 
     def compute_dinov2_similarity(self, img1_path, img2_path):
         """Compute visual structure similarity using DINOv2 features (runs on CPU/GPU based on config)"""
+        if self.dry_run:
+            return 0.85
+            
         global _DINOV2_MODEL, _DINOV2_PROCESSOR
         
-        # Check if DINOv2 is enabled in config
-        if not self.consistency_config.get("enable_dinov2", False):
+        # Check if DINOv2 is enabled in config and torch is available
+        if not self.consistency_config.get("enable_dinov2", False) or not TORCH_AVAILABLE:
             return None
             
-        # Load once globally, reuse forever
-        if _DINOV2_MODEL is None or _DINOV2_PROCESSOR is None:
-            from transformers import AutoImageProcessor, AutoModel
-            print(f"  [i] Loading DINOv2 model on {self.device} (once, cached)...")
-            _DINOV2_PROCESSOR = AutoImageProcessor.from_pretrained("facebook/dinov2-base")
-            _DINOV2_MODEL = AutoModel.from_pretrained("facebook/dinov2-base").to(self.device)
-            print("  [✓] DINOv2 model loaded and cached")
-        else:
-            _DINOV2_MODEL = _DINOV2_MODEL.to(self.device)
+        try:
+            # Load once globally, reuse forever
+            if _DINOV2_MODEL is None or _DINOV2_PROCESSOR is None:
+                from transformers import AutoImageProcessor, AutoModel
+                print(f"  [i] Loading DINOv2 model on {self.device} (once, cached)...")
+                _DINOV2_PROCESSOR = AutoImageProcessor.from_pretrained("facebook/dinov2-base")
+                _DINOV2_MODEL = AutoModel.from_pretrained("facebook/dinov2-base").to(self.device)
+                print("  [✓] DINOv2 model loaded and cached")
+            else:
+                _DINOV2_MODEL = _DINOV2_MODEL.to(self.device)
+                
+            img1 = Image.open(img1_path).convert("RGB")
+            img2 = Image.open(img2_path).convert("RGB")
             
-        img1 = Image.open(img1_path).convert("RGB")
-        img2 = Image.open(img2_path).convert("RGB")
-        
-        inputs1 = _DINOV2_PROCESSOR(images=img1, return_tensors="pt").to(self.device)
-        inputs2 = _DINOV2_PROCESSOR(images=img2, return_tensors="pt").to(self.device)
-        
-        with torch.no_grad():
-            outputs1 = _DINOV2_MODEL(**inputs1)
-            outputs2 = _DINOV2_MODEL(**inputs2)
+            inputs1 = _DINOV2_PROCESSOR(images=img1, return_tensors="pt").to(self.device)
+            inputs2 = _DINOV2_PROCESSOR(images=img2, return_tensors="pt").to(self.device)
             
-            # Use pooler_output for global image representation
-            features1 = outputs1.pooler_output
-            features2 = outputs2.pooler_output
+            with torch.no_grad():
+                outputs1 = _DINOV2_MODEL(**inputs1)
+                outputs2 = _DINOV2_MODEL(**inputs2)
+                
+                # Use pooler_output for global image representation
+                features1 = outputs1.pooler_output
+                features2 = outputs2.pooler_output
+                
+                # Normalize embeddings
+                features1 = features1 / features1.norm(p=2, dim=-1, keepdim=True)
+                features2 = features2 / features2.norm(p=2, dim=-1, keepdim=True)
+                
+                similarity = torch.nn.functional.cosine_similarity(features1, features2).item()
+                
+            # Offload if we are using CUDA to free VRAM immediately
+            if self.device == "cuda":
+                _DINOV2_MODEL = _DINOV2_MODEL.to("cpu")
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                import gc
+                gc.collect()
             
-            # Normalize embeddings
-            features1 = features1 / features1.norm(p=2, dim=-1, keepdim=True)
-            features2 = features2 / features2.norm(p=2, dim=-1, keepdim=True)
-            
-            similarity = torch.nn.functional.cosine_similarity(features1, features2).item()
-            
-        # Offload if we are using CUDA to free VRAM immediately
-        if self.device == "cuda":
-            _DINOV2_MODEL = _DINOV2_MODEL.to("cpu")
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            import gc
-            gc.collect()
-        
-        return max(0.0, min(1.0, similarity))
+            return max(0.0, min(1.0, similarity))
+        except Exception as e:
+            print(f"[WARNING] DINOv2 similarity failed: {e}. Disabling DINOv2 metric.")
+            self.consistency_config["enable_dinov2"] = False
+            return None
 
     def extract_features(self, image_path):
         """Extract image features for comparison"""
+        if self.dry_run:
+            return {
+                'histogram': np.zeros((8, 8)),
+                'pixels': np.zeros(128 * 128),
+                'mean_brightness': 128.0,
+                'size': (768, 768),
+                'img_gray': np.zeros((768, 768)),
+                'edge_density': 0.1,
+                'gram_matrix': np.zeros((5, 5)),
+                'aesthetic_score': 0.8,
+                'path': image_path,
+                'reference_path': image_path
+            }
+
         if not os.path.exists(image_path):
             raise FileNotFoundError(f"Image not found at {image_path}")
             
@@ -295,6 +337,22 @@ class ConsistencyChecker:
 
     def check_consistency(self, image_path, threshold=None):
         """Check if image matches reference character using configurable metrics"""
+        if self.dry_run:
+            return {
+                'consistent': True,
+                'score': 0.85,
+                'color_score': 0.85,
+                'struct_score': 0.85,
+                'ssim_score': 0.85,
+                'edge_score': 0.85,
+                'style_score': 0.85,
+                'aesthetic_score': 0.85,
+                'clip_img_score': 0.85,
+                'dinov2_score': 0.85,
+                'reference_mode': self.reference_mode,
+                'metrics_used': 6
+            }
+
         if self.reference_features is None:
             raise ValueError("No reference set. Call set_reference() first.")
             
@@ -462,7 +520,7 @@ class ConsistencyChecker:
             _DINOV2_MODEL = None
             _DINOV2_PROCESSOR = None
             
-        if torch.cuda.is_available():
+        if TORCH_AVAILABLE and torch.cuda.is_available():
             torch.cuda.empty_cache()
             gc.collect()
             

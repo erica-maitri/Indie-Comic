@@ -128,6 +128,47 @@ DEFAULT_ARC = {
 }
 
 
+class TemplateStoryGeneratorResponse:
+    def __init__(self, content: str):
+        self.content = content
+
+
+class TemplateStoryGenerator:
+    """Mock/Fallback LLM that returns a structured template story as JSON."""
+    
+    def invoke(self, messages: list) -> TemplateStoryGeneratorResponse:
+        content = ""
+        for msg in messages:
+            if hasattr(msg, "content") and "Write exactly" in msg.content:
+                content = msg.content
+                break
+                
+        import re
+        panel_count_match = re.search(r"Write exactly (\d+) panels", content)
+        panel_count = int(panel_count_match.group(1)) if panel_count_match else 4
+        
+        char_match = re.search(r"Character:\s*(.*)", content)
+        character_name = char_match.group(1).strip() if char_match else "Wanderer"
+        
+        world_match = re.search(r"Story world:\s*(.*)", content)
+        story_world = world_match.group(1).strip() if world_match else "The Abstract"
+        
+        emotion_match = re.search(r"Emotion:\s*(.*)", content)
+        emotion = emotion_match.group(1).strip() if emotion_match else "determined"
+        
+        engine = StoryIntakeEngine()
+        story_dict = engine._generate_fallback(
+            user_prompt="Fallback story",
+            emotion=emotion,
+            panel_count=panel_count,
+            character_name=character_name,
+            story_world=story_world
+        )
+        
+        import json
+        return TemplateStoryGeneratorResponse(json.dumps(story_dict))
+
+
 class StoryIntakeEngine:
     """
     Phase 0: Story Intake
@@ -144,19 +185,57 @@ class StoryIntakeEngine:
         self._llm = None
 
     def _get_llm(self):
-        """Lazy-load the Ollama LLM connection."""
+        """Lazy-load the appropriate LLM connection based on provider configuration."""
         if self._llm is None:
-            try:
-                from langchain_ollama import ChatOllama
-                self._llm = ChatOllama(
-                    model=self.ollama_model,
-                    temperature=0.3,
-                    base_url=self.ollama_url,
-                )
-                log.info(f"Connected to Ollama: {self.ollama_model}")
-            except ImportError:
-                log.warning("langchain_ollama not installed — using fallback story generation")
-                self._llm = None
+            provider = os.environ.get("LLM_PROVIDER", "ollama").lower()
+            log.info(f"[StoryIntakeEngine] Initializing LLM provider: {provider}")
+            
+            if provider == "openai":
+                try:
+                    from langchain_openai import ChatOpenAI
+                    self._llm = ChatOpenAI(
+                        model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+                        temperature=0.3
+                    )
+                    log.info(f"Connected to OpenAI: {self._llm.model_name}")
+                except Exception as e:
+                    log.warning(f"OpenAI init failed: {e}. Using templates.")
+                    return TemplateStoryGenerator()
+            elif provider == "gemini":
+                try:
+                    from langchain_google_genai import ChatGoogleGenerativeAI
+                    self._llm = ChatGoogleGenerativeAI(
+                        model=os.environ.get("GEMINI_MODEL", "gemini-1.5-flash"),
+                        temperature=0.3
+                    )
+                    log.info(f"Connected to Gemini: {self._llm.model}")
+                except Exception as e:
+                    log.warning(f"Gemini init failed: {e}. Using templates.")
+                    return TemplateStoryGenerator()
+            elif provider == "anthropic":
+                try:
+                    from langchain_anthropic import ChatAnthropic
+                    self._llm = ChatAnthropic(
+                        model=os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest"),
+                        temperature=0.3
+                    )
+                    log.info(f"Connected to Anthropic: {self._llm.model}")
+                except Exception as e:
+                    log.warning(f"Anthropic init failed: {e}. Using templates.")
+                    return TemplateStoryGenerator()
+            else:
+                # Default: Ollama
+                try:
+                    from langchain_ollama import ChatOllama
+                    self._llm = ChatOllama(
+                        model=self.ollama_model,
+                        temperature=0.3,
+                        base_url=self.ollama_url,
+                    )
+                    log.info(f"Connected to Ollama: {self.ollama_model}")
+                except Exception as e:
+                    log.warning(f"Ollama init failed: {e}. Using templates.")
+                    return TemplateStoryGenerator()
         return self._llm
 
     def process_prompt(self, user_prompt: str,
@@ -342,15 +421,21 @@ Generate a {panel_count}-panel comic story. Output this exact JSON:
 
         llm = self._get_llm()
         if llm is None:
-            log.warning("Ollama LLM connection not available — cannot generate with LLM")
-            return None
+            log.warning("LLM connection not available — using TemplateStoryGenerator fallback")
+            llm = TemplateStoryGenerator()
 
         from langchain_core.messages import SystemMessage, HumanMessage
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_msg),
         ]
-        response = llm.invoke(messages).content
+        try:
+            response = llm.invoke(messages).content
+        except Exception as e:
+            log.warning(f"LLM invoke failed: {e}. Falling back to TemplateStoryGenerator.")
+            fallback_llm = TemplateStoryGenerator()
+            response = fallback_llm.invoke(messages).content
+            
         return self._extract_and_repair_json(response)
 
     def _extract_and_repair_json(self, raw: str) -> Optional[Dict[str, Any]]:

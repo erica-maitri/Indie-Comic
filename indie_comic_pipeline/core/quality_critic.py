@@ -34,11 +34,13 @@ class QualityCritic:
                  strict_threshold: float = 0.70,
                  max_retries: int = 2,
                  weights: Optional[Dict[str, float]] = None,
-                 user_pref_model_path: str = "outputs/user_preference_model.pt"):
+                 user_pref_model_path: str = "outputs/user_preference_model.pt",
+                 dry_run: bool = False):
         self.threshold = threshold
         self.strict_threshold = strict_threshold
         self.max_retries = max_retries
         self.user_pref_model_path = user_pref_model_path
+        self.dry_run = dry_run
 
         # Dimension weights (must sum to 1.0)
         self.weights = weights or {
@@ -327,7 +329,7 @@ class QualityCritic:
         if self._consistency_checker is None:
             try:
                 from utils.consistency_checker import ConsistencyChecker
-                self._consistency_checker = ConsistencyChecker()
+                self._consistency_checker = ConsistencyChecker(dry_run=self.dry_run)
             except ImportError:
                 pass
         return self._consistency_checker
