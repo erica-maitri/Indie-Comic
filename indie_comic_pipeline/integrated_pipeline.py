@@ -271,6 +271,11 @@ class IntegratedComicPipeline:
         **_kwargs
             Extra keyword arguments are silently ignored for forward compatibility.
         """
+        # Reset memory blackboard for a fresh run
+        self.memory = StorySectionMemory()
+        self.agent_coordinator.memory = self.memory
+        self.panel_engine.memory = self.memory
+
         log.info("=" * 80)
         log.info("Starting Ultimate Indie Comic Generator Pipeline")
         log.info("=" * 80)
@@ -295,6 +300,10 @@ class IntegratedComicPipeline:
                 story_reference=story_reference,
                 mood_shifts=mood_shifts
             )
+
+        # Validate that story configuration has correct layout/format
+        if not story_config or "panels" not in story_config:
+            raise ValueError("Story intake failed to return a valid story configuration with panels.")
         
         # ── Phase 1: Multi-Agent Planning ──
         log.info("\n--- Phase 1: Multi-Agent Planning ---")

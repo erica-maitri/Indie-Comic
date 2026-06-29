@@ -1,6 +1,9 @@
 import os
 import zipfile
+import logging
 from typing import Optional, List
+
+log = logging.getLogger("pipeline.exporter")
 
 class ComicExporter:
     """Exports generated comics into standard reader formats like CBZ, CBR, PDF, and scrollable Web HTML."""
@@ -48,11 +51,11 @@ class ComicExporter:
                         # Cleanup temp
                         os.remove(temp_path)
             
-            print(f"[OK] Successfully exported CBZ: {output_path}")
+            log.info(f"Successfully exported CBZ: {output_path}")
             return output_path
             
         except Exception as e:
-            print(f"[!] Failed to export CBZ: {e}")
+            log.error(f"Failed to export CBZ: {e}")
             return None
     
     def export_cbr(self, pages: list, title: str = "Comic") -> Optional[str]:
@@ -73,7 +76,7 @@ class ComicExporter:
                 rar_path = win_rar
                 
         if not rar_path:
-            print("[WARNING] Native 'rar' executable not found in PATH or standard location. Cannot create valid RAR-based CBR. Falling back to exporting a standard CBZ file instead.")
+            log.warning("Native 'rar' executable not found in PATH or standard location. Cannot create valid RAR-based CBR. Falling back to exporting a standard CBZ file instead.")
             return self.export_cbz(pages, title)
             
         safe_title = "".join([c for c in title if c.isalpha() or c.isdigit() or c==' ']).rstrip()
@@ -91,7 +94,7 @@ class ComicExporter:
                     temp_files.append(temp_path)
             
             if not temp_files:
-                print("[!] No page images to archive.")
+                log.error("No page images to archive.")
                 return None
                 
             # Run RAR command: rar a -ep <output_path> <temp_files>
@@ -104,15 +107,15 @@ class ComicExporter:
             result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             
             if result.returncode == 0:
-                print(f"[OK] Successfully exported CBR: {output_path}")
+                log.info(f"Successfully exported CBR: {output_path}")
                 return output_path
             else:
-                print(f"[!] RAR execution failed (return code {result.returncode}): {result.stderr or result.stdout}")
-                print("[!] Falling back to CBZ.")
+                log.error(f"RAR execution failed (return code {result.returncode}): {result.stderr or result.stdout}")
+                log.warning("Falling back to CBZ.")
                 return self.export_cbz(pages, title)
                 
         except Exception as e:
-            print(f"[!] Failed to export CBR: {e}. Falling back to CBZ.")
+            log.error(f"Failed to export CBR: {e}. Falling back to CBZ.")
             return self.export_cbz(pages, title)
         finally:
             # Cleanup temp files
@@ -156,11 +159,11 @@ class ComicExporter:
                     # Cleanup
                     os.remove(temp_path)
             c.save()
-            print(f"[OK] Successfully exported PDF using reportlab: {output_path}")
+            log.info(f"Successfully exported PDF using reportlab: {output_path}")
             return output_path
             
         except Exception as e:
-            print(f"[WARNING] reportlab PDF generation failed: {e}. Falling back to standard PIL PDF output.")
+            log.warning(f"reportlab PDF generation failed: {e}. Falling back to standard PIL PDF output.")
             try:
                 # PIL fallback
                 pil_pages = []
@@ -176,10 +179,10 @@ class ComicExporter:
                         optimize=True,
                         quality=85
                     )
-                    print(f"[OK] Successfully exported PDF using PIL fallback: {output_path}")
+                    log.info(f"Successfully exported PDF using PIL fallback: {output_path}")
                     return output_path
             except Exception as e_pil:
-                print(f"[!] Failed to export PDF with PIL fallback: {e_pil}")
+                log.error(f"Failed to export PDF with PIL fallback: {e_pil}")
             return None
 
     def export_web_comic(self, pages: list, output_path: str = "outputs/exports/web_comic.html"):

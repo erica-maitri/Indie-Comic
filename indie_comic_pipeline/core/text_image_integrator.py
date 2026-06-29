@@ -688,11 +688,20 @@ Please design the speech bubble layout. Determine the speaker, clean dialogue, b
     def _parse_dialogue(self, dialogue: str) -> Tuple[Optional[str], str]:
         """Parse 'Speaker: text' format. Returns (speaker, text)."""
         if ":" in dialogue:
-            parts = dialogue.split(":", 1)
-            speaker_candidate = parts[0].strip()
-            # Must be relatively short, no sentence punctuation to avoid narrative text false positives
-            if len(speaker_candidate) < 60 and not any(char in speaker_candidate for char in (".", "?", "!")):
-                return speaker_candidate, parts[1].strip()
+            # Avoid splitting on colons inside time stamps (e.g., 12:30)
+            idx = dialogue.find(":")
+            if idx > 0 and idx < len(dialogue) - 1:
+                if dialogue[idx-1].isdigit() and dialogue[idx+1].isdigit():
+                    # Find next colon
+                    idx = dialogue.find(":", idx + 1)
+            
+            if idx != -1:
+                speaker_candidate = dialogue[:idx].strip()
+                text_content = dialogue[idx+1:].strip()
+                if (len(speaker_candidate) < 40 and 
+                    "\n" not in speaker_candidate and
+                    not any(char in speaker_candidate for char in ("?", "!"))):
+                    return speaker_candidate, text_content
         return None, dialogue.strip()
 
     def _wrap_text(self, text: str, font, max_width: int) -> List[str]:
@@ -740,6 +749,8 @@ Please design the speech bubble layout. Determine the speaker, clean dialogue, b
                 "arial.ttf", "Arial.ttf",
                 "DejaVuSans.ttf", "LiberationSans-Regular.ttf",
                 "C:/Windows/Fonts/arial.ttf",
+                "/System/Library/Fonts/Supplemental/Arial.ttf",
+                "/Library/Fonts/Arial.ttf",
                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
             ]
             for fp in font_candidates:
