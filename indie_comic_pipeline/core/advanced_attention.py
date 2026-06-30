@@ -280,7 +280,7 @@ class SpatiotemporalConsistencyEnforcer:
         Returns:
             Corrected latent tensor.
         """
-        if self._anchor_mean is None:
+        if self._anchor_mean is None or self._anchor_std is None:
             return latents
 
         if not (self.active_low <= timestep_ratio <= self.active_high):

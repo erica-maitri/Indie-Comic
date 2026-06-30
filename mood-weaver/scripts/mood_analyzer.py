@@ -1,9 +1,26 @@
+import os
 import re
+from pathlib import Path
 from transformers import pipeline
+
+# Resolve model path. Try local paths first, otherwise fallback to public Hugging Face model
+local_model_path = Path("c:/Users/Dell/Downloads/drid/mood-weaver/model/mood_weaver_model")
+if not local_model_path.exists():
+    local_model_path = Path("c:/Users/Dell/Downloads/drid/mood-weaver/scripts/mood_weaver_model")
+if not local_model_path.exists():
+    local_model_path = Path("c:/Users/Dell/Downloads/drid/mood-weaver/mood_weaver_model")
+if not local_model_path.exists():
+    local_model_path = Path("./mood_weaver_model")
+
+if local_model_path.exists():
+    model_to_load = str(local_model_path)
+else:
+    # Use matching public emotion model as a robust fallback
+    model_to_load = "bhadresh-savani/bert-base-uncased-emotion"
 
 emotion_pipe = pipeline(
     "text-classification",
-    model="./mood_weaver_model",
+    model=model_to_load,
     top_k=None
 )
 

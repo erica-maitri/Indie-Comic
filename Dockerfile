@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM pytorch/pytorch:2.4.0-cuda11.8-cudnn9-runtime
 
 # Set environment variable to run python unbuffered
 ENV PYTHONUNBUFFERED=1
@@ -17,14 +17,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install uv for rapid Python packaging
 RUN pip install --no-cache-dir uv
 
-# Copy requirements and install CPU-only torch first, then rest of deps
+# Copy requirements
 COPY indie_comic_pipeline/requirements.txt /app/indie_comic_pipeline/requirements.txt
 
-# Install PyTorch CPU-only build to avoid CUDA download (~2 GB vs ~8 GB)
-RUN uv pip install --system \
-    torch==2.4.0 torchvision==0.19.0 --index-url https://download.pytorch.org/whl/cpu
-
-# Install remaining requirements
+# Install remaining requirements using pre-installed torch environment
 RUN uv pip install --system -r /app/indie_comic_pipeline/requirements.txt
 
 # Copy project files

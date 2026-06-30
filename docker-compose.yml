@@ -7,6 +7,13 @@ services:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     restart: unless-stopped
 
   comic-generator:
@@ -16,9 +23,16 @@ services:
     container_name: comic-generator
     depends_on:
       - ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     environment:
       - OLLAMA_URL=http://ollama:11434
-      - PIPELINE_DRY_RUN=true
+      - PIPELINE_DRY_RUN=false
     ports:
       - "5000:5000"
     volumes:

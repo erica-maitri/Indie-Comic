@@ -315,23 +315,121 @@ def build_prompt(n: int) -> str:
 class DynamicStoryGenerator:
     def __init__(self):
         log.info(f"Loading {MODEL_PATH} ...")
-        tok = AutoTokenizer.from_pretrained(MODEL_PATH)
-        assert tok is not None
-        if getattr(tok, "pad_token", None) is None:
-            tok.pad_token = tok.eos_token
-        self.tok = tok
-        self.model = AutoModelForCausalLM.from_pretrained(
-            MODEL_PATH, torch_dtype=torch.float16, device_map="auto"
+        # Auto-detect fallback to Ollama if the local trained model path does not exist on disk
+        self.is_ollama = (
+            MODEL_PATH.startswith("ollama") or 
+            MODEL_PATH in ["llama3.2", "qwen2.5", "mistral", "llama3.1"] or
+            not os.path.exists(MODEL_PATH)
         )
-        self.model.eval()
-        log.info("Model ready.")
+        if self.is_ollama:
+            self.tok = None
+            self.model = None
+            log.info(f"Ollama backend enabled using model '{MODEL_PATH}' (fallback={not os.path.exists(MODEL_PATH)})")
+        else:
+            tok = AutoTokenizer.from_pretrained(MODEL_PATH)
+            assert tok is not None
+            if getattr(tok, "pad_token", None) is None:
+                tok.pad_token = tok.eos_token
+            self.tok = tok
+            self.model = AutoModelForCausalLM.from_pretrained(
+                MODEL_PATH, torch_dtype=torch.float16, device_map="auto"
+            )
+            self.model.eval()
+            log.info("Model ready.")
 
     def generate(self) -> dict:
+        system_prompt = SYSTEM
+        # If schema override is requested, swap the target output spec in the system prompt
+        if os.environ.get("COMIC_SCHEMA_OVERRIDE") == "true":
+            schema_spec = """Output ONLY this JSON:
+{
+  "story_bible": {
+    "plot_summary": "2-3 sentence story summary",
+    "side_characters": [ {"name": "...", "role": "...", "description": "..."} ]
+  },
+  "recurring_motif": "one precise visual motif present in every panel",
+  "mood_journey": "one sentence describing the emotional arc",
+  "panels": [
+    {
+      "panel": 1,
+      "emotion_beat": "beat_name",
+      "characters": [
+        {
+          "id": "character_name_lowercase",
+          "pose": {"body": "clothing + physical stance", "head": "head direction", "arms": "arm position", "legs": "leg position"},
+          "expression": {"emotion": "specific emotion", "eyes": "eye description", "mouth": "mouth position"},
+          "dialogue": {"text": "Actual spoken words.", "tone": "tone descriptor", "bubble": "speech|thought|shout|whisper"}
+        }
+      ],
+      "actions": [ {"actor": "character_id", "verb": "action verb", "target": "what/whom"} ],
+      "camera": "angle + movement descriptor",
+      "environment": "location, time, dominant palette, light source"
+    }
+  ]
+}"""
+            system_prompt = SYSTEM.replace(
+                'Output ONLY this JSON:\n{\n  "recurring_motif": "one precise visual motif present in every panel",\n  "mood_journey": "one sentence describing the emotional arc",\n  "panels": [\n    {"panel": 1, "visual": "...", "dialogue": "...", "emotion_beat": "one_word", "motion": "..."}\n  ]\n}',
+                schema_spec
+            )
+            
+        # Prepend character/style constraints if loaded from environment
+        style_str = os.environ.get("STYLE_STR", "")
+        char_str = os.environ.get("CHAR_STR", "")
+        story_ref_str = os.environ.get("STORY_REF_STR", "")
+        if style_str or char_str or story_ref_str:
+            system_prompt = f"{style_str}{char_str}{story_ref_str}\n\n{system_prompt}"
+
+        if self.is_ollama:
+            import httpx
+            url = os.environ.get("OLLAMA_URL", "http://localhost:11434") + "/api/chat"
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": build_prompt(PANEL_COUNT)},
+            ]
+            for attempt in range(1, RETRIES + 1):
+                log.info(f"Attempt {attempt}/{RETRIES} via Ollama ({MODEL_PATH})")
+                t0 = time.time()
+                try:
+                    payload = {
+                        "model": MODEL_PATH,
+                        "messages": messages,
+                        "stream": False,
+                        "options": {
+                            "temperature": TEMPERATURE,
+                            "top_p": TOP_P,
+                            "num_predict": MAX_TPP * PANEL_COUNT
+                        }
+                    }
+                    r = httpx.post(url, json=payload, timeout=60.0)
+                    r.raise_for_status()
+                    resp = r.json()
+                    raw = resp["message"]["content"].strip()
+                    elapsed = round(time.time() - t0, 2)
+                    
+                    data = self._parse(raw)
+                    self._validate(data)
+                    data["_meta"] = {
+                        "emotion": EMOTION, "panel_count": PANEL_COUNT,
+                        "arc": MOOD_ARCS.get(EMOTION, DEFAULT_ARC)["journey"],
+                        "generation_time_s": elapsed,
+                        "config": {
+                            "temperature": TEMPERATURE, "top_p": TOP_P,
+                            "rep_penalty": REP_PENALTY, "max_tpp": MAX_TPP,
+                        }
+                    }
+                    log.info(f"Done in {elapsed}s")
+                    return data
+                except Exception as e:
+                    log.warning(f"Ollama attempt {attempt} failed: {e}")
+                    if attempt == RETRIES:
+                        raise RuntimeError(f"Ollama failed after {RETRIES} attempts: {e}")
+            raise RuntimeError("Unexpected end of Ollama generation loop")
+
         tok = self.tok
         model = self.model
         assert tok is not None and model is not None
         messages = [
-            {"role": "system", "content": SYSTEM},
+            {"role": "system", "content": system_prompt},
             {"role": "user",   "content": build_prompt(PANEL_COUNT)},
         ]
         prompt = tok.apply_chat_template(
@@ -398,11 +496,25 @@ class DynamicStoryGenerator:
                 depth -= 1
                 if depth == 0: end = i; break
         if end == -1: raise ValueError("Unbalanced braces")
-        return json.loads(clean[s:end+1])
+        
+        # Simple JSON parser error repair (e.g. trailing commas before end of arrays/objects)
+        try:
+            return json.loads(clean[s:end+1])
+        except Exception:
+            # Attempt to repair common trailing commas
+            repaired = re.sub(r',\s*([\]}])', r'\1', clean[s:end+1])
+            return json.loads(repaired)
 
     def _validate(self, data: dict):
         if len(data.get("panels", [])) != PANEL_COUNT:
             raise ValueError(f"Expected {PANEL_COUNT} panels, got {len(data.get('panels',[]))}")
+        # Bypass layout validation validation keys if we are using the dynamic schema override
+        if os.environ.get("COMIC_SCHEMA_OVERRIDE") == "true":
+            for p in data["panels"]:
+                for k in ("panel", "characters", "camera", "environment"):
+                    if k not in p: raise ValueError(f"Panel {p.get('panel')} missing '{k}'")
+            return
+            
         for p in data["panels"]:
             for k in ("visual", "dialogue", "emotion_beat", "motion"):
                 if k not in p: raise ValueError(f"Panel {p.get('panel')} missing '{k}'")
@@ -422,6 +534,12 @@ def print_story(data: dict):
     print(f"  Motif   : {data.get('recurring_motif','—')}")
     print(f"  Time    : {data['_meta']['generation_time_s']}s")
     print(f"{'═'*62}\n")
+    
+    # Bypass details printing for customized layout schema override
+    if os.environ.get("COMIC_SCHEMA_OVERRIDE") == "true":
+        print("Detailed Comic layout generated successfully.")
+        return
+        
     for p in data["panels"]:
         i = p["panel"] - 1
         phase = phases[i] if i < len(phases) else "—"

@@ -136,20 +136,23 @@ prompt = "A lone wanderer discovers hope" # @param {type:"string"}
 character_name = "Wanderer" # @param {type:"string"}
 story_world = "The Abstract" # @param {type:"string"}
 panel_count = 4 # @param {type:"integer"}
+weave_mood = False # @param {type:"boolean"}
+model_override = "" # @param {type:"string"}
 
 # Force GPU generation (disable dry-run mock fallback)
 dry_run = False
 
-print(f"🎬 Running pipeline with: prompt='{prompt}', character='{character_name}', world='{story_world}'")
+print(f"🎬 Running pipeline with: prompt='{prompt}', character='{character_name}', world='{story_world}', weave_mood={weave_mood}, model_override='{model_override}'")
 print(f"🖥️ GPU detected: {torch.cuda.is_available()} (Running {'Real GPU Generation' if not dry_run else 'Fast Mock Dry-Run'})")
 
 # Initialize and execute the master pipeline
-pipeline = IntegratedComicPipeline(dry_run=dry_run)
+pipeline = IntegratedComicPipeline(dry_run=dry_run, model_override=model_override if model_override else None)
 results = pipeline.run(
     prompt=prompt,
     character_name=character_name,
     story_world=story_world,
-    panel_count=panel_count
+    panel_count=panel_count,
+    weave_mood=weave_mood
 )
 
 # Display the assembled comic pages directly in the notebook
@@ -174,7 +177,8 @@ config = intake.process_prompt(
     user_prompt="A lone wanderer discovers hope",
     panel_count=4,
     character_name="Wanderer",
-    story_world="The Abstract"
+    story_world="The Abstract",
+    weave_mood=False
 )
 
 print("Structured Story Config:")

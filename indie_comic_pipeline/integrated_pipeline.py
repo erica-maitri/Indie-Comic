@@ -154,8 +154,9 @@ class MockBackend(BaseBackend):
 class IntegratedComicPipeline:
     """The master pipeline orchestrator for the Ultimate AI Indie Comic Generator."""
     
-    def __init__(self, dry_run: bool = False):
+    def __init__(self, dry_run: bool = False, model_override: Optional[str] = None):
         from utils.config_helper import load_env_with_defaults
+        from typing import Optional
         env_defaults = load_env_with_defaults()
         
         self.dry_run = dry_run or env_defaults.get("dry_run", False)
@@ -177,8 +178,9 @@ class IntegratedComicPipeline:
             self.settings["langchain"] = {}
         langchain_conf = self.settings["langchain"]
         
+        ollama_model = model_override or langchain_conf.get("model") or os.environ.get("OLLAMA_MODEL") or env_defaults.get("llm_provider", "llama3.2")
         self.story_intake = StoryIntakeEngine(
-            ollama_model=langchain_conf.get("model", env_defaults.get("llm_provider", "llama3.2")),
+            ollama_model=ollama_model,
             ollama_url=langchain_conf.get("ollama_url", env_defaults.get("ollama_url", "http://localhost:11434"))
         )
         
@@ -259,6 +261,7 @@ class IntegratedComicPipeline:
             style_reference: str = "", character_characteristics: str = "",
             story_reference: str = "", mood_shifts: Optional[List[str]] = None,
             _prebuilt_story: Optional[Dict[str, Any]] = None,
+            weave_mood: bool = False,
             **_kwargs) -> Dict[str, Any]:
         """Runs the entire 8-phase comic generation pipeline.
 
@@ -298,7 +301,8 @@ class IntegratedComicPipeline:
                 style_reference=style_reference,
                 character_characteristics=character_characteristics,
                 story_reference=story_reference,
-                mood_shifts=mood_shifts
+                mood_shifts=mood_shifts,
+                weave_mood=weave_mood
             )
 
         # Validate that story configuration has correct layout/format
@@ -613,15 +617,21 @@ def main():
     parser.add_argument("--no-feedback", action="store_true",
                         help="Skip interactive RLHF collection at the end")
                         
+    parser.add_argument("--weave-mood", action="store_true",
+                        help="Enable Mood Weaver mode: auto-detect emotion, map character archetype, and select a random franchise setting style")
+    parser.add_argument("--model", type=str, default=None,
+                        help="Override default Ollama model (e.g. qwen2.5, mistral, llama3.2)")
+                        
     args = parser.parse_args()
     
-    pipeline = IntegratedComicPipeline(dry_run=args.dry_run)
+    pipeline = IntegratedComicPipeline(dry_run=args.dry_run, model_override=args.model)
     
     results = pipeline.run(
         prompt=args.prompt,
         character_name=args.character,
         story_world=args.world,
-        panel_count=args.panels
+        panel_count=args.panels,
+        weave_mood=args.weave_mood
     )
     
     print("\n" + "=" * 70)

@@ -180,7 +180,7 @@ class StoryIntakeEngine:
 
     def __init__(self, ollama_model: str = "llama3.2",
                  ollama_url: str = "http://localhost:11434"):
-        self.ollama_model = ollama_model
+        self.ollama_model = os.environ.get("OLLAMA_MODEL") or ollama_model
         self.ollama_url = os.environ.get("OLLAMA_URL") or ollama_url
         self._llm = None
 
@@ -245,7 +245,8 @@ class StoryIntakeEngine:
                        style_reference: str = "",
                        character_characteristics: str = "",
                        story_reference: str = "",
-                       mood_shifts: Optional[List[str]] = None) -> Dict[str, Any]:
+                       mood_shifts: Optional[List[str]] = None,
+                       weave_mood: bool = False) -> Dict[str, Any]:
         """
         Process a raw user prompt into a structured story configuration.
 
@@ -254,6 +255,7 @@ class StoryIntakeEngine:
             panel_count: Number of panels to generate (4-10)
             character_name: Main character name
             story_world: Story world/setting name
+            weave_mood: Enable Mood Weaver mode (auto-detects emotion, maps character, selects franchise style)
 
         Returns:
             Structured story config dict with:
@@ -261,11 +263,42 @@ class StoryIntakeEngine:
         """
         panel_count = max(1, min(10, panel_count))
         log.info(f"[Phase 0] Processing prompt: '{user_prompt[:80]}...'")
-        log.info(f"  Character: {character_name}, World: {story_world}, Panels: {panel_count}")
+
+        # Dynamically load mood-weaver analyzer if available
+        try:
+            import importlib.util
+            # Load mood_analyzer dynamically from the mood-weaver directory
+            path = Path("c:/Users/Dell/Downloads/drid/mood-weaver/scripts/mood_analyzer.py")
+            if path.exists():
+                spec = importlib.util.spec_from_file_location("mood_analyzer", path)
+                mood_analyzer = importlib.util.module_from_spec(spec)
+                sys.modules["mood_analyzer"] = mood_analyzer
+                spec.loader.exec_module(mood_analyzer)
+                log.info("[StoryIntakeEngine] Successfully loaded custom mood analyzer from mood-weaver")
+        except Exception as e:
+            log.warning(f"[StoryIntakeEngine] Failed to load custom mood analyzer: {e}")
 
         # Detect primary emotion from the prompt
         emotion = self._detect_emotion(user_prompt)
         log.info(f"  Detected emotion: {emotion}")
+
+        if weave_mood:
+            # Compile and parse unified references from all three CSV files
+            csv_path = "outputs/unified_references.csv"
+            franchise = select_franchise_from_unified_csv(emotion, user_prompt, csv_path)
+            
+            style_reference = f"A dramatic crossover matching {franchise['source']} title '{franchise['title']}' in style '{franchise['genre']}'"
+            story_world = f"crossover universe of {franchise['title']}"
+            story_reference = franchise.get("description", "")
+            
+            # Map character name based on franchise or fallback
+            character_name = get_character_for_franchise(franchise["title"], emotion)
+            character_characteristics = f"the main protagonist from {franchise['title']} experiencing intense emotion: {emotion}"
+            
+            log.info(f"  [Mood Weaver] Mapped Character: '{character_name}'")
+            log.info(f"  [Mood Weaver] Selected Crossover Setting: '{franchise['title']}' ({franchise['source']}) in '{story_world}'")
+
+        log.info(f"  Character: {character_name}, World: {story_world}, Panels: {panel_count}")
 
         # Try LLM-based story generation first
         llm = self._get_llm()
@@ -317,9 +350,78 @@ class StoryIntakeEngine:
                            character_characteristics: str = "",
                            story_reference: str = "",
                            mood_shifts: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
-        """Generate story using local Ollama LLM."""
+        """Generate story by delegating to Story-Weaver's dynamic generator."""
+        import sys
+        import importlib.util
+        from pathlib import Path
+        import os
         import re
 
+        story_weaver_path = Path("c:/Users/Dell/Downloads/drid/Story-Weaver/story_gen.py")
+        if story_weaver_path.exists():
+            log.info("[StoryIntakeEngine] Delegating generation to Story-Weaver story_gen module...")
+            try:
+                # Build references strings
+                style_str = (
+                    f"VISUAL STYLE ENFORCEMENT: Every panel's camera and environment fields MUST "
+                    f"reflect the exact visual style of '{style_reference}' — its color palette, "
+                    f"linework, atmosphere, and artistic treatment.\n"
+                ) if style_reference else ""
+
+                char_str = (
+                    f"CHARACTER CONSISTENCY: The main character is '{character_name}'. "
+                    f"Physical description: '{character_characteristics}'. "
+                    f"Every panel MUST include their clothing, hair, and physical traits "
+                    f"in the pose.body field so the visual model keeps them consistent.\n"
+                ) if character_characteristics else (
+                    f"CHARACTER: The main character is '{character_name}'. "
+                    f"Choose a consistent visual description for them and include it in every panel's pose.body field.\n"
+                )
+
+                story_ref_str = (
+                    f"NARRATIVE REFERENCE: Model the story's pacing, dialogue tone, "
+                    f"and dramatic structure after '{story_reference}'. "
+                    f"Use its tropes, scene rhythms, and character dynamics as inspiration.\n"
+                ) if story_reference else ""
+
+                # Push constraint strings to env for story_gen prepending
+                os.environ["STYLE_STR"] = style_str
+                os.environ["CHAR_STR"] = char_str
+                os.environ["STORY_REF_STR"] = story_ref_str
+                os.environ["COMIC_SCHEMA_OVERRIDE"] = "true"
+                os.environ["OLLAMA_URL"] = self.ollama_url
+
+                # Load module
+                spec = importlib.util.spec_from_file_location("story_gen_module", story_weaver_path)
+                story_gen_module = importlib.util.module_from_spec(spec)
+                sys.modules["story_gen_module"] = story_gen_module
+                spec.loader.exec_module(story_gen_module)
+
+                # Set global options in the imported module
+                story_gen_module.EMOTION = emotion
+                story_gen_module.PANEL_COUNT = panel_count
+                story_gen_module.USER_TEXT = user_prompt
+                story_gen_module.MODEL_PATH = self.ollama_model
+
+                # If custom mood shift beats are passed, override the arc beats in the module
+                if mood_shifts and len(mood_shifts) > 0:
+                    story_gen_module.MOOD_ARCS[emotion] = {
+                        "journey": "Custom User Arc",
+                        "description": "Custom sequence of emotions",
+                        "arc_beats": mood_shifts,
+                        "motif_hint": "a recurring symbol of the user's journey",
+                        "end_note": "End with the final shift panel."
+                    }
+
+                # Instantiate and run
+                generator = story_gen_module.DynamicStoryGenerator()
+                story_config = generator.generate()
+                if story_config:
+                    return story_config
+            except Exception as e:
+                log.warning(f"Failed to run Story-Weaver generator: {e}. Falling back to default generation.")
+
+        # Legacy generation fallback in case Story-Weaver is missing or fails
         if mood_shifts and len(mood_shifts) > 0:
             beats = self._distribute_beats(panel_count, mood_shifts)
             arc = {"journey": "Custom User Arc", "description": "Custom sequence of emotions provided by user"}
@@ -354,6 +456,13 @@ class StoryIntakeEngine:
 Respond ONLY with a single valid JSON object. No markdown fences, no explanation, no comments.
 
 {style_str}{char_str}{story_ref_str}
+LITERARY CONSTRAINTS (from Story-Weaver blueprint):
+- NEVER name emotions directly. Show through action, objects, sensation.
+- ONE recurring visual motif must appear in every single panel.
+- Every panel MUST include a physical body sensation.
+- No moral lessons.
+- Dialogue reveals what characters choose NOT to say as much as what they say.
+
 VISUAL SPECIFICITY RULES — you MUST follow these for every panel:
 1. "camera" field: MUST specify angle + movement. Examples:
    - "Extreme close-up, static, face filling frame"
@@ -403,8 +512,14 @@ Generate a {panel_count}-panel comic story. Output this exact JSON:
   ]
 }}"""
 
+        TIMING_PHASES = {
+            4: ["setup", "confrontation", "climax", "resolution"],
+            6: ["status_quo", "inciting_incident", "rising_action", "crisis", "climax", "resolution"],
+            8: ["exposition", "inciting_incident", "rising_action", "complication", "crisis", "climax", "resolution", "aftermath"]
+        }
+        phases = TIMING_PHASES.get(panel_count, ["—"] * panel_count)
         beat_guide = "\n".join(
-            f"  Panel {i+1}: emotion_beat = \"{beats[i]}\""
+            f"  Panel {i+1} [{phases[i] if i < len(phases) else '—'}]: emotion_beat = \"{beats[i]}\""
             for i in range(panel_count)
         )
 
@@ -645,7 +760,24 @@ Generate a {panel_count}-panel comic story. Output this exact JSON:
     # ─────────────────────────────────────────────────────────────────────
 
     def _detect_emotion(self, text: str) -> str:
-        """Detect primary emotion from user text using keyword matching."""
+        """Detect primary emotion from user text using mood-weaver custom analyzer or keyword matching."""
+        try:
+            if "mood_analyzer" in sys.modules:
+                mood_analyzer = sys.modules["mood_analyzer"]
+                res = mood_analyzer.analyze_mood(text)
+                emotion = res.get("primary_emotion", "").lower()
+                # Map standard labels from model (e.g., joy -> happy, sadness -> sad)
+                label_map = {
+                    "joy": "happy",
+                    "sadness": "sad"
+                }
+                emotion = label_map.get(emotion, emotion)
+                if emotion in ["sad", "angry", "tired", "happy", "anxious", "grief", "determined", "love", "surprise"]:
+                    return emotion
+        except Exception as e:
+            log.warning(f"Error calling custom mood_analyzer: {e}. Falling back to keywords.")
+
+        # Fallback keyword matching
         text_lower = text.lower()
 
         emotion_keywords = {
@@ -696,3 +828,248 @@ Generate a {panel_count}-panel comic story. Output this exact JSON:
                 if key not in p:
                     return False
         return True
+
+
+def compile_unified_references(csv_dir: str = "c:/Users/Dell/Downloads/drid", output_path: str = "outputs/unified_references.csv"):
+    import csv
+    import os
+    
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    fieldnames = ["title", "genre", "description", "source", "popularity_score"]
+    
+    unified_rows = []
+    
+    # 1. Parse myanilist.csv
+    myanilist_path = os.path.join(csv_dir, "myanilist.csv")
+    if os.path.exists(myanilist_path):
+        try:
+            with open(myanilist_path, mode="r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    title = row.get("Title_English") or row.get("Title_Romaji")
+                    genre = row.get("Genres", "")
+                    source = f"Anime/Manga ({row.get('Source', 'MANGA')})"
+                    desc = f"A popular series from {row.get('Studios', 'various studios')}."
+                    
+                    # Popularity score
+                    pop_val = row.get("Mean_Score") or row.get("Average_Score")
+                    try:
+                        popularity_score = float(pop_val) if pop_val else 50.0
+                    except ValueError:
+                        popularity_score = 50.0
+                        
+                    if title:
+                        unified_rows.append({
+                            "title": title,
+                            "genre": genre,
+                            "description": desc,
+                            "source": source,
+                            "popularity_score": str(popularity_score)
+                        })
+        except Exception as e:
+            log.warning(f"Error compiling myanilist: {e}")
+            
+    # 2. Parse Trending_Movies.csv
+    movies_path = os.path.join(csv_dir, "Trending_Movies.csv")
+    if os.path.exists(movies_path):
+        try:
+            with open(movies_path, mode="r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    title = row.get("title")
+                    desc = row.get("overview", "")
+                    desc_lower = desc.lower() if desc else ""
+                    genres = []
+                    if "kill" in desc_lower or "detective" in desc_lower or "agent" in desc_lower:
+                        genres.append("Thriller")
+                    if "action" in desc_lower or "fight" in desc_lower or "war" in desc_lower:
+                        genres.append("Action")
+                    if "love" in desc_lower or "romance" in desc_lower:
+                        genres.append("Romance")
+                    if "space" in desc_lower or "ship" in desc_lower or "alien" in desc_lower:
+                        genres.append("Sci-Fi")
+                    if not genres:
+                        genres.append("Drama")
+                    genre = ", ".join(genres)
+                    
+                    # Popularity score
+                    pop_val = row.get("vote_average")
+                    try:
+                        popularity_score = float(pop_val) * 10 if pop_val else 50.0
+                    except ValueError:
+                        popularity_score = 50.0
+                        
+                    if title:
+                        unified_rows.append({
+                            "title": title,
+                            "genre": genre,
+                            "description": desc,
+                            "source": "Movie",
+                            "popularity_score": str(popularity_score)
+                        })
+        except Exception as e:
+            log.warning(f"Error compiling Trending_Movies: {e}")
+            
+    # 3. Parse tv_movie_animation.csv
+    tv_path = os.path.join(csv_dir, "tv_movie_animation.csv")
+    if os.path.exists(tv_path):
+        try:
+            with open(tv_path, mode="r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    title = row.get("title")
+                    genre = row.get("genre", "")
+                    desc = row.get("desc", "")
+                    
+                    # Popularity score
+                    pop_val = row.get("rating")
+                    try:
+                        popularity_score = float(pop_val) * 10 if pop_val else 50.0
+                    except ValueError:
+                        popularity_score = 50.0
+                        
+                    if title:
+                        unified_rows.append({
+                            "title": title,
+                            "genre": genre,
+                            "description": desc,
+                            "source": "Animation/TV/Movie",
+                            "popularity_score": str(popularity_score)
+                        })
+        except Exception as e:
+            log.warning(f"Error compiling tv_movie_animation: {e}")
+            
+    # Write to unified CSV
+    try:
+        with open(output_path, mode="w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(unified_rows)
+        log.info(f"[Mood Weaver] Successfully compiled {len(unified_rows)} unified references to {output_path}")
+    except Exception as e:
+        log.error(f"Error writing unified references: {e}")
+
+
+def select_franchise_from_unified_csv(emotion: str, user_prompt: str, csv_path: str = "outputs/unified_references.csv") -> dict:
+    import csv
+    import os
+    import re
+    
+    # Force recompile if missing or doesn't have popularity_score in headers
+    recompile_needed = False
+    if not os.path.exists(csv_path):
+        recompile_needed = True
+    else:
+        try:
+            with open(csv_path, mode="r", encoding="utf-8") as f:
+                header = f.readline()
+                if "popularity_score" not in header:
+                    recompile_needed = True
+        except Exception:
+            recompile_needed = True
+            
+    if recompile_needed:
+        compile_unified_references(output_path=csv_path)
+        
+    genre_mapping = {
+        "sadness": ["Drama", "Psychological", "Romance", "Slice of Life"],
+        "sad": ["Drama", "Psychological", "Romance", "Slice of Life"],
+        "grief": ["Drama", "Psychological", "Slice of Life"],
+        "joy": ["Comedy", "Romance", "Slice of Life"],
+        "happy": ["Comedy", "Romance", "Slice of Life"],
+        "love": ["Romance", "Drama", "Slice of Life"],
+        "anger": ["Action", "Adventure", "Fantasy"],
+        "angry": ["Action", "Adventure", "Fantasy"],
+        "determined": ["Action", "Adventure", "Fantasy", "Drama"],
+        "fear": ["Thriller", "Mystery", "Psychological", "Supernatural"],
+        "anxious": ["Thriller", "Mystery", "Psychological", "Supernatural"],
+        "surprise": ["Mystery", "Supernatural", "Thriller"]
+    }
+    
+    target_genres = [g.lower() for g in genre_mapping.get(emotion.lower(), ["Action", "Adventure", "Drama"])]
+    
+    def tokenize(text: str) -> set:
+        return set(re.findall(r'\w+', text.lower()))
+        
+    prompt_words = tokenize(user_prompt)
+    if not prompt_words:
+        prompt_words = tokenize(emotion)
+        
+    ranked_candidates = []
+    
+    if os.path.exists(csv_path):
+        try:
+            with open(csv_path, mode="r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    genres_str = row.get("genre", "").lower()
+                    row_genres = [g.strip() for g in genres_str.split(",")]
+                    # Check if matching categories
+                    if any(tg in row_genres for tg in target_genres):
+                        title = row.get("title", "")
+                        desc = row.get("description", "")
+                        combined_text = f"{title} {desc}".lower()
+                        row_words = tokenize(combined_text)
+                        
+                        # Match overlap score
+                        overlap_score = len(prompt_words.intersection(row_words))
+                        title_words = tokenize(title)
+                        title_score = len(prompt_words.intersection(title_words)) * 5
+                        total_match = overlap_score + title_score
+                        
+                        pop_score = float(row.get("popularity_score") or 50.0)
+                        
+                        # Final rank score prioritizing overlap matches first, then popularity
+                        rank_score = (total_match * 1000) + pop_score
+                        ranked_candidates.append((rank_score, row))
+        except Exception as e:
+            log.warning(f"Error ranking references: {e}")
+            
+    if ranked_candidates:
+        # Sort by rank_score descending
+        ranked_candidates.sort(key=lambda x: x[0], reverse=True)
+        chosen = ranked_candidates[0][1]
+        log.info(f"[Mood Weaver] Deterministic Ranker selected title '{chosen.get('title')}' with score {ranked_candidates[0][0]:.1f}")
+        return {
+            "title": chosen.get("title"),
+            "genre": chosen.get("genre"),
+            "description": chosen.get("description"),
+            "source": chosen.get("source")
+        }
+        
+    # Standard fallback
+    return {
+        "title": "Naruto",
+        "genre": "Action, Adventure, Fantasy",
+        "description": "Ninja shinobi adventures.",
+        "source": "Anime/Manga"
+    }
+
+
+def get_character_for_franchise(title: str, emotion: str) -> str:
+    title_lower = title.lower()
+    if "naruto" in title_lower: return "Naruto"
+    if "death note" in title_lower: return "Light Yagami"
+    if "attack on titan" in title_lower or "shingeki no kyojin" in title_lower: return "Eren Yeager"
+    if "demon slayer" in title_lower or "kimetsu no yaiba" in title_lower: return "Tanjiro"
+    if "fullmetal alchemist" in title_lower: return "Edward Elric"
+    if "my hero academia" in title_lower or "boku no hero" in title_lower: return "Midoriya"
+    if "assassination classroom" in title_lower: return "Nagisa"
+    if "your name" in title_lower or "kimi no na wa" in title_lower: return "Taki"
+    if "silent voice" in title_lower or "koe no katachi" in title_lower: return "Shoya"
+    if "your lie in april" in title_lower: return "Kousei"
+    if "re:zero" in title_lower: return "Subaru"
+    if "jujutsu kaisen" in title_lower: return "Yuji Itadori"
+    if "evangelion" in title_lower: return "Shinji Ikari"
+    if "hunter x hunter" in title_lower: return "Gon Freecss"
+    if "one piece" in title_lower: return "Luffy"
+    
+    # Fallback to emotion characters
+    emotion_chars = {
+        "grief": "Aria", "heaviness": "Kora", "sadness": "Aria",
+        "determined": "Captain Vance",
+        "love": "Lyra", "trust": "Kael",
+        "anxious": "Zephyr", "fear": "Kiri",
+        "angry": "Valen", "rage": "Valen"
+    }
+    return emotion_chars.get(emotion.lower(), "Wanderer")
