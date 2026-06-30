@@ -154,12 +154,15 @@ class MockBackend(BaseBackend):
 class IntegratedComicPipeline:
     """The master pipeline orchestrator for the Ultimate AI Indie Comic Generator."""
     
-    def __init__(self, dry_run: bool = False, model_override: Optional[str] = None):
+    def __init__(self, dry_run: Optional[bool] = None, model_override: Optional[str] = None):
         from utils.config_helper import load_env_with_defaults
         from typing import Optional
         env_defaults = load_env_with_defaults()
         
-        self.dry_run = dry_run or env_defaults.get("dry_run", False)
+        if dry_run is not None:
+            self.dry_run = dry_run
+        else:
+            self.dry_run = env_defaults.get("dry_run", False)
         self.settings = load_settings()
         if not self.settings:
             self.settings = {}
