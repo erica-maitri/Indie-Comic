@@ -10,9 +10,22 @@ def main():
     print("=" * 70)
     print("🎨 ULTIMATE INDIE-COMIC PIPELINE INTERACTIVE LAUNCHER")
     print("=" * 70)
-    print("This script prompts for inputs and launches the full GPU pipeline.")
+    print("This script runs the training pipeline, prompts for inputs, and launches the full GPU pipeline.")
     print("No Ollama is used by default if your custom model weights folder exists.")
     print("=" * 70)
+
+    # 0. Run training pipeline first
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    training_script = os.path.join(base_dir, "Story-Weaver", "run_training_pipeline.py")
+    print("\n🚀 STEP 0: EXECUTING STORY-WEAVER TRAINING PIPELINE")
+    print("=" * 70)
+    try:
+        subprocess.run([sys.executable, training_script], check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Training pipeline execution failed: {e}")
+        sys.exit(e.returncode)
+    print("=" * 70)
+    print("✅ STEP 0 COMPLETE: Dataset compiled / training step finished.\n")
 
     # 1. Prompt Input
     prompt = input("\nEnter your emotional narrative prompt:\n> ").strip()
