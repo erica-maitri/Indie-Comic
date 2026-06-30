@@ -18,6 +18,10 @@ def main():
     parser.add_argument("--ref_text", type=str, default="", help="Reference dialogue/text")
     parser.add_argument("--gen_bbox", type=str, default="", help="Generated bounding box in format x1,y1,x2,y2 (for IoU)")
     parser.add_argument("--ref_bbox", type=str, default="", help="Reference bounding box in format x1,y1,x2,y2 (for IoU)")
+    parser.add_argument("--pred_boxes", type=str, default="", help="Multiple predicted bounding boxes separated by semicolon, e.g., 'x1,y1,x2,y2;x3,y3,x4,y4'")
+    parser.add_argument("--gt_boxes", type=str, default="", help="Multiple ground-truth bounding boxes separated by semicolon, e.g., 'x1,y1,x2,y2;x3,y3,x4,y4'")
+    parser.add_argument("--pred_mask", type=str, default="", help="Path to predicted binary mask image (for SAM 2.1)")
+    parser.add_argument("--gt_mask", type=str, default="", help="Path to ground-truth binary mask image (for SAM 2.1)")
     
     args = parser.parse_args()
     
@@ -57,11 +61,26 @@ def main():
     if dinov2_score is not None:
         metrics['DINOv2 Similarity'] = dinov2_score
         print(f"  -> DINOv2:          {metrics['DINOv2 Similarity']:.4f} (higher is better)")
+
+    dinov3_score = evaluator.compute_dinov3_similarity(gen_img, ref_img)
+    if dinov3_score is not None:
+        metrics['DINOv3 Similarity'] = dinov3_score
+        print(f"  -> DINOv3:          {metrics['DINOv3 Similarity']:.4f} (higher is better)")
+
+    siglip_score = evaluator.compute_siglip_similarity(gen_img, ref_img)
+    if siglip_score is not None:
+        metrics['SigLIP Similarity'] = siglip_score
+        print(f"  -> SigLIP Similarity: {metrics['SigLIP Similarity']:.4f} (higher is better)")
         
     clip_img_score = evaluator.compute_clip_image_similarity(gen_img, ref_img)
     if clip_img_score is not None:
         metrics['CLIP Img2Img'] = clip_img_score
         print(f"  -> CLIP Img-Img:    {metrics['CLIP Img2Img']:.4f} (higher is better)")
+
+    lpips_score = evaluator.compute_lpips(gen_img, ref_img)
+    if lpips_score is not None:
+        metrics['LPIPS'] = lpips_score
+        print(f"  -> LPIPS Perceptual: {metrics['LPIPS']:.4f} (lower is better)")
         
     ssim_score = evaluator.compute_ssim(gen_img, ref_img)
     if ssim_score is not None:
@@ -91,15 +110,59 @@ def main():
 
     # Bounding Box Evaluation
     if args.gen_bbox and args.ref_bbox:
-        print("\n[5] Layout & Bounding Box Quality")
+        print("\n[5] Single Bounding Box Layout Quality")
         try:
-            gen_box = tuple(map(int, args.gen_bbox.split(',')))
-            ref_box = tuple(map(int, args.ref_bbox.split(',')))
-            iou_score = evaluator.compute_iou(gen_box, ref_box)
-            metrics['IoU'] = iou_score
-            print(f"  -> IoU Score:       {metrics['IoU']:.4f} (higher is better)")
+            vals_gen = list(map(int, args.gen_bbox.split(',')))
+            vals_ref = list(map(int, args.ref_bbox.split(',')))
+            if len(vals_gen) == 4 and len(vals_ref) == 4:
+                gen_box = (vals_gen[0], vals_gen[1], vals_gen[2], vals_gen[3])
+                ref_box = (vals_ref[0], vals_ref[1], vals_ref[2], vals_ref[3])
+                iou_score = evaluator.compute_iou(gen_box, ref_box)
+                metrics['IoU'] = iou_score
+                print(f"  -> IoU Score:       {metrics['IoU']:.4f} (higher is better)")
+            else:
+                print("  -> Error: Bounding boxes must have exactly 4 values (x1,y1,x2,y2)")
         except Exception as e:
             print(f"  -> Error computing IoU: {e}")
+ 
+    # Multiple Speech Bubble Detection Metrics (Grounding DINO)
+    if args.pred_boxes and args.gt_boxes:
+        print("\n[6] Speech Bubble Detection Metrics (Grounding DINO 1.5)")
+        try:
+            p_boxes = []
+            for b in args.pred_boxes.split(';'):
+                if b.strip():
+                    vals = list(map(int, b.split(',')))
+                    if len(vals) == 4:
+                        p_boxes.append((vals[0], vals[1], vals[2], vals[3]))
+            g_boxes = []
+            for b in args.gt_boxes.split(';'):
+                if b.strip():
+                    vals = list(map(int, b.split(',')))
+                    if len(vals) == 4:
+                        g_boxes.append((vals[0], vals[1], vals[2], vals[3]))
+            
+            det_metrics = evaluator.compute_detection_metrics(p_boxes, g_boxes)
+            for k, v in det_metrics.items():
+                metrics[f'Bubble Detection {k}'] = v
+                print(f"  -> Bubble Detection {k}: {v:.4f}")
+        except Exception as e:
+            print(f"  -> Error computing bubble detection metrics: {e}")
+
+    # Character Segmentation Metrics (SAM 2.1)
+    if args.pred_mask and args.gt_mask:
+        print("\n[7] Character Segmentation Metrics (SAM 2.1)")
+        try:
+            import numpy as np
+            p_mask = np.array(Image.open(args.pred_mask).convert("L")) > 127
+            g_mask = np.array(Image.open(args.gt_mask).convert("L")) > 127
+            
+            seg_metrics = evaluator.compute_segmentation_metrics(p_mask, g_mask)
+            for k, v in seg_metrics.items():
+                metrics[f'Character Seg {k}'] = v
+                print(f"  -> Character Segmentation {k}: {v:.4f}")
+        except Exception as e:
+            print(f"  -> Error computing character segmentation metrics: {e}")
 
     print("\n" + "="*50)
     print(" Final JSON Report")
