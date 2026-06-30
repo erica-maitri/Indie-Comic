@@ -1,4 +1,4 @@
-﻿# Ultimate AI Indie Comic Generator
+# Ultimate AI Indie Comic Generator
 
 A comprehensive, production-ready, local generative AI pipeline for academic research and high-fidelity comic generation. This system accepts a raw narrative prompt, processes it through a local LLM to extract psychological and narrative parameters, maps emotion arcs to visual language, generates temporally consistent panels using SDXL and LoRA, places speech bubbles with emotion-aware styling, validates output quality with a 5-dimension COMIC critic, assembles pages using the MangaFlow layout engine, and packages the final result as CBZ, HTML, and PDF.
 
@@ -84,7 +84,6 @@ indie_comic_pipeline/
 |
 |-- Core Pipeline Orchestration
 |   |-- integrated_pipeline.py          Main 8-phase master orchestrator (ENTRY POINT)
-|   |-- ultimate_comic_pipeline.py      Legacy combined engine reference
 |   |-- run_10_panel_pipeline.py        Production 10-panel sequential generator
 |   |-- generate_doodle_panels.py       Quick 8-panel test (T4 optimized)
 |   |-- compile_comic_pdf.py            Assembles page grids into final PDF

@@ -9,8 +9,8 @@ class ModelComparator:
     def __init__(self, output_dir="outputs/comparison"):
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
-        from ultimate_comic_pipeline import QualityMetrics
-        self.metrics = QualityMetrics()
+        from core.evaluation_suite import ModelEvaluator
+        self.metrics = ModelEvaluator()
         
     def compare_models(self, prompt: str, models: dict, reference_image=None):
         """

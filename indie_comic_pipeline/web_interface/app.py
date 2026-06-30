@@ -1,21 +1,28 @@
 import os
 import base64
+import sys
 from io import BytesIO
 from flask import Flask, render_template, request, jsonify
 
 app = Flask(__name__)
 
-# Try to import the UltimateComicGenerator
+# Add parent directory to path to allow importing pipeline modules
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Try to import the IntegratedComicPipeline
 try:
-    import sys
-    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from ultimate_comic_pipeline import UltimateComicGenerator, ComicConfig
+    from integrated_pipeline import IntegratedComicPipeline
+    try:
+        import torch
+        HAS_TORCH = True
+    except ImportError:
+        HAS_TORCH = False
     PIPELINE_AVAILABLE = True
 except ImportError:
-    print("Warning: ultimate_comic_pipeline.py not found. Running in mock mode.")
+    print("Warning: integrated_pipeline.py not found. Running in mock mode.")
     PIPELINE_AVAILABLE = False
-    UltimateComicGenerator = None
-    ComicConfig = None
+    IntegratedComicPipeline = None
+    HAS_TORCH = False
 
 
 @app.route('/')
@@ -29,17 +36,21 @@ def generate():
     character = request.args.get('character', 'Spider-Man')
     world = request.args.get('world', 'Cyberpunk 2077')
     
-    if PIPELINE_AVAILABLE and ComicConfig is not None and UltimateComicGenerator is not None:
-        config = ComicConfig(
-            character_name=character,
-            story_world=world,
-            style=style,
-            num_pages=1  # Generate just 1 page for UI responsiveness
-        )
-        generator = UltimateComicGenerator(config)
+    if PIPELINE_AVAILABLE and IntegratedComicPipeline is not None:
+        # Enable dry_run if CUDA is not available or if CPU-only mode is forced
+        dry_run = True
+        if HAS_TORCH:
+            dry_run = not torch.cuda.is_available()
+            
+        pipeline = IntegratedComicPipeline(dry_run=dry_run)
         try:
-            # Generate a 1-page comic
-            result = generator.generate_comic(prompt)
+            # Generate a 1-page comic (which translates to 4 panels)
+            result = pipeline.run(
+                prompt=prompt,
+                character_name=character,
+                story_world=world,
+                panel_count=4
+            )
             image = result['pages'][0]['page_image']
             
             # Convert to base64 for web
@@ -60,7 +71,7 @@ def generate():
             'image': '',
             'prompt': prompt,
             'feedback_url': f"/feedback/mock_123",
-            'error': 'Pipeline not available. Please ensure ultimate_comic_pipeline.py is in the parent directory.'
+            'error': 'Pipeline not available. Please ensure integrated_pipeline.py is in the parent directory.'
         })
 
 @app.route('/feedback/<panel_id>', methods=['POST'])
@@ -70,7 +81,34 @@ def feedback(panel_id):
         rating = req_data.get('rating')
         comment = req_data.get('comment')
         
-        # Here we would normally connect to IncrementalLearner
+        # Safely convert types to match RLHFFeedbackLoop requirements
+        try:
+            panel_id_val = int(panel_id)
+        except ValueError:
+            panel_id_val = 1
+            
+        try:
+            rating_val = int(rating) if rating is not None else 5
+        except ValueError:
+            rating_val = 5
+            
+        comment_val = str(comment) if comment is not None else ""
+        
+        # Connect to RLHFFeedbackLoop if available
+        try:
+            from core.feedback import RLHFFeedbackLoop
+            feedback_loop = RLHFFeedbackLoop()
+            feedback_loop.add_panel_feedback(
+                panel_id=panel_id_val,
+                rating=rating_val,
+                comment=comment_val,
+                engagement_time=0.0,
+                prompt_used="",
+                generation_backend=""
+            )
+        except Exception as e:
+            print(f"Could not log feedback to RLHFFeedbackLoop: {e}")
+            
         print(f"Feedback received for panel {panel_id}: {rating}/5 - {comment}")
         
         return jsonify({'status': 'success'})
@@ -79,3 +117,4 @@ def feedback(panel_id):
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
+
