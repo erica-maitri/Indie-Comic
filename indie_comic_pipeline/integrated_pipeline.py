@@ -159,10 +159,7 @@ class IntegratedComicPipeline:
         from typing import Optional
         env_defaults = load_env_with_defaults()
         
-        if dry_run is not None:
-            self.dry_run = dry_run
-        else:
-            self.dry_run = env_defaults.get("dry_run", False)
+        self.dry_run = False
         self.settings = load_settings()
         if not self.settings:
             self.settings = {}

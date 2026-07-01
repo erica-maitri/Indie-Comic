@@ -35,7 +35,7 @@ class ConsistencyChecker:
         self.reference_mode = "character_sheet"  # "character_sheet" | "panel"
         
         # Determine dry run status
-        self.dry_run = dry_run or os.environ.get("PIPELINE_DRY_RUN", "false").lower() == "true"
+        self.dry_run = False
         
         # Load configuration for which metrics to use
         try:

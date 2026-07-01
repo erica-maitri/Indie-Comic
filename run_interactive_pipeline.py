@@ -67,9 +67,8 @@ def main():
     else:
         print(f"✅ Found custom model weights folder '{model_path}'. Story generation will load it directly using PyTorch/Transformers.")
 
-    # 4. Dry-run Mode
-    dry_run_input = input("\nEnable CPU dry-run mock mode (y/n, default: n)? ").strip().lower()
-    dry_run = "--dry-run" if dry_run_input == "y" else ""
+    # 4. Dry-run Mode disabled
+    dry_run = ""
 
     # Build execution command
     cmd = [

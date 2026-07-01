@@ -38,9 +38,7 @@ def generate():
     
     if PIPELINE_AVAILABLE and IntegratedComicPipeline is not None:
         # Enable dry_run if CUDA is not available or if CPU-only mode is forced
-        dry_run = True
-        if HAS_TORCH:
-            dry_run = not torch.cuda.is_available()
+        dry_run = False
             
         pipeline = IntegratedComicPipeline(dry_run=dry_run)
         try:
