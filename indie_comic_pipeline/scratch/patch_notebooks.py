@@ -1,6 +1,6 @@
 import json, os, glob
 
-PIPELINE_DIR = r'c:\Users\Dell\Downloads\drid\indie_comic_pipeline'
+PIPELINE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 SETUP_CELL = {
     'cell_type': 'code',
@@ -10,7 +10,7 @@ SETUP_CELL = {
     'outputs': [],
     'source': [
         '# ============================================================\n',
-        '# Universal Colab/Local Setup — run this first in every notebook\n',
+        '# Universal Kaggle/Local Setup — run this first in every notebook\n',
         '# ============================================================\n',
         'import os, sys, urllib.request\n',
         '\n',

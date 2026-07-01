@@ -61,7 +61,8 @@ def main():
 !python merge.py"""
         log.info(f"\n{colab_code}\n")
         log.info("4. Once finished, download the generated 'moodweaver_stage2_merged/' folder.")
-        log.info("5. Place it in the root directory of your workspace (e.g. c:\\Users\\Dell\\Downloads\\drid\\moodweaver_stage2_merged).")
+        actual_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        log.info(f"5. Place it in the root directory of your workspace (e.g. {os.path.join(actual_path, 'moodweaver_stage2_merged')}).")
         log.info("\nThe pipeline will automatically detect it and load your custom trained model instead of using Ollama!")
 
 if __name__ == "__main__":
