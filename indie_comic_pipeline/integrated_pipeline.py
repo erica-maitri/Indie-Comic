@@ -68,81 +68,7 @@ from core.advanced_attention import AdvancedAttentionManager
 from comic_exporter import ComicExporter
 
 
-class MockBackend(BaseBackend):
-    """Fallback mock backend for dry-runs / environments without GPU."""
-    
-    def __init__(self):
-        self._loaded = False
 
-    @property
-    def name(self) -> str:
-        return "Mock"
-
-    @property
-    def supports_lora(self) -> bool:
-        return False
-
-    def load(self, config: Dict[str, Any]):
-        self._loaded = True
-        log.info("Mock Backend loaded successfully (Dry-run mode)")
-
-    def generate(self, prompt: str, negative_prompt: str,
-                 config: Dict[str, Any]) -> Image.Image:
-        w = config.get("width", 768)
-        h = config.get("height", 768)
-        
-        # Draw a placeholder illustration
-        img = Image.new("RGB", (w, h), (220, 225, 235))
-        draw = ImageDraw.Draw(img)
-        
-        # Abstract comic-like shapes
-        draw.ellipse([w//5, h//5, 4*w//5, 4*h//5], fill=(235, 245, 255), outline=(100, 120, 160), width=4)
-        draw.rectangle([w//3, 3*h//5, 2*w//3, 9*h//10], fill=(255, 235, 235), outline=(160, 100, 100), width=3)
-        
-        # Add visual guide text
-        try:
-            font = ImageFont.truetype("arial.ttf", 16)
-        except Exception:
-            font = ImageFont.load_default()
-            
-        # Center title
-        title = "[Mock Panel Image]"
-        try:
-            bbox = font.getbbox(title)
-            title_w = bbox[2] - bbox[0]
-        except Exception:
-            title_w = len(title) * 8
-        draw.text(((w - title_w) // 2, 20), title, fill=(80, 80, 80), font=font)
-        
-        # Wrap prompt text
-        words = prompt.split()
-        lines = []
-        cur_line = ""
-        for word in words:
-            if len(cur_line) + len(word) < 45:
-                cur_line += " " + word
-            else:
-                lines.append(cur_line.strip())
-                cur_line = word
-        if cur_line:
-            lines.append(cur_line.strip())
-            
-        y_text = 50
-        for line in lines[:8]:
-            # Center prompt text lines
-            try:
-                bbox = font.getbbox(line)
-                line_w = bbox[2] - bbox[0]
-            except Exception:
-                line_w = len(line) * 8
-            x_text = (w - line_w) // 2
-            draw.text((x_text, y_text), line, fill=(50, 50, 50), font=font)
-            y_text += 22
-            
-        return img
-
-    def unload(self):
-        self._loaded = False
 
     def is_loaded(self) -> bool:
         return self._loaded
@@ -188,14 +114,8 @@ class IntegratedComicPipeline:
         
         # Choose backend configuration
         self.backend_selector = BackendSelector()
-        if self.dry_run:
-            self.mock_backend = MockBackend()
-            self.mock_backend.load({})
-            self.backend_selector.register_backend("sdxl", self.mock_backend)
-            self.backend_selector.register_backend("flux", self.mock_backend)
-        else:
-            log.info("Initializing GPU Model Backends...")
-            self.backend_selector.initialize_backends(self.settings.get("models", {}))
+        log.info("Initializing GPU Model Backends...")
+        self.backend_selector.initialize_backends(self.settings.get("models", {}))
             
         # ── Advanced Attention Manager (L1 + L2 + L3 mechanisms) ──
         # Disabled in dry-run (no GPU / torch required), enabled for real generation.
