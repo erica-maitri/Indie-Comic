@@ -71,9 +71,9 @@ from comic_exporter import ComicExporter
 class IntegratedComicPipeline:
     """The master pipeline orchestrator for the Ultimate AI Indie Comic Generator."""
     
-    def __init__(self, model_override: Optional[str] = None):
+    def __init__(self, model_override: Optional[str] = None, skip_backends: bool = False):
         import torch
-        if not torch.cuda.is_available():
+        if not skip_backends and not torch.cuda.is_available():
             log.error("❌ CRITICAL ERROR: CUDA GPU is not available! The pipeline has been configured to run ONLY on GPU (dry-run and mock modes are disabled). Please enable GPU acceleration in your Kaggle/Colab notebook settings.")
             raise RuntimeError("❌ CRITICAL ERROR: CUDA GPU is not available!")
 
@@ -109,8 +109,11 @@ class IntegratedComicPipeline:
         
         # Choose backend configuration
         self.backend_selector = BackendSelector()
-        log.info("Initializing GPU Model Backends...")
-        self.backend_selector.initialize_backends(self.settings.get("models", {}))
+        if not skip_backends:
+            log.info("Initializing GPU Model Backends...")
+            self.backend_selector.initialize_backends(self.settings.get("models", {}))
+        else:
+            log.info("Skipping GPU Model Backends initialization (rebuild/editing mode)...")
             
         # ── Advanced Attention Manager (L1 + L2 + L3 mechanisms) ──
         # Enabled for real generation.
@@ -510,6 +513,140 @@ class IntegratedComicPipeline:
                 
         except (KeyboardInterrupt, EOFError):
             print("\nFeedback collection skipped.")
+
+    def rebuild_comic(self, checkpoint_path: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Rebuilds the comic page layouts and multi-format exports from the latest panel images
+        and their layout JSON configurations. This allows updating bubble coordinates
+        without re-generating the images.
+        """
+        import glob
+        
+        if not checkpoint_path:
+            checkpoint_path = os.path.join(self.output_dir, "storyboard_checkpoint_latest.json")
+            if not os.path.exists(checkpoint_path):
+                checkpoint_path = os.path.join(self.output_dir, "storyboard_plan.json")
+            
+        if os.path.exists(checkpoint_path):
+            log.info(f"Rebuilding comic: Loading memory checkpoint from {checkpoint_path}")
+            try:
+                self.memory = StorySectionMemory.load_checkpoint(checkpoint_path)
+                self.agent_coordinator.memory = self.memory
+                self.panel_engine.memory = self.memory
+            except Exception as e:
+                log.warning(f"Failed to load checkpoint: {e}")
+            
+        panels_completed = []
+        total_panels = self.memory.total_panels
+        
+        # If total_panels is 0 or empty, try to deduce from raw files
+        if total_panels == 0:
+            raw_files = glob.glob(os.path.join(self.panels_dir, "panel_*_page_*.png"))
+            total_panels = len(raw_files)
+            self.memory.total_panels = total_panels
+            
+        log.info(f"Re-integrating text and bubbles for {total_panels} panels...")
+        for panel_id in range(1, total_panels + 1):
+            raw_pattern = os.path.join(self.panels_dir, f"panel_{panel_id:03d}_page_*.png")
+            matches = glob.glob(raw_pattern)
+            if not matches:
+                log.warning(f"Raw image for panel {panel_id} not found. Skipping re-render.")
+                continue
+            raw_path = matches[0]
+            
+            try:
+                base = os.path.basename(raw_path)
+                parts = base.replace(".png", "").split("_page_")
+                page_num = int(parts[1]) if len(parts) > 1 else 1
+            except Exception:
+                page_num = self.memory.get_page_num(panel_id) or 1
+                
+            raw_img = Image.open(raw_path)
+            
+            context = {}
+            if self.agent_coordinator:
+                try:
+                    context = self.agent_coordinator.get_generation_context(panel_id)
+                except Exception:
+                    pass
+            
+            dialogue = context.get("panel_dialogue", "...")
+            emotion = context.get("panel_emotion_beat", "neutral")
+            scene_desc = context.get("scene_graph", {}).get("environment", "")
+            speaker_pos = "center"
+            if context.get("scene_graph", {}).get("characters"):
+                speaker_pos = context["scene_graph"]["characters"][0].get("position", "center")
+                
+            json_filename = f"panel_{panel_id:03d}_bubble_layout.json"
+            json_path = os.path.join(self.panels_dir, json_filename)
+            if os.path.exists(json_path):
+                try:
+                    with open(json_path, "r", encoding="utf-8") as f:
+                        plan = json.load(f)
+                    dialogue_clean = plan.get("dialogue_clean", "")
+                    speaker = plan.get("speaker", "")
+                    if dialogue_clean:
+                        if speaker:
+                            dialogue = f"{speaker}: {dialogue_clean}"
+                        else:
+                            dialogue = dialogue_clean
+                except Exception as e:
+                    log.warning(f"Error reading layout json: {e}")
+
+            final_img = self.text_integrator.integrate(
+                image=raw_img,
+                dialogue=dialogue,
+                emotion_beat=emotion,
+                speaker_position=speaker_pos,
+                panel_id=panel_id,
+                scene_desc=scene_desc
+            )
+            
+            annotated_filename = f"panel_{panel_id:03d}_final.png"
+            annotated_path = os.path.join(self.panels_dir, annotated_filename)
+            final_img.save(annotated_path)
+            
+            panel_result = {
+                "panel_id": panel_id,
+                "page_num": page_num,
+                "image": final_img,
+                "image_path": annotated_path,
+                "dialogue": dialogue,
+                "emotion_beat": emotion
+            }
+            panels_completed.append(panel_result)
+            
+        # Re-assemble pages
+        pages = []
+        panels_by_page = {}
+        for p in panels_completed:
+            page_num = p["page_num"]
+            panels_by_page.setdefault(page_num, []).append(p)
+            
+        for page_num, page_panels in sorted(panels_by_page.items()):
+            page_image = self.layout_engine.layout_page(page_panels, page_num)
+            page_path = os.path.join(self.output_dir, f"page_{page_num:03d}_layout_integrated.png")
+            page_image.save(page_path)
+            log.info(f"Saved assembled Page {page_num} to: {page_path}")
+            
+            pages.append({
+                "page_num": page_num,
+                "page_image": page_image,
+                "panels": page_panels
+            })
+            
+        # Multi-Format Export
+        cbz_path = self.exporter.export_cbz(pages, title="Rebuilt Comic")
+        html_path = self.exporter.export_web_comic(pages, os.path.join(self.output_dir, "web_comic.html"))
+        pdf_path = self.exporter.export_pdf(pages, title="Rebuilt Comic")
+        
+        return {
+            "pages": pages,
+            "cbz_path": cbz_path,
+            "html_path": html_path,
+            "pdf_path": pdf_path,
+            "panels": panels_completed
+        }
 
 
 def main():

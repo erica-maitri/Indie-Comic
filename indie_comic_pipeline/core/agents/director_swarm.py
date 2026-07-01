@@ -5,7 +5,7 @@ Replaces the old monolithic agents with highly specialized directors.
 Each director edits a specific layer of the Scene Graph stored in memory.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import logging
 from core.agents.base_agent import BaseAgent
 from core.memory import StorySectionMemory, LayoutDirective
@@ -196,11 +196,43 @@ class ActionDirector(BaseAgent):
 
 
 class DialogueWriter(BaseAgent):
-    def __init__(self):
+    def __init__(self, ollama_model: Optional[str] = None, ollama_url: Optional[str] = None):
         super().__init__("dialogue_writer")
+        import os
+        from utils.config_helper import load_env_with_defaults
+        env_defaults = load_env_with_defaults()
+        self.ollama_model = ollama_model or os.environ.get("OLLAMA_MODEL") or env_defaults.get("llm_provider", "llama3.2")
+        self.ollama_url = ollama_url or os.environ.get("OLLAMA_URL") or env_defaults.get("ollama_url", "http://localhost:11434")
+
+    def _call_llm(self, prompt: str, system_prompt: str) -> Optional[str]:
+        import urllib.request
+        import urllib.error
+        import json
+        
+        url = f"{self.ollama_url.rstrip('/')}/api/generate"
+        payload = {
+            "model": self.ollama_model,
+            "prompt": prompt,
+            "system": system_prompt,
+            "stream": False,
+            "options": {"temperature": 0.5}
+        }
+        try:
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=10) as response:
+                resp_data = json.loads(response.read().decode("utf-8"))
+                return resp_data.get("response", "").strip()
+        except Exception as e:
+            self.log.warning(f"Ollama direct call failed in DialogueWriter: {e}")
+            return None
 
     def plan(self, story_config: Dict[str, Any], memory: "StorySectionMemory") -> Dict[str, Any]:
-        """Validates dialogue — fills missing text with beat-appropriate lines."""
+        """Validates dialogue — fills missing/empty text dynamically using LLM or fallbacks."""
         panels = memory.raw_panels or story_config.get("panels", [])
         filled = 0
         beat_lines = {
@@ -220,16 +252,54 @@ class DialogueWriter(BaseAgent):
             "challenge":      "It's bigger than I thought.",
             "renewal":        "Starting again.",
         }
+        
+        main_char = memory.main_character or "Wanderer"
+        mood_journey = memory.mood_journey or "a journey of emotion"
+        
         for panel in panels:
             beat = panel.get("emotion_beat", "neutral")
+            actions = panel.get("actions", [])
+            action_desc = ""
+            if actions:
+                action_desc = ", ".join(f"{a.get('actor', '')} {a.get('verb', '')} {a.get('target', '')}" for a in actions)
+            
             for char in panel.get("characters", []):
+                char_name = char.get("id", main_char)
                 dlg = char.get("dialogue", {})
-                text = dlg.get("text", "") if isinstance(dlg, dict) else str(dlg)
+                
+                if not isinstance(dlg, dict):
+                    dlg = {"text": str(dlg)}
+                    
+                text = dlg.get("text", "").strip()
                 if not text or text in ("...", ""):
-                    if isinstance(dlg, dict):
+                    sys_prompt = (
+                        "You are a professional comic book writer. Write a single line of speech or thought "
+                        f"for the character '{char_name}'. Keep it short (max 15 words), punchy, and natural. "
+                        "Return ONLY the dialogue text. No quotation marks, no parentheticals, no formatting."
+                    )
+                    prompt = (
+                        f"Character: {char_name}\n"
+                        f"Scene Action: {action_desc or 'standing in the scene'}\n"
+                        f"Current Emotion Beat: {beat}\n"
+                        f"Emotional Journey context: {mood_journey}\n"
+                        "Write a single expressive line of dialogue or inner thought that fits this moment:"
+                    )
+                    
+                    generated_text = self._call_llm(prompt, sys_prompt)
+                    if generated_text:
+                        generated_text = generated_text.replace('"', '').replace("'", "")
+                        if generated_text.lower().startswith(f"{char_name.lower()}:"):
+                            generated_text = generated_text[len(char_name)+1:].strip()
+                        
+                        dlg["text"] = generated_text
+                        char["dialogue"] = dlg
+                        filled += 1
+                        self.log.info(f"Dynamically generated dialogue for '{char_name}': {generated_text}")
+                    else:
                         dlg["text"] = beat_lines.get(beat, "...")
                         char["dialogue"] = dlg
-                    filled += 1
+                        filled += 1
+                        
         self.log.info(f"Dialogue Writer validated panels, filled {filled} blank lines.")
         return {"status": "Dialogue validated", "filled": filled}
 

@@ -273,7 +273,7 @@ LITERARY CONSTRAINTS:
 - ONE recurring visual motif must appear in every single panel.
 - Every panel MUST include a physical body sensation.
 - No moral lessons.
-- Dialogue reveals what characters choose NOT to say as much as what they say.
+- Dialogue must be emotionally expressive, realistic, context-aware, and natural. Avoid empty dialogue or '...' unless absolutely necessary for dramatic silence.
 
 Output ONLY this JSON:
 {

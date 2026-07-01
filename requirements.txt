@@ -1,0 +1,72 @@
+# ============================================================
+# Cyberpunk-San / Indie Comic Generator — Master Requirements
+# ============================================================
+# Install all:  pip install -r requirements.txt
+# ============================================================
+
+# ── Core ML / Diffusion ─────────────────────────────────────
+torch>=2.2.0
+torchvision
+accelerate>=0.30.0
+diffusers>=0.28.0
+transformers>=4.46.0
+safetensors>=0.8.0rc0
+tokenizers>=0.21.0
+kornia>=0.8.3
+kornia_rs>=0.1.14
+torchmetrics
+torchsde>=0.2.6
+einops>=0.8.2
+scipy>=1.13.0
+
+# ── Fine-Tuning & Quantization ──────────────────────────────
+bitsandbytes>=0.43.0
+auto-gptq>=0.7.1
+optimum>=1.19.0
+trl>=0.11.0
+peft>=0.12.0
+datasets>=2.20.0
+# Note: For GPU environments, you can also install unsloth via: 
+# pip install "unsloth[colab-new] @ git+https://github.com/unsloth/unsloth.git"
+unsloth>=2024.11.4
+
+# ── Image / Vision ──────────────────────────────────────────
+pillow>=10.0.0
+opencv-python-headless>=4.8.0.0
+scikit-image>=0.20.0
+ultralytics>=8.0.0
+
+# ── LangChain / LLM Stack ───────────────────────────────────
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-ollama>=0.3.0
+langchain-openai>=0.3.0
+langchain-google-genai>=0.3.0
+langchain-anthropic>=0.3.0
+ollama>=0.4.0
+openai>=1.0.0
+tiktoken>=0.7.0
+
+# ── Evaluation NLP Metrics ──────────────────────────────────
+rouge-score>=0.1.2
+bert-score>=0.3.13
+nltk>=3.8.0
+
+# ── Web & Flask ─────────────────────────────────────────────
+flask>=2.3.0
+
+# ── Text-to-Speech ──────────────────────────────────────────
+gTTS>=2.5.0
+
+# ── Utilities & Packages ────────────────────────────────────
+python-dotenv>=1.0.1
+requests>=2.32.0
+httpx>=0.27.0
+tqdm>=4.66.0
+rich>=13.0.0
+rarfile>=4.0
+packaging>=24.0
+pyyaml>=6.0
+click>=8.1.0
+Jinja2>=3.1.0
+setuptools>=68.0.0
