@@ -88,7 +88,7 @@ langchain:
 # CONSISTENCY CHECKER - OPTIMIZED FOR T4
 consistency:
   # Evaluation device
-  device: "cpu"          # Run consistency models on CPU to save 2-3GB GPU VRAM
+  device: "cuda"          # Run consistency models on CUDA/GPU
   
   # Heavy neural metrics - DISABLED by default for T4 speed
   enable_clip: false     # Disable CLIP (saves 10-15s per check)

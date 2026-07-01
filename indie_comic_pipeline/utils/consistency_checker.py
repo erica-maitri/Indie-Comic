@@ -51,11 +51,11 @@ class ConsistencyChecker:
                 "enable_edge": True,
                 "enable_color": True,    # Ensure color is enabled
                 "enable_style": True,
-                "device": "cpu",         # CPU by default to save VRAM
+                "device": "cuda" if (TORCH_AVAILABLE and torch.cuda.is_available()) else "cpu",         # Default to CUDA if available
                 "threshold": 0.55        # Methodology threshold
             }
             
-        self.device = self.consistency_config.get("device", "cpu")
+        self.device = self.consistency_config.get("device", "cuda" if (TORCH_AVAILABLE and torch.cuda.is_available()) else "cpu")
         if self.device == "cuda" and not (TORCH_AVAILABLE and torch.cuda.is_available()):
             print("[ConsistencyChecker] CUDA is not available. Falling back to CPU.")
             self.device = "cpu"

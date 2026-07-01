@@ -27,7 +27,7 @@ class IdentityEmbeddingExtractor:
     plus optional CLIP/DINOv2 semantic embeddings for richer identity capture.
     """
 
-    def __init__(self, device: str = "cpu",
+    def __init__(self, device: str = "cuda" if torch.cuda.is_available() else "cpu",
                  enable_clip: bool = False,
                  enable_dinov2: bool = False):
         self.device = device
@@ -117,7 +117,7 @@ class ReferenceFreeAnchor:
     4. Inject extracted identity tokens back into the Story Section Memory
     """
 
-    def __init__(self, device: str = "cpu",
+    def __init__(self, device: str = "cuda" if torch.cuda.is_available() else "cpu",
                  enable_clip: bool = False,
                  enable_dinov2: bool = False):
         self.extractor = IdentityEmbeddingExtractor(
