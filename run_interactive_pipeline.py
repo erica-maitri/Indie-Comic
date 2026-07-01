@@ -70,10 +70,18 @@ def main():
     # 4. Dry-run Mode disabled
     dry_run = ""
 
+    # Find integrated_pipeline.py path dynamically
+    pipeline_path = "indie_comic_pipeline/integrated_pipeline.py"
+    if not os.path.exists(pipeline_path):
+        if os.path.exists("integrated_pipeline.py"):
+            pipeline_path = "integrated_pipeline.py"
+        elif os.path.exists("../indie_comic_pipeline/integrated_pipeline.py"):
+            pipeline_path = "../indie_comic_pipeline/integrated_pipeline.py"
+
     # Build execution command
     cmd = [
         sys.executable,
-        "indie_comic_pipeline/integrated_pipeline.py",
+        pipeline_path,
         "--prompt", prompt,
         "--panels", str(panels),
         "--weave-mood"
