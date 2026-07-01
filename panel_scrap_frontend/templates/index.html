@@ -8,7 +8,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css">
+    <!-- Flask Static CSS link -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
     <div class="app-wrapper">
@@ -466,7 +467,7 @@
         </div>
     </div>
 
-    <!-- JavaScript Bundle -->
-    <script src="app.js"></script>
+    <!-- Flask Static JavaScript link -->
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>
