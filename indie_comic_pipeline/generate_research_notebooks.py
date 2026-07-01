@@ -14,18 +14,12 @@ def create_unified_notebook(filename, title, description, phases):
 # ============================================================
 import os, sys, urllib.request
 
-try:
-    from google.colab import files  # type: ignore
-    _IN_COLAB = True
-except ImportError:
-    _IN_COLAB = False
-
 _IN_KAGGLE = os.path.exists("/kaggle/working")
-_IN_CLOUD = _IN_COLAB or _IN_KAGGLE
+_IN_CLOUD = _IN_KAGGLE
 
 if _IN_CLOUD:
-    print("🚀 Detected Cloud Environment (Colab/Kaggle). Setting up...")
-    _repo = "/content/Indie-Comic" if _IN_COLAB else "/kaggle/working/Indie-Comic"
+    print("🚀 Detected Kaggle Environment. Setting up...")
+    _repo = "/kaggle/working/Indie-Comic"
     if not os.path.exists(_repo):
         import subprocess
         subprocess.run(["git", "clone", "--depth", "1",

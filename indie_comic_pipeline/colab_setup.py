@@ -23,28 +23,22 @@ try:
     os.getcwd()
 except FileNotFoundError:
     print("⚠️ Current working directory was invalid/deleted. Resetting to a safe location...")
-    _safe_dir = "/content" if os.path.exists("/content") else ("/kaggle/working" if os.path.exists("/kaggle/working") else "/")
+    _safe_dir = "/kaggle/working" if os.path.exists("/kaggle/working") else "/"
     os.chdir(_safe_dir)
 
 # ── 1. Detect environment ────────────────────────────────────────────────────
 
-try:
-    from google.colab import files  # type: ignore
-    IN_COLAB = True
-except ImportError:
-    IN_COLAB = False
-
 IN_KAGGLE = os.path.exists("/kaggle/working")
-IN_CLOUD = IN_COLAB or IN_KAGGLE
+IN_CLOUD = IN_KAGGLE
 
 REPO_URL  = "https://github.com/Cyberpunk-San/Indie-Comic.git"
 REPO_NAME = "Indie-Comic"                      # folder git creates
 PIPELINE  = "indie_comic_pipeline"             # subfolder we need on sys.path
 
-# ── 2. Clone repo (Colab only) ───────────────────────────────────────────────
+# ── 2. Clone repo (Kaggle only) ───────────────────────────────────────────────
 
 if IN_CLOUD:
-    REPO_ROOT = f"/content/{REPO_NAME}" if IN_COLAB else f"/kaggle/working/{REPO_NAME}"
+    REPO_ROOT = f"/kaggle/working/{REPO_NAME}"
     if not os.path.exists(REPO_ROOT):
         print(f"📦 Cloning {REPO_URL} ...")
         subprocess.run(
@@ -86,14 +80,16 @@ for _path in [PIPELINE_DIR, REPO_ROOT]:
 print(f"📁 Working directory : {os.getcwd()}")
 print(f"🐍 Python path includes: {PIPELINE_DIR}")
 
-# ── 4. Install requirements (Colab only) ────────────────────────────────────
+# ── 4. Install requirements (Cloud only) ────────────────────────────────────
 
 if IN_CLOUD:
-    # Google Colab pre-installs torchao==0.10.0, but newer diffusers/peft require >0.16.0.
-    # Uninstalling torchao solves the version conflict crash completely.
-    if IN_COLAB:
+    # Cloud environments (Colab/Kaggle) pre-install packages that may conflict.
+    # Uninstalling incompatible packages solves version conflict crashes completely.
+    if IN_CLOUD:
         print("🧹 Removing incompatible pre-installed torchao version to avoid conflicts...")
         subprocess.run([sys.executable, "-m", "pip", "uninstall", "torchao", "-y", "-q"], check=False)
+        print("🧹 Removing pre-installed flax to avoid diffusers circular import bugs...")
+        subprocess.run([sys.executable, "-m", "pip", "uninstall", "flax", "-y", "-q"], check=False)
 
     # Prefer the slim colab requirements to avoid version conflicts
     req_file = os.path.join(PIPELINE_DIR, "requirements_colab.txt")

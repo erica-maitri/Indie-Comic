@@ -14,15 +14,11 @@ SETUP_CELL = {
         '# ============================================================\n',
         'import os, sys, urllib.request\n',
         '\n',
-        'try:\n',
-        '    from google.colab import files  # type: ignore\n',
-        '    _IN_COLAB = True\n',
-        'except ImportError:\n',
-        '    _IN_COLAB = False\n',
+        '_IN_KAGGLE = os.path.exists("/kaggle/working")\n',
         '\n',
-        'if _IN_COLAB:\n',
-        '    print("🚀 Detected Google Colab. Setting up environment...")\n',
-        '    _repo = "/content/Indie-Comic"\n',
+        'if _IN_KAGGLE:\n',
+        '    print("🚀 Detected Kaggle Environment. Setting up environment...")\n',
+        '    _repo = "/kaggle/working/Indie-Comic"\n',
         '    if not os.path.exists(_repo):\n',
         '        import subprocess\n',
         '        subprocess.run(["git", "clone", "--depth", "1",\n',
@@ -45,7 +41,8 @@ SETUP_CELL = {
     ]
 }
 
-notebooks = glob.glob(os.path.join(PIPELINE_DIR, '*.ipynb'))
+parent_dir = os.path.dirname(PIPELINE_DIR)
+notebooks = glob.glob(os.path.join(PIPELINE_DIR, '*.ipynb')) + glob.glob(os.path.join(parent_dir, '*.ipynb'))
 patched = 0
 for nb_path in notebooks:
     with open(nb_path, 'r', encoding='utf-8') as f:
@@ -60,13 +57,14 @@ for nb_path in notebooks:
         for idx, cell in enumerate(cells):
             if cell.get('id') == 'colab_setup_cell':
                 # Update source if it's the old one
-                if not any('urllib.request' in line for line in cell.get('source', [])):
+                if cell.get('source') != SETUP_CELL['source']:
                     cells[idx] = SETUP_CELL
                     print(f'  updated setup cell: {os.path.basename(nb_path)}')
                     with open(nb_path, 'w', encoding='utf-8') as f_out:
                         json.dump(nb, f_out, indent=1)
+                    patched += 1
                 else:
-                    print(f'  (skip, already patched with correct version) {os.path.basename(nb_path)}')
+                    print(f'  (skip, already matches latest version) {os.path.basename(nb_path)}')
         continue
     
     # Insert after leading markdown section headers
