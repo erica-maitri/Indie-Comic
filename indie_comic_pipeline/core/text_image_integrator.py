@@ -136,7 +136,6 @@ class TextImageIntegrator:
         self.output_dir = output_dir
         self.ollama_model = ollama_model
         self.ollama_url = os.environ.get("OLLAMA_URL") or ollama_url
-        self.dry_run = False
         self._font_cache: Dict[int, Any] = {}
         self._llm = None
         
@@ -417,37 +416,7 @@ Please design the speech bubble layout. Determine the speaker, clean dialogue, b
         if not dialogue or not isinstance(dialogue, str) or dialogue.strip() in ("...", ""):
             return image  # Silent panel
 
-        if self.dry_run:
-            result = image.copy().convert("RGBA")
-            overlay = Image.new("RGBA", result.size, (0, 0, 0, 0))
-            draw = ImageDraw.Draw(overlay)
-            
-            w, h = result.size
-            font_size = self.base_font_size
-            font = self._get_font(font_size)
-            
-            speaker, text_clean = self._parse_dialogue(dialogue)
-            if not text_clean:
-                text_clean = dialogue
-                
-            display_text = f"{speaker}: {text_clean}" if speaker else text_clean
-            wrapped_lines = self._wrap_text(display_text, font, w - 40)
-            
-            line_height = font_size + 4
-            text_height = len(wrapped_lines) * line_height
-            rect_h = text_height + 20
-            
-            # Semi-transparent rectangle overlay
-            draw.rectangle([10, h - rect_h - 10, w - 10, h - 10], fill=(0, 0, 0, 180), outline=(255, 255, 255, 255), width=2)
-            
-            # Render lines
-            y_pos = h - rect_h
-            for line in wrapped_lines:
-                draw.text((20, y_pos), line, fill=(255, 255, 255, 255), font=font)
-                y_pos += line_height
-                
-            result = Image.alpha_composite(result, overlay)
-            return result.convert("RGB")
+
 
         # Get bubble layout plan (Ollama / Local JSON)
         plan = self.get_layout_plan(dialogue, emotion_beat, panel_id, scene_desc, speaker_position)

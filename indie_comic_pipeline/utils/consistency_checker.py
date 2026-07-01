@@ -34,9 +34,6 @@ class ConsistencyChecker:
         # Tracks whether reference was set from a character sheet or the first panel
         self.reference_mode = "character_sheet"  # "character_sheet" | "panel"
         
-        # Determine dry run status
-        self.dry_run = False
-        
         # Load configuration for which metrics to use
         try:
             from utils.config_helper import load_settings
@@ -61,9 +58,9 @@ class ConsistencyChecker:
             self.device = "cpu"
         
         # Print which metrics are enabled
-        print(f"[ConsistencyChecker] Metrics enabled (dry_run={self.dry_run}):")
-        print(f"  - CLIP: {self.consistency_config.get('enable_clip', False) if not self.dry_run else False}")
-        print(f"  - DINOv2: {self.consistency_config.get('enable_dinov2', False) if not self.dry_run else False}")
+        print("[ConsistencyChecker] Metrics enabled:")
+        print(f"  - CLIP: {self.consistency_config.get('enable_clip', False)}")
+        print(f"  - DINOv2: {self.consistency_config.get('enable_dinov2', False)}")
         print(f"  - SSIM: {self.consistency_config.get('enable_ssim', True)}")
         print(f"  - Edge: {self.consistency_config.get('enable_edge', True)}")
         print(f"  - Color: {self.consistency_config.get('enable_color', True)}")
@@ -148,8 +145,6 @@ class ConsistencyChecker:
 
     def compute_clip_image_similarity(self, img1_path, img2_path):
         """Compute visual semantic similarity using CLIP embeddings (runs on CPU/GPU based on config)"""
-        if self.dry_run:
-            return 0.85
             
         global _CLIP_MODEL, _CLIP_PROCESSOR
         
@@ -203,8 +198,6 @@ class ConsistencyChecker:
 
     def compute_dinov2_similarity(self, img1_path, img2_path):
         """Compute visual structure similarity using DINOv2 features (runs on CPU/GPU based on config)"""
-        if self.dry_run:
-            return 0.85
             
         global _DINOV2_MODEL, _DINOV2_PROCESSOR
         
@@ -259,19 +252,6 @@ class ConsistencyChecker:
 
     def extract_features(self, image_path):
         """Extract image features for comparison"""
-        if self.dry_run:
-            return {
-                'histogram': np.zeros((8, 8)),
-                'pixels': np.zeros(128 * 128),
-                'mean_brightness': 128.0,
-                'size': (768, 768),
-                'img_gray': np.zeros((768, 768)),
-                'edge_density': 0.1,
-                'gram_matrix': np.zeros((5, 5)),
-                'aesthetic_score': 0.8,
-                'path': image_path,
-                'reference_path': image_path
-            }
 
         if not os.path.exists(image_path):
             raise FileNotFoundError(f"Image not found at {image_path}")
@@ -337,21 +317,6 @@ class ConsistencyChecker:
 
     def check_consistency(self, image_path, threshold=None):
         """Check if image matches reference character using configurable metrics"""
-        if self.dry_run:
-            return {
-                'consistent': True,
-                'score': 0.85,
-                'color_score': 0.85,
-                'struct_score': 0.85,
-                'ssim_score': 0.85,
-                'edge_score': 0.85,
-                'style_score': 0.85,
-                'aesthetic_score': 0.85,
-                'clip_img_score': 0.85,
-                'dinov2_score': 0.85,
-                'reference_mode': self.reference_mode,
-                'metrics_used': 6
-            }
 
         if self.reference_features is None:
             raise ValueError("No reference set. Call set_reference() first.")

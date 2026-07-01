@@ -39,7 +39,6 @@ class QualityCritic:
         self.strict_threshold = strict_threshold
         self.max_retries = max_retries
         self.user_pref_model_path = user_pref_model_path
-        self.dry_run = False
 
         # Dimension weights (must sum to 1.0)
         self.weights = weights or {

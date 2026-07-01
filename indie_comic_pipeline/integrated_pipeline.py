@@ -68,15 +68,6 @@ from core.advanced_attention import AdvancedAttentionManager
 from comic_exporter import ComicExporter
 
 
-
-
-    def is_loaded(self) -> bool:
-        return self._loaded
-
-    def get_vram_estimate_mb(self) -> int:
-        return 0
-
-
 class IntegratedComicPipeline:
     """The master pipeline orchestrator for the Ultimate AI Indie Comic Generator."""
     
@@ -85,7 +76,6 @@ class IntegratedComicPipeline:
         from typing import Optional
         env_defaults = load_env_with_defaults()
         
-        self.dry_run = False
         self.settings = load_settings()
         if not self.settings:
             self.settings = {}
@@ -118,8 +108,8 @@ class IntegratedComicPipeline:
         self.backend_selector.initialize_backends(self.settings.get("models", {}))
             
         # ── Advanced Attention Manager (L1 + L2 + L3 mechanisms) ──
-        # Disabled in dry-run (no GPU / torch required), enabled for real generation.
-        adv_attn_enabled = not self.dry_run
+        # Enabled for real generation.
+        adv_attn_enabled = True
         self.advanced_attention = AdvancedAttentionManager(
             heat_alpha=0.03,           # L1: heat diffusion strength
             attention_blend=0.15,      # L2: anchor K/V blend ratio
@@ -128,8 +118,6 @@ class IntegratedComicPipeline:
         )
         if adv_attn_enabled:
             log.info("Advanced Attention Mechanisms ENABLED (L1-Heat, L2-Attn, L3-STE)")
-        else:
-            log.info("Advanced Attention Mechanisms DISABLED in dry-run mode")
 
         # Panel Generation Engine
         self.panel_engine = PanelEngine(
