@@ -348,15 +348,14 @@ class AdvancedAttentionManager:
                  heat_alpha: float = 0.03,
                  attention_blend: float = 0.15,
                  spatial_strength: float = 0.08,
-                 enabled: bool = True,
-                 dry_run: bool = False):
+                 enabled: bool = True):
         try:
             import torch
             gpu_available = torch.cuda.is_available()
         except ImportError:
             gpu_available = False
             
-        self.enabled = enabled and not dry_run and gpu_available
+        self.enabled = enabled and gpu_available
         self.heat_prior    = HeatDiffusionPrior(alpha=heat_alpha)
         self.attn_cache    = SharedAttentionCache(blend_ratio=attention_blend)
         self.spatio_temp   = SpatiotemporalConsistencyEnforcer(strength=spatial_strength)

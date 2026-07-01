@@ -27,7 +27,7 @@ _DINOV2_PROCESSOR: Any = None
 
 class ConsistencyChecker:
 
-    def __init__(self, dry_run: bool = False):
+    def __init__(self):
         self.reference_features = None
         self.clip_model = None
         self.clip_processor = None

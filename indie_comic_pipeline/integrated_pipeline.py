@@ -154,7 +154,7 @@ class MockBackend(BaseBackend):
 class IntegratedComicPipeline:
     """The master pipeline orchestrator for the Ultimate AI Indie Comic Generator."""
     
-    def __init__(self, dry_run: Optional[bool] = None, model_override: Optional[str] = None):
+    def __init__(self, model_override: Optional[str] = None):
         from utils.config_helper import load_env_with_defaults
         from typing import Optional
         env_defaults = load_env_with_defaults()
@@ -204,8 +204,7 @@ class IntegratedComicPipeline:
             heat_alpha=0.03,           # L1: heat diffusion strength
             attention_blend=0.15,      # L2: anchor K/V blend ratio
             spatial_strength=0.08,     # L3: spatiotemporal correction strength
-            enabled=adv_attn_enabled,
-            dry_run=self.dry_run
+            enabled=adv_attn_enabled
         )
         if adv_attn_enabled:
             log.info("Advanced Attention Mechanisms ENABLED (L1-Heat, L2-Attn, L3-STE)")
@@ -225,16 +224,14 @@ class IntegratedComicPipeline:
         self.quality_critic = QualityCritic(
             threshold=critic_conf.get("threshold", 0.55),
             strict_threshold=critic_conf.get("strict_threshold", 0.70),
-            max_retries=2,
-            dry_run=self.dry_run
+            max_retries=2
         )
         
         # Text-Image Integrator (DiffSensei approximation)
         self.text_integrator = TextImageIntegrator(
             output_dir=self.panels_dir,
             ollama_model=langchain_conf.get("model", env_defaults.get("llm_provider", "llama3.2")),
-            ollama_url=langchain_conf.get("ollama_url", env_defaults.get("ollama_url", "http://localhost:11434")),
-            dry_run=self.dry_run
+            ollama_url=langchain_conf.get("ollama_url", env_defaults.get("ollama_url", "http://localhost:11434"))
         )
         
         # MangaFlow Layout Engine
@@ -624,7 +621,7 @@ def main():
                         
     args = parser.parse_args()
     
-    pipeline = IntegratedComicPipeline(dry_run=args.dry_run, model_override=args.model)
+    pipeline = IntegratedComicPipeline(model_override=args.model)
     
     results = pipeline.run(
         prompt=args.prompt,

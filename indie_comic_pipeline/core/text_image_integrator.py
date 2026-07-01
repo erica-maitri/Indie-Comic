@@ -129,15 +129,14 @@ class TextImageIntegrator:
                  max_bubble_width_ratio: float = 0.45,
                  output_dir: str = "outputs/panels",
                  ollama_model: str = "llama3.2",
-                 ollama_url: str = "http://localhost:11434",
-                 dry_run: bool = False):
+                 ollama_url: str = "http://localhost:11434"):
         self.font_path = font_path
         self.base_font_size = base_font_size
         self.max_bubble_width_ratio = max_bubble_width_ratio
         self.output_dir = output_dir
         self.ollama_model = ollama_model
         self.ollama_url = os.environ.get("OLLAMA_URL") or ollama_url
-        self.dry_run = dry_run
+        self.dry_run = False
         self._font_cache: Dict[int, Any] = {}
         self._llm = None
         
