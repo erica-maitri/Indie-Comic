@@ -72,6 +72,11 @@ class IntegratedComicPipeline:
     """The master pipeline orchestrator for the Ultimate AI Indie Comic Generator."""
     
     def __init__(self, model_override: Optional[str] = None):
+        import torch
+        if not torch.cuda.is_available():
+            log.error("❌ CRITICAL ERROR: CUDA GPU is not available! The pipeline has been configured to run ONLY on GPU (dry-run and mock modes are disabled). Please enable GPU acceleration in your Kaggle/Colab notebook settings.")
+            raise RuntimeError("❌ CRITICAL ERROR: CUDA GPU is not available!")
+
         from utils.config_helper import load_env_with_defaults
         from typing import Optional
         env_defaults = load_env_with_defaults()
