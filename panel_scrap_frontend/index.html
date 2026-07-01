@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panel Scrap - Comic Generator</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-wrapper">
+        <!-- Main Phone/App Container -->
+        <div class="app-container">
+            
+            <!-- Global Header -->
+            <header class="app-header">
+                <button class="header-btn" id="menu-toggle" aria-label="Open Menu">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="square">
+                        <line x1="3" y1="12" x2="21" y2="12"></line>
+                        <line x1="3" y1="6" x2="21" y2="6"></line>
+                        <line x1="3" y1="18" x2="21" y2="18"></line>
+                    </svg>
+                </button>
+                <div class="logo">PANEL SCRAP</div>
+                <button class="header-btn profile-btn" id="profile-toggle" aria-label="User Profile">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="12" cy="7" r="4"></circle>
+                    </svg>
+                </button>
+            </header>
+
+            <!-- Main Content Scroll Area -->
+            <main class="app-content">
+                
+                <!-- VIEW 1: WRITER'S ROOM -->
+                <section id="writer-view" class="view-section active">
+                    <div class="view-header">
+                        <h1 class="view-title">WRITER'S ROOM</h1>
+                        <p class="view-subtitle">Turn your spark into a storyboard.</p>
+                    </div>
+
+                    <!-- STORY PREMISE CARD -->
+                    <div class="brutalist-card">
+                        <div class="card-header-label">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                <path d="M12 20h9"></path>
+                                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                            </svg>
+                            STORY PREMISE
+                        </div>
+                        <div class="textarea-wrapper">
+                            <textarea id="premise-input" maxlength="500" placeholder="A cyberpunk detective discovers their partner is actually a rogue AI..."></textarea>
+                            <div class="char-counter"><span id="char-count">0</span>/500</div>
+                        </div>
+                    </div>
+
+                    <!-- PANEL COUNT CARD -->
+                    <div class="brutalist-card">
+                        <div class="slider-header">
+                            <span class="card-header-label">PANEL COUNT</span>
+                            <span class="badge-yellow" id="panel-count-val">6</span>
+                        </div>
+                        <div class="slider-container">
+                            <input type="range" id="panel-slider" min="4" max="10" value="6" step="1">
+                            <div class="slider-labels">
+                                <span>4 PANELS</span>
+                                <span>10 PANELS</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- CREATION MODE CARD -->
+                    <div class="brutalist-card">
+                        <div class="card-header-label">CREATION MODE</div>
+                        <div class="toggle-group">
+                            <button class="toggle-btn active" id="mode-quick">QUICK MODE</button>
+                            <button class="toggle-btn" id="mode-guided">GUIDED MODE</button>
+                        </div>
+                    </div>
+
+                    <!-- ART STYLE CARD -->
+                    <div class="brutalist-card">
+                        <div class="card-header-label">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                <path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 14.7255 3.09032 17.1962 4.85857 19C5.34735 19.4888 5.48877 20.2169 5.25368 20.8537L5 21.5L5.64632 21.2463C6.28312 21.0112 7.01124 21.1527 7.5 21.6414C8.8038 22.5114 10.3604 23 12 22Z"></path>
+                                <circle cx="7.5" cy="10.5" r="1.5" fill="currentColor"></circle>
+                                <circle cx="11.5" cy="7.5" r="1.5" fill="currentColor"></circle>
+                                <circle cx="16.5" cy="9.5" r="1.5" fill="currentColor"></circle>
+                                <circle cx="15.5" cy="14.5" r="1.5" fill="currentColor"></circle>
+                            </svg>
+                            ART STYLE
+                        </div>
+                        <div class="style-grid">
+                            <div class="style-card selected" data-style="noir">
+                                <div class="style-img-placeholder noir-bg"></div>
+                                <div class="style-badge">NOIR</div>
+                            </div>
+                            <div class="style-card" data-style="manga">
+                                <div class="style-img-placeholder manga-bg"></div>
+                                <div class="style-badge">MANGA</div>
+                            </div>
+                            <div class="style-card" data-style="ghibli">
+                                <div class="style-img-placeholder ghibli-bg"></div>
+                                <div class="style-badge">GHIBLI</div>
+                            </div>
+                            <div class="style-card custom-style" id="style-custom-btn">
+                                <div class="style-img-placeholder custom-bg">
+                                    <div class="plus-icon">+</div>
+                                </div>
+                                <div class="style-badge">CUSTOM</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- GENERATE OUTLINE BUTTON -->
+                    <div class="action-container">
+                        <button class="brutalist-btn btn-red" id="generate-outline-btn">
+                            GENERATE STORY OUTLINE
+                            <svg class="icon-sparkles" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"></path>
+                            </svg>
+                        </button>
+                        <div class="btn-subtext">Estimated generation time: 15-30 seconds</div>
+                    </div>
+
+                    <!-- PROGRESS MOCK LOADING BAR (HIDDEN BY DEFAULT) -->
+                    <div class="progress-bar-container brutalist-card" id="generation-loader" style="display: none;">
+                        <div class="loader-status" id="loader-status-text">Analyzing Premise...</div>
+                        <div class="progress-bar-outer">
+                            <div class="progress-bar-inner" id="loader-progress"></div>
+                        </div>
+                        <div class="loader-timer">Time remaining: <span id="loader-time-left">15</span>s</div>
+                    </div>
+
+                    <!-- PRO TIP CARD -->
+                    <div class="brutalist-card card-yellow card-tip">
+                        <div class="tip-title">PRO TIP</div>
+                        <p class="tip-desc">The more sensory details you provide in your premise, the better our AI can frame the emotional beats of your panels.</p>
+                    </div>
+                </section>
+
+                <!-- VIEW 2: STORYBOARD -->
+                <section id="storyboard-view" class="view-section">
+                    
+                    <!-- EMOTION ARC -->
+                    <div class="brutalist-card">
+                        <div class="card-header-label">Emotion Arc</div>
+                        <div class="emotion-arc-container">
+                            <canvas id="emotion-canvas" width="300" height="130"></canvas>
+                            <div class="graph-axis-label">SCENE INTENSITY</div>
+                        </div>
+                        <div class="emotion-badges">
+                            <span class="badge-yellow">ACTION: HIGH</span>
+                            <span class="badge-gray">TENSION: RISING</span>
+                        </div>
+                    </div>
+
+                    <!-- REGENERATE & DRAW BUTTONS -->
+                    <div class="outline-action-row">
+                        <button class="brutalist-btn btn-white" id="regenerate-outline-btn">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
+                            </svg>
+                            Regenerate Outline
+                        </button>
+                        <button class="brutalist-btn btn-red" id="draw-panels-btn">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                <path d="M12 20h9"></path>
+                                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                            </svg>
+                            DRAW COMIC PANELS
+                        </button>
+                    </div>
+
+                    <!-- STORYBOARD PANELS TIMELINE -->
+                    <div class="storyboard-timeline-header">
+                        <span class="timeline-title-scrap">STORYBOARD</span>
+                        <span class="timeline-title-episode">EPISODE 01: THE AWAKENING</span>
+                    </div>
+
+                    <div class="timeline-container">
+                        <div class="timeline-line"></div>
+                        
+                        <!-- Panel 1 -->
+                        <div class="timeline-item">
+                            <div class="timeline-badge">1</div>
+                            <div class="brutalist-card panel-card">
+                                <div class="panel-field-group">
+                                    <div class="field-label">Visual Description</div>
+                                    <textarea class="panel-desc-input">A low-angle shot of the protagonist, ELARA, standing before the glowing monolith. Dust motes dance in the shaft of light beam...</textarea>
+                                </div>
+                                <div class="panel-field-group emotion-row">
+                                    <div>
+                                        <div class="field-label">Character Emotion</div>
+                                        <div class="select-wrapper">
+                                            <select class="emotion-select">
+                                                <option value="AWE" selected>AWE</option>
+                                                <option value="DETERMINATION">DETERMINATION</option>
+                                                <option value="JOY">JOY</option>
+                                                <option value="SADNESS">SADNESS</option>
+                                                <option value="ANGER">ANGER</option>
+                                                <option value="FEAR">FEAR</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <button class="regen-panel-img-btn" aria-label="Regenerate panel image">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                            <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                                            <polyline points="21 15 16 10 5 21"></polyline>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <div class="panel-field-group">
+                                    <div class="field-label">Dialogue</div>
+                                    <textarea class="panel-dialogue-input">"It's... it's calling to me. I can feel the frequency in my bones."</textarea>
+                                </div>
+                                <div class="panel-image-container">
+                                    <!-- Empty frame state -->
+                                    <div class="empty-frame-state" id="panel-img-frame-1">
+                                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                            <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                                            <polyline points="21 15 16 10 5 21"></polyline>
+                                        </svg>
+                                        <span>EMPTY FRAME</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Panel 2 -->
+                        <div class="timeline-item">
+                            <div class="timeline-badge">2</div>
+                            <div class="brutalist-card panel-card">
+                                <div class="panel-field-group">
+                                    <div class="field-label">Visual Description</div>
+                                    <textarea class="panel-desc-input">Close-up of Elara's hand reaching out. Her fingers are mere inches from the vibrating surface of the monolith, sparking micro-currents.</textarea>
+                                </div>
+                                <div class="panel-field-group emotion-row">
+                                    <div>
+                                        <div class="field-label">Character Emotion</div>
+                                        <div class="select-wrapper">
+                                            <select class="emotion-select">
+                                                <option value="AWE">AWE</option>
+                                                <option value="DETERMINATION" selected>DETERMINATION</option>
+                                                <option value="JOY">JOY</option>
+                                                <option value="SADNESS">SADNESS</option>
+                                                <option value="ANGER">ANGER</option>
+                                                <option value="FEAR">FEAR</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <button class="regen-panel-img-btn" aria-label="Regenerate panel image">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                            <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                                            <polyline points="21 15 16 10 5 21"></polyline>
+                                        </svg>
+                                    </button>
+                                </div>
+                                <div class="panel-field-group">
+                                    <div class="field-label">Dialogue</div>
+                                    <textarea class="panel-dialogue-input">(Heavy breathing)</textarea>
+                                </div>
+                                <div class="panel-image-container">
+                                    <!-- Sketch generated frame -->
+                                    <div class="sketch-generated-state" id="panel-img-frame-2">
+                                        <div class="sketch-placeholder-img"></div>
+                                        <div class="sketch-badge">SKETCH GENERATED</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <!-- FLOATING TERMINAL / LOG -->
+                    <div class="brutalist-card system-log-console">
+                        <div class="console-header">
+                            <span class="status-dot"></span>
+                            <span>SYSTEM LOG V1.0.4</span>
+                            <span class="console-right-text">READY</span>
+                        </div>
+                        <div class="console-body" id="console-logs-container">
+                            <div class="log-line text-yellow">...</div>
+                            <div class="log-line"><span class="text-gray">[18:56:39]</span> Optimizing vector weights for ink strokes...</div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- VIEW 3: EXPORT -->
+                <section id="export-view" class="view-section">
+                    <div class="view-header">
+                        <h1 class="view-title">COMIC REVIEW</h1>
+                        <p class="view-subtitle">Fine-tune your panels and refine the visual narrative flow.</p>
+                    </div>
+
+                    <!-- COMIC PAGE PREVIEW CONTAINER -->
+                    <div class="brutalist-card page-review-card">
+                        <div class="page-tab-label">PAGE 01</div>
+                        
+                        <!-- Embedded 4-panel Grid representing Page 1 Layout -->
+                        <div class="comic-page-grid">
+                            
+                            <!-- Panel 1 (Full Width) -->
+                            <div class="grid-panel wide-panel">
+                                <div class="comic-panel-image panel1-img"></div>
+                            </div>
+                            
+                            <!-- Panel 2 (Medium Left) -->
+                            <div class="grid-panel">
+                                <div class="comic-panel-image panel2-img"></div>
+                            </div>
+                            
+                            <!-- Panel 3 (Medium Right) -->
+                            <div class="grid-panel">
+                                <div class="comic-panel-image panel3-img"></div>
+                            </div>
+                            
+                            <!-- Panel 4 (Full Width Text/Credits) -->
+                            <div class="grid-panel wide-panel text-panel">
+                                <div class="panel-narrative-text">
+                                    "To be continued in the shadows of the scrap heap..."
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    <!-- EXPORT COMIC OPTIONS -->
+                    <div class="brutalist-card">
+                        <div class="card-header-label">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="17 8 12 3 7 8"></polyline>
+                                <line x1="12" y1="3" x2="12" y2="15"></line>
+                            </svg>
+                            EXPORT COMIC
+                        </div>
+                        <p class="export-card-desc">Ready to ship? Choose your format and let the ink dry.</p>
+                        
+                        <div class="export-buttons-stack">
+                            <button class="brutalist-btn btn-white export-action-btn" data-format="PDF">
+                                DOWNLOAD AS PDF
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                                    <polyline points="14 2 14 8 20 8"></polyline>
+                                    <line x1="16" y1="13" x2="8" y2="13"></line>
+                                    <line x1="16" y1="17" x2="8" y2="17"></line>
+                                    <polyline points="10 9 9 9 8 9"></polyline>
+                                </svg>
+                            </button>
+                            <button class="brutalist-btn btn-white export-action-btn" data-format="CBZ">
+                                CBZ (COMIC ARCHIVE)
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                                </svg>
+                            </button>
+                            <button class="brutalist-btn btn-yellow export-action-btn" data-format="HTML">
+                                EXPORT TO HTML
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                                    <polyline points="16 18 22 12 16 6"></polyline>
+                                    <polyline points="8 6 2 12 8 18"></polyline>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- PROJECT STATS -->
+                    <div class="brutalist-card">
+                        <div class="card-header-label red-text">PROJECT STATS</div>
+                        <div class="stats-table">
+                            <div class="stats-row">
+                                <span class="stats-label">Total Panels:</span>
+                                <span class="stats-value">4</span>
+                            </div>
+                            <div class="stats-row">
+                                <span class="stats-label">Active Characters:</span>
+                                <span class="stats-value">2</span>
+                            </div>
+                            <div class="stats-row">
+                                <span class="stats-label">Est. File Size:</span>
+                                <span class="stats-value">12.4MB</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- PUBLISH PROJECT BUTTON -->
+                    <div class="action-container margin-bottom">
+                        <button class="brutalist-btn btn-red" id="publish-project-btn">
+                            PUBLISH PROJECT
+                        </button>
+                    </div>
+                </section>
+
+            </main>
+
+            <!-- Bottom Floating Navigation Tabs -->
+            <nav class="app-nav">
+                <button class="nav-tab-btn active" id="tab-writer" aria-label="Writer View">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <path d="M12 20h9"></path>
+                        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                    </svg>
+                    <span>WRITER</span>
+                </button>
+                <button class="nav-tab-btn" id="tab-storyboard" aria-label="Storyboard View">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <rect x="3" y="3" width="7" height="9"></rect>
+                        <rect x="14" y="3" width="7" height="5"></rect>
+                        <rect x="14" y="12" width="7" height="9"></rect>
+                        <rect x="3" y="16" width="7" height="5"></rect>
+                    </svg>
+                    <span>STORYBOARD</span>
+                </button>
+                <button class="nav-tab-btn" id="tab-export" aria-label="Export View">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                        <polyline points="17 8 12 3 7 8"></polyline>
+                        <line x1="12" y1="3" x2="12" y2="15"></line>
+                    </svg>
+                    <span>EXPORT</span>
+                </button>
+            </nav>
+
+        </div>
+    </div>
+
+    <!-- CUSTOM STYLE MODAL DIALOGUE (FOR CUSTOM STYLE CARD) -->
+    <div class="modal-overlay" id="style-modal" style="display: none;">
+        <div class="brutalist-card modal-content">
+            <h2 class="modal-title">CUSTOM ART STYLE</h2>
+            <p class="modal-desc">Describe your custom art style or drag an image here to reference.</p>
+            <div class="panel-field-group">
+                <div class="field-label">Style Prompt</div>
+                <textarea id="custom-style-prompt" placeholder="e.g. vintage 1970s comic, dot halftones, retro colors, inked outlines..."></textarea>
+            </div>
+            <div class="upload-reference-zone" id="upload-zone">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                    <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                    <polyline points="21 15 16 10 5 21"></polyline>
+                </svg>
+                <span>Upload Reference Photo</span>
+                <input type="file" id="modal-file-input" style="display: none;" accept="image/*">
+            </div>
+            <div class="modal-btn-row">
+                <button class="brutalist-btn btn-white" id="close-modal-btn">CANCEL</button>
+                <button class="brutalist-btn btn-yellow" id="save-style-btn">APPLY STYLE</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- PUBLISH SUCCESS OVERLAY -->
+    <div class="modal-overlay" id="success-modal" style="display: none;">
+        <div class="brutalist-card modal-content card-yellow center-text">
+            <div class="success-icon-badge">✨</div>
+            <h2 class="modal-title uppercase-italic">PROJECT PUBLISHED!</h2>
+            <p class="modal-desc">Your comic "Episode 01: The Awakening" is compiled and ready to share.</p>
+            <button class="brutalist-btn btn-red full-width" id="success-close-btn">AWESOME</button>
+        </div>
+    </div>
+
+    <!-- JavaScript Bundle -->
+    <script src="app.js"></script>
+</body>
+</html>
