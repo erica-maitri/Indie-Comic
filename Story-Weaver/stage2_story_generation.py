@@ -27,6 +27,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Any, Dict, List
 
+try:
+    import unsloth
+except ImportError:
+    pass
+
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 
