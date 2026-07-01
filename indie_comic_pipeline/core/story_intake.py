@@ -357,7 +357,8 @@ class StoryIntakeEngine:
         import os
         import re
 
-        story_weaver_path = Path("c:/Users/Dell/Downloads/drid/Story-Weaver/story_gen.py")
+        repo_root = Path(__file__).parent.parent.parent
+        story_weaver_path = repo_root / "Story-Weaver" / "story_gen.py"
         if story_weaver_path.exists():
             log.info("[StoryIntakeEngine] Delegating generation to Story-Weaver story_gen module...")
             try:
