@@ -12,6 +12,8 @@ import logging
 import tempfile
 from typing import Dict, Any, Optional, Tuple, TYPE_CHECKING
 
+import torch
+
 if TYPE_CHECKING:
     from core.memory import StorySectionMemory
 
