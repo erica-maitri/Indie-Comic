@@ -612,6 +612,8 @@ def main():
     
     # Save the report in the artifacts folder as well as locally
     artifact_report_path = Path("C:/Users/Dell/.gemini/antigravity-ide/brain/f474e25c-a3e8-4b06-9d14-d73bf19f93cd/research_report.md")
+    if not artifact_report_path.parent.exists():
+        artifact_report_path = BASE_DIR / "research_report_artifact.md"
     local_report_path = BASE_DIR / "research_report.md"
     
     try:

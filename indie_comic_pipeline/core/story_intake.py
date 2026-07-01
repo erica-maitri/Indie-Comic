@@ -268,7 +268,8 @@ class StoryIntakeEngine:
         try:
             import importlib.util
             # Load mood_analyzer dynamically from the mood-weaver directory
-            path = Path("c:/Users/Dell/Downloads/drid/mood-weaver/scripts/mood_analyzer.py")
+            repo_root = Path(__file__).parent.parent.parent
+            path = repo_root / "mood-weaver" / "scripts" / "mood_analyzer.py"
             if path.exists():
                 spec = importlib.util.spec_from_file_location("mood_analyzer", path)
                 mood_analyzer = importlib.util.module_from_spec(spec)
@@ -831,9 +832,12 @@ Generate a {panel_count}-panel comic story. Output this exact JSON:
         return True
 
 
-def compile_unified_references(csv_dir: str = "c:/Users/Dell/Downloads/drid", output_path: str = "outputs/unified_references.csv"):
+def compile_unified_references(csv_dir: Optional[str] = None, output_path: str = "outputs/unified_references.csv"):
     import csv
     import os
+    
+    if csv_dir is None:
+        csv_dir = str(Path(__file__).parent.parent.parent)
     
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     fieldnames = ["title", "genre", "description", "source", "popularity_score"]

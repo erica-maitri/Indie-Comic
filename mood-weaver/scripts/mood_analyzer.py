@@ -4,11 +4,14 @@ from pathlib import Path
 from transformers import pipeline
 
 # Resolve model path. Try local paths first, otherwise fallback to public Hugging Face model
-local_model_path = Path("c:/Users/Dell/Downloads/drid/mood-weaver/model/mood_weaver_model")
+script_dir = Path(__file__).parent
+mood_weaver_dir = script_dir.parent
+
+local_model_path = mood_weaver_dir / "model" / "mood_weaver_model"
 if not local_model_path.exists():
-    local_model_path = Path("c:/Users/Dell/Downloads/drid/mood-weaver/scripts/mood_weaver_model")
+    local_model_path = script_dir / "mood_weaver_model"
 if not local_model_path.exists():
-    local_model_path = Path("c:/Users/Dell/Downloads/drid/mood-weaver/mood_weaver_model")
+    local_model_path = mood_weaver_dir / "mood_weaver_model"
 if not local_model_path.exists():
     local_model_path = Path("./mood_weaver_model")
 
