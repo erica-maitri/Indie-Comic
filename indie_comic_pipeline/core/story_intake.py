@@ -272,10 +272,11 @@ class StoryIntakeEngine:
             path = repo_root / "mood-weaver" / "scripts" / "mood_analyzer.py"
             if path.exists():
                 spec = importlib.util.spec_from_file_location("mood_analyzer", path)
-                mood_analyzer = importlib.util.module_from_spec(spec)
-                sys.modules["mood_analyzer"] = mood_analyzer
-                spec.loader.exec_module(mood_analyzer)
-                log.info("[StoryIntakeEngine] Successfully loaded custom mood analyzer from mood-weaver")
+                if spec is not None and spec.loader is not None:
+                    mood_analyzer = importlib.util.module_from_spec(spec)
+                    sys.modules["mood_analyzer"] = mood_analyzer
+                    spec.loader.exec_module(mood_analyzer)
+                    log.info("[StoryIntakeEngine] Successfully loaded custom mood analyzer from mood-weaver")
         except Exception as e:
             log.warning(f"[StoryIntakeEngine] Failed to load custom mood analyzer: {e}")
 
@@ -395,29 +396,36 @@ class StoryIntakeEngine:
 
                 # Load module
                 spec = importlib.util.spec_from_file_location("story_gen_module", story_weaver_path)
-                story_gen_module = importlib.util.module_from_spec(spec)
-                sys.modules["story_gen_module"] = story_gen_module
-                spec.loader.exec_module(story_gen_module)
+                if spec is not None and spec.loader is not None:
+                    story_gen_module = importlib.util.module_from_spec(spec)
+                    sys.modules["story_gen_module"] = story_gen_module
+                    spec.loader.exec_module(story_gen_module)
 
-                # Set global options in the imported module
-                story_gen_module.EMOTION = emotion
-                story_gen_module.PANEL_COUNT = panel_count
-                story_gen_module.USER_TEXT = user_prompt
-                story_gen_module.MODEL_PATH = self.ollama_model
+                    # Cast to Any to prevent dynamic property type check errors
+                    from typing import Any
+                    story_gen_any: Any = story_gen_module
 
-                # If custom mood shift beats are passed, override the arc beats in the module
-                if mood_shifts and len(mood_shifts) > 0:
-                    story_gen_module.MOOD_ARCS[emotion] = {
-                        "journey": "Custom User Arc",
-                        "description": "Custom sequence of emotions",
-                        "arc_beats": mood_shifts,
-                        "motif_hint": "a recurring symbol of the user's journey",
-                        "end_note": "End with the final shift panel."
-                    }
+                    # Set global options in the imported module
+                    story_gen_any.EMOTION = emotion
+                    story_gen_any.PANEL_COUNT = panel_count
+                    story_gen_any.USER_TEXT = user_prompt
+                    story_gen_any.MODEL_PATH = self.ollama_model
 
-                # Instantiate and run
-                generator = story_gen_module.DynamicStoryGenerator()
-                story_config = generator.generate()
+                    # If custom mood shift beats are passed, override the arc beats in the module
+                    if mood_shifts and len(mood_shifts) > 0:
+                        story_gen_any.MOOD_ARCS[emotion] = {
+                            "journey": "Custom User Arc",
+                            "description": "Custom sequence of emotions",
+                            "arc_beats": mood_shifts,
+                            "motif_hint": "a recurring symbol of the user's journey",
+                            "end_note": "End with the final shift panel."
+                        }
+
+                    # Instantiate and run
+                    generator = story_gen_any.DynamicStoryGenerator()
+                    story_config = generator.generate()
+                else:
+                    raise ImportError("Failed to load Story-Weaver story_gen spec")
                 if story_config:
                     return story_config
             except Exception as e:
