@@ -610,20 +610,10 @@ def main():
     # Compile report
     report_md = compile_comparison_report(base_evals, ft_evals)
     
-    # Save the report in the artifacts folder as well as locally
-    artifact_report_path = Path("C:/Users/Dell/.gemini/antigravity-ide/brain/f474e25c-a3e8-4b06-9d14-d73bf19f93cd/research_report.md")
-    if not artifact_report_path.parent.exists():
-        artifact_report_path = BASE_DIR / "research_report_artifact.md"
+    # Save the report locally
     local_report_path = BASE_DIR / "research_report.md"
-    
-    try:
-        artifact_report_path.write_text(report_md, encoding="utf-8")
-        print(f"[SUCCESS] Artifact research report written to {artifact_report_path}")
-    except Exception as e:
-        print(f"[ERROR] Could not write to artifact path: {e}")
-        
     local_report_path.write_text(report_md, encoding="utf-8")
-    print(f"[SUCCESS] Local research report written to {local_report_path}")
+    print(f"[SUCCESS] Research report written to {local_report_path}")
 
     # Output simplified console summary
     print("\n" + "=" * 50)
