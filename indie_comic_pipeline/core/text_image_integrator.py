@@ -567,7 +567,9 @@ Please design the speech bubble layout. Determine the speaker, clean dialogue, b
             target_y = int(tail_y_ratio * h)
         else:
             target_x = self._get_tail_x(bx, bubble_w, speaker_pos, x_ratio)
-            target_y = by + bubble_h + 15
+            # Default thought tail is longer to accommodate lobes and bubble spacing
+            tail_len = 45 if bubble_shape == "cloud" else 15
+            target_y = by + bubble_h + tail_len
             
         base_x = self._get_tail_x(bx, bubble_w, speaker_pos, x_ratio)
         base_y = by + bubble_h
@@ -790,15 +792,42 @@ Please design the speech bubble layout. Determine the speaker, clean dialogue, b
         tail_width = 12
 
         if tail_style == "bubbles":
-            for i in range(3):
-                r = 5 - i
-                t = (i + 1) / 4.0
-                cx = int(base_x + (target_x - base_x) * t)
-                cy = int(base_y + (target_y - base_y) * t)
-                draw.ellipse(
-                    [cx - r, cy - r, cx + r, cy + r],
-                    fill=fill, outline=border, width=1,
-                )
+            # Offset base_y down by 12px to clear the bulging cloud lobes
+            adjusted_base_y = base_y + 12
+            
+            dx = target_x - base_x
+            dy = target_y - adjusted_base_y
+            D = math.sqrt(dx*dx + dy*dy)
+            
+            # Thought bubble circles with decreasing sizes (6px, 4px, 2px)
+            radii = [6, 4, 2]
+            
+            if D < 35:
+                # If short tail, space them out using relative ratios
+                ratios = [0.3, 0.65, 0.9]
+                for i in range(3):
+                    t = ratios[i]
+                    cx = int(base_x + dx * t)
+                    cy = int(adjusted_base_y + dy * t)
+                    r = radii[i]
+                    draw.ellipse(
+                        [cx - r, cy - r, cx + r, cy + r],
+                        fill=fill, outline=border, width=1,
+                    )
+            else:
+                # If long tail, place them at fixed, beautifully spaced pixel distances
+                ux = dx / D
+                uy = dy / D
+                distances = [10, 22, 32]
+                for i in range(3):
+                    dist = distances[i]
+                    cx = int(base_x + ux * dist)
+                    cy = int(adjusted_base_y + uy * dist)
+                    r = radii[i]
+                    draw.ellipse(
+                        [cx - r, cy - r, cx + r, cy + r],
+                        fill=fill, outline=border, width=1,
+                    )
         else:
             points = [
                 (base_x - tail_width // 2, base_y),
