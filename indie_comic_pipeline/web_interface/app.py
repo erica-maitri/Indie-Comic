@@ -238,6 +238,9 @@ def get_comic_data():
         speaker = plan.get("speaker", "")
         bubble_shape = plan.get("bubble_shape", "ellipse")
         font_scale = plan.get("font_scale", 1.0)
+        text_align = plan.get("text_align", "center")
+        tail_x_ratio = plan.get("tail_x_ratio")
+        tail_y_ratio = plan.get("tail_y_ratio")
         
         panels_data.append({
             "panel_id": panel_id,
@@ -248,7 +251,10 @@ def get_comic_data():
             "dialogue": dialogue,
             "speaker": speaker or "",
             "bubble_shape": bubble_shape,
-            "font_scale": font_scale
+            "font_scale": font_scale,
+            "text_align": text_align,
+            "tail_x_ratio": tail_x_ratio,
+            "tail_y_ratio": tail_y_ratio
         })
         
     # 2. Scan for assembled page layout images
@@ -309,6 +315,14 @@ def update_bubble():
         plan["speaker"] = speaker or None
         plan["bubble_shape"] = bubble_shape
         plan["font_scale"] = font_scale
+        
+        text_align = req_data.get("text_align", "center")
+        tx = req_data.get("tail_x_ratio")
+        ty = req_data.get("tail_y_ratio")
+        
+        plan["text_align"] = text_align
+        plan["tail_x_ratio"] = float(tx) if tx is not None else None
+        plan["tail_y_ratio"] = float(ty) if ty is not None else None
         
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(plan, f, indent=2)
