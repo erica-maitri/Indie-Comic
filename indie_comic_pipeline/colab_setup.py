@@ -46,7 +46,11 @@ if IN_CLOUD:
             check=True
         )
     else:
-        print("✅ Repo already cloned.")
+        print("✅ Repo already cloned. Pulling latest changes...")
+        subprocess.run(
+            ["git", "-C", REPO_ROOT, "pull"],
+            check=False
+        )
 else:
     # Walk up from this file's location to find the repo root
     # Works whether cwd is the repo root or indie_comic_pipeline/
