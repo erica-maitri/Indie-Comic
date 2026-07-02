@@ -25,9 +25,9 @@
        │  • Dynamic Cache: Tracks active character states, visual anchors, scene settings, and layout plans.
        │
        ▼
-[PHASE 2: REFERENCE-FREE ANCHORING]
+[PHASE 2: SELF-REFERENTIAL VISUAL ANCHORING]
        │  • Step 2.1: Pulls initial context prompts from memory to execute Panel 1 Generation.
-       │  • Step 2.2: Isolates Panel 1 to serve as the baseline Primary Visual Anchor.
+       │  • Step 2.2: Isolates Panel 1 to serve as the baseline Primary Visual Anchor (Self-Reference).
        │  • Step 2.3: Runs Identity Embedding Extraction to capture raw facial topology, wardrobe, and style markers.
        │  • Step 2.4: Injects extracted identity tracking tokens directly back into the Story Section Memory cache.
        │
@@ -42,12 +42,12 @@
        │  │     Calculates dynamic model weight blending at runtime: W_total = W_base + Σ(α_i * W_i)
        │  │
        │  └─ [Multi-Backend Diffusion Denoising Stack (SDXL / Flux / Video DiT)]
-       │        ├─ Level 1: Physics-Informed Attention (RealDiffusion)
-       │        │    Injects dissipative heat diffusion priors to suppress high-frequency noise drift.
+       │        ├─ Level 1: Dissipative Latent Smoothing (RealDiffusion)
+       │        │    Applies a Gaussian smoothing kernel during denoising to suppress high-frequency noise drift.
        │        ├─ Level 2: Shared Attention Matrix Masking (Accelerated TF)
        │        │    Applies cross-prompt masking to lock character identity keys/values across frames.
-       │        └─ Level 3: Spatiotemporal Architectural Priors (DreamingComics)
-       │             Inherits structural motion window constraints from native video transformer processing.
+       │        └─ Level 3: Sequential Latent Prior (DreamingComics)
+       │             Blends channel-wise latent statistics (mean, std) toward anchor distribution.
        │
        ▼
 [LATENT SPACE IMAGE CANVAS DATA]
@@ -85,12 +85,12 @@
 [COMPILED MASTER SHEET LAYOUT]
        │
        ▼
-[PHASE 8: EXPORT MODULE & ADAPTIVE RLHF SYSTEMS]
+[PHASE 8: EXPORT MODULE & ADAPTIVE PARAMETER OPTIMIZATION]
        │  ├─ File Compilation: Compiles raw layout vectors into final reader formats (PDF / CBZ / HTML).
        │  │
        │  └─ Human Alignment Telemetry Loop:
        │       Gathers explicit user interface performance rankings and rating feedback metrics.
        │       │
        │       ▼
-       └─► [SYSTEM BACKPROPAGATION OPTIMIZATION]
+       └─► [SYSTEM PARAMETER OPTIMIZATION]
                Executes weight adjustments to fine-tune COMIC LLM Critic evaluations and mutate prompt generation templates.

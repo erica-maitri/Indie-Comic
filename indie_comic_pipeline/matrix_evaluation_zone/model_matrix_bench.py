@@ -455,12 +455,12 @@ def compute_real_fid_score(generated_img_path):
         return round(float(real_fid_val), 2)
     except ImportError:
         print(f"FID computation skipped: 'torchmetrics' not installed. Run: pip install torchmetrics")
-        print("WARNING: Returning hardcoded fallback FID — install torchmetrics for real scores.")
-        return 32.40  # Verified mathematical system benchmark fallback
+        print("WARNING: Returning None for FID score.")
+        return None
     except Exception as e:
         print(f"FID computation warning: {e}")
-        print("WARNING: Returning hardcoded fallback FID — real computation failed.")
-        return 32.40  # Verified mathematical system benchmark fallback
+        print("WARNING: Returning None for FID score.")
+        return None
 
 # --- MAIN RUNNER ENGINE ---
 if __name__ == "__main__":

@@ -2,7 +2,9 @@ import os
 import base64
 import sys
 import json
+import uuid
 from io import BytesIO
+from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, render_template, request, jsonify, send_from_directory
 
 app = Flask(__name__)
@@ -39,20 +41,18 @@ def serve_outputs(filename):
 def index():
     return render_template('comic_generator.html')
 
-@app.route('/generate')
-def generate():
-    prompt = request.args.get('prompt', 'A superhero flying over the city')
-    style = request.args.get('style', 'manga')
-    character = request.args.get('character', 'Spider-Man')
-    world = request.args.get('world', 'Cyberpunk 2077')
-    
-    if PIPELINE_AVAILABLE and IntegratedComicPipeline is not None:
-        # Enable dry_run if CUDA is not available or if CPU-only mode is forced
-        dry_run = False
+# Global job registry and executor (max_workers=1 to prevent concurrent GPU VRAM overload)
+jobs = {}
+executor = ThreadPoolExecutor(max_workers=1)
+
+def run_generation_task(task_id, prompt, style, character, world):
+    """Background task to run the generation pipeline."""
+    try:
+        if PIPELINE_AVAILABLE and IntegratedComicPipeline is not None:
+            # Enable dry_run if CUDA is not available or if CPU-only mode is forced
+            dry_run = False
             
-        pipeline = IntegratedComicPipeline(dry_run=dry_run)
-        try:
-            # Generate a 1-page comic (which translates to 4 panels)
+            pipeline = IntegratedComicPipeline(dry_run=dry_run)
             result = pipeline.run(
                 prompt=prompt,
                 character_name=character,
@@ -66,21 +66,53 @@ def generate():
             image.save(buffered, format="PNG")
             img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
             
-            return jsonify({
+            jobs[task_id] = {
+                'status': 'completed',
                 'image': f"data:image/png;base64,{img_str}",
                 'prompt': prompt,
-                'feedback_url': f"/feedback/{hash(prompt)}"
-            })
-        except Exception as e:
-            return jsonify({'error': str(e)}), 500
-    else:
-        # Mock mode if pipeline isn't properly set up yet
-        return jsonify({
-            'image': '',
-            'prompt': prompt,
-            'feedback_url': f"/feedback/mock_123",
-            'error': 'Pipeline not available. Please ensure integrated_pipeline.py is in the parent directory.'
-        })
+                'feedback_url': f"/feedback/{task_id}"
+            }
+        else:
+            jobs[task_id] = {
+                'status': 'completed',
+                'image': '',
+                'prompt': prompt,
+                'feedback_url': f"/feedback/mock_123",
+                'error': 'Pipeline not available. Please ensure integrated_pipeline.py is in the parent directory.'
+            }
+    except Exception as e:
+        jobs[task_id] = {
+            'status': 'failed',
+            'error': str(e)
+        }
+
+
+@app.route('/generate')
+def generate():
+    prompt = request.args.get('prompt', 'A superhero flying over the city')
+    style = request.args.get('style', 'manga')
+    character = request.args.get('character', 'Spider-Man')
+    world = request.args.get('world', 'Cyberpunk 2077')
+    
+    task_id = uuid.uuid4().hex
+    jobs[task_id] = {
+        'status': 'pending'
+    }
+    
+    executor.submit(run_generation_task, task_id, prompt, style, character, world)
+    
+    return jsonify({
+        'status': 'pending',
+        'task_id': task_id
+    })
+
+
+@app.route('/status/<task_id>')
+def status(task_id):
+    job = jobs.get(task_id)
+    if not job:
+        return jsonify({'status': 'not_found', 'error': 'Task not found'}), 404
+    return jsonify(job)
 
 @app.route('/feedback/<panel_id>', methods=['POST'])
 def feedback(panel_id):
@@ -139,17 +171,17 @@ def feedback(panel_id):
             except Exception as e:
                 print(f"Failed to auto-train user preference critic: {e}")
                 
-            # 2. Run system optimizer and apply config adjustments
+            # 2. Run system feedback tuner and apply config adjustments
             try:
-                from core.optimizer import SystemOptimizer
+                from core.feedback_tuner import HeuristicFeedbackTuner
                 settings_path = os.path.join(WORKSPACE_ROOT, "config", "settings.yaml")
-                optimizer = SystemOptimizer(
+                tuner = HeuristicFeedbackTuner(
                     feedback_loop=feedback_loop,
                     settings_path=settings_path
                 )
-                adjusts = optimizer.optimize_system_parameters()
-                if optimizer.apply_optimizations(adjusts):
-                    print("[OK] Optimization adjustments successfully applied to configuration!")
+                adjusts = tuner.tune_from_feedback()
+                if tuner.apply_optimizations(adjusts):
+                    print("[OK] Tuning adjustments successfully applied to configuration!")
                 else:
                     print("Optimization adjustments evaluated, no config updates needed.")
             except Exception as e:

@@ -63,7 +63,7 @@ from core.quality_critic import QualityCritic
 from core.text_image_integrator import TextImageIntegrator
 from core.layout_engine import MangaFlowLayoutEngine
 from core.feedback import RLHFFeedbackLoop
-from core.optimizer import SystemOptimizer
+from core.feedback_tuner import HeuristicFeedbackTuner
 from core.advanced_attention import AdvancedAttentionManager
 from comic_exporter import ComicExporter
 
@@ -216,12 +216,88 @@ class IntegratedComicPipeline:
         self.feedback_loop = RLHFFeedbackLoop(
             feedback_path=os.path.join(self.output_dir, "rlhf_feedback.json")
         )
-        self.optimizer = SystemOptimizer(
+        self.feedback_tuner = HeuristicFeedbackTuner(
             feedback_loop=self.feedback_loop,
             settings_path=os.path.join(PROJECT_ROOT, "config", "settings.yaml")
         )
         
         self.exporter = ComicExporter(output_dir=self.output_dir)
+
+    def _generate_single_panel_with_retry(self, panel_id: int) -> Dict[str, Any]:
+        """Generate a single panel, execute the reject-regenerate loop, and apply typesetting."""
+        context = self.agent_coordinator.get_generation_context(panel_id)
+        scene_graph = context.get("scene_graph", {})
+    
+        dialogue = context.get("panel_dialogue", "...")
+        emotion = context.get("panel_emotion_beat", "neutral")
+        scene_desc = scene_graph.get("environment", "")
+        
+        retry = 0
+        max_retries = self.quality_critic.max_retries
+        panel_result = None
+    
+        while retry <= max_retries:
+            style_prompt = ""
+            negative_base = ""
+        
+            # Generate image
+            panel_result = self.panel_engine.generate_panel(
+                panel_id=panel_id,
+                context=context,
+                style_prompt=style_prompt,
+                negative_base=negative_base
+            )
+        
+            # Evaluate panel quality
+            evaluation = self.quality_critic.evaluate(panel_result, self.memory)
+        
+            if not self.quality_critic.should_regenerate(evaluation) or self.dry_run:
+                log.info(f"  Panel {panel_id} PASSED quality critic on try {retry + 1}")
+                break
+            else:
+                retry += 1
+                log.warning(f"  Panel {panel_id} FAILED quality critic. Verdict: {evaluation['verdict']}. Retrying ({retry}/{max_retries})...")
+                adjusts = evaluation.get("adjustments", {})
+                if "guidance_scale_delta" in adjusts:
+                    context["guidance_scale_override"] = 7.5 + adjusts["guidance_scale_delta"]
+                if "steps_delta" in adjusts:
+                    context["steps_override"] = 25 + adjusts["steps_delta"]
+                
+        if not panel_result:
+            raise RuntimeError(f"Failed to generate panel {panel_id} after {max_retries} retries.")
+                
+        log.info(f"  Phase 5: Overlaying text on Panel {panel_id}")
+        speaker_pos = "center"
+        if context.get("scene_graph", {}).get("characters"):
+            speaker_pos = context["scene_graph"]["characters"][0].get("position", "center")
+        
+        # Keep a copy of the raw generated image for dynamic layout typesetting
+        raw_img = panel_result.get("raw_image") or panel_result.get("image")
+        if raw_img is None:
+            raise ValueError(f"No image was generated for panel {panel_id}")
+        panel_result["raw_image"] = raw_img
+        
+        final_img = self.text_integrator.integrate(
+            image=raw_img,
+            dialogue=dialogue,
+            emotion_beat=emotion,
+            speaker_position=speaker_pos,
+            panel_id=panel_id,
+            scene_desc=scene_desc
+        )
+    
+        # Save visual output to disk and replace image in result
+        annotated_filename = f"panel_{panel_id:03d}_final.png"
+        annotated_path = os.path.join(self.panels_dir, annotated_filename)
+        final_img.save(annotated_path)
+     
+        panel_result["image"] = final_img
+        panel_result["image_path"] = annotated_path
+        panel_result["dialogue"] = dialogue
+        panel_result["emotion_beat"] = emotion
+        panel_result["page_num"] = self.memory.get_page_num(panel_id)
+        
+        return panel_result
 
     def run(self, prompt: str, character_name: str = "Wanderer",
             story_world: str = "The Abstract", panel_count: int = 4,
@@ -241,178 +317,142 @@ class IntegratedComicPipeline:
         **_kwargs
             Extra keyword arguments are silently ignored for forward compatibility.
         """
-        # Reset memory blackboard for a fresh run
-        self.memory = StorySectionMemory()
-        self.agent_coordinator.memory = self.memory
-        self.panel_engine.memory = self.memory
+        try:
+            # Reset memory blackboard for a fresh run
+            self.memory = StorySectionMemory()
+            self.agent_coordinator.memory = self.memory
+            self.panel_engine.memory = self.memory
 
-        log.info("=" * 80)
-        log.info("Starting Ultimate Indie Comic Generator Pipeline")
-        log.info("=" * 80)
+            log.info("=" * 80)
+            log.info("Starting Ultimate Indie Comic Generator Pipeline")
+            log.info("=" * 80)
 
-        # ── Phase 0: Story Intake (skipped when a pre-built story is supplied) ──
-        if _prebuilt_story is not None:
-            log.info("\n--- Phase 0: Story Intake [BYPASSED — using pre-built story] ---")
-            story_config = _prebuilt_story
-            # Patch panel_count from pre-built script if available
-            if "panels" in story_config:
-                panel_count = len(story_config["panels"])
-                log.info(f"[Phase 0] Using {panel_count} panels from pre-built story")
-        else:
-            log.info("\n--- Phase 0: Story Intake ---")
-            story_config = self.story_intake.process_prompt(
-                user_prompt=prompt,
-                panel_count=panel_count,
-                character_name=character_name,
-                story_world=story_world,
-                style_reference=style_reference,
-                character_characteristics=character_characteristics,
-                story_reference=story_reference,
-                mood_shifts=mood_shifts,
-                weave_mood=weave_mood
-            )
-
-        # Validate that story configuration has correct layout/format
-        if not story_config or "panels" not in story_config:
-            raise ValueError("Story intake failed to return a valid story configuration with panels.")
-        
-        # ── Phase 1: Multi-Agent Planning ──
-        log.info("\n--- Phase 1: Multi-Agent Planning ---")
-        self.agent_coordinator.run_planning(story_config)
-        log.info(f"Loaded emotional pacing arc beats: {self.memory.arc_beats}")
-        
-        # Save story plan overview
-        plan_path = os.path.join(self.output_dir, "storyboard_plan.json")
-        self.memory.save_checkpoint(plan_path)
-        log.info(f"Storyboard plan saved to: {plan_path}")
-        
-        # Iterate over all panels and generate with quality checks
-        panels_completed = []
-        total_panels = self.memory.total_panels
-        
-        log.info(f"\n--- Phases 2-6: Generation & Quality Control Loops ({total_panels} Panels) ---")
-        for panel_id in range(1, total_panels + 1):
-            context = self.agent_coordinator.get_generation_context(panel_id)
-            scene_graph = context.get("scene_graph", {})
-            
-            dialogue = context.get("panel_dialogue", "...")
-            emotion = context.get("panel_emotion_beat", "neutral")
-            scene_desc = scene_graph.get("environment", "")
-            # Reject & Regenerate Quality loop
-            retry = 0
-            max_retries = self.quality_critic.max_retries
-            panel_result = None
-            
-            while retry <= max_retries:
-                # Compile parameters and adjust based on critic deltas
-                style_prompt = ""
-                negative_base = ""
-                
-                # Generate image
-                panel_result = self.panel_engine.generate_panel(
-                    panel_id=panel_id,
-                    context=context,
-                    style_prompt=style_prompt,
-                    negative_base=negative_base
+            # ── Phase 0: Story Intake (skipped when a pre-built story is supplied) ──
+            if _prebuilt_story is not None:
+                log.info("\n--- Phase 0: Story Intake [BYPASSED — using pre-built story] ---")
+                story_config = _prebuilt_story
+                # Patch panel_count from pre-built script if available
+                if "panels" in story_config:
+                    panel_count = len(story_config["panels"])
+                    log.info(f"[Phase 0] Using {panel_count} panels from pre-built story")
+            else:
+                log.info("\n--- Phase 0: Story Intake ---")
+                story_config = self.story_intake.process_prompt(
+                    user_prompt=prompt,
+                    panel_count=panel_count,
+                    character_name=character_name,
+                    story_world=story_world,
+                    style_reference=style_reference,
+                    character_characteristics=character_characteristics,
+                    story_reference=story_reference,
+                    mood_shifts=mood_shifts,
+                    weave_mood=weave_mood
                 )
-                
-                # Evaluate panel quality
-                evaluation = self.quality_critic.evaluate(panel_result, self.memory)
-                
-                if not self.quality_critic.should_regenerate(evaluation) or self.dry_run:
-                    log.info(f"  Panel {panel_id} PASSED quality critic on try {retry + 1}")
-                    break
-                else:
-                    retry += 1
-                    log.warning(f"  Panel {panel_id} FAILED quality critic. Verdict: {evaluation['verdict']}. Retrying ({retry}/{max_retries})...")
-                    # Adjust parameters for the next try based on critic recommendations
-                    adjusts = evaluation.get("adjustments", {})
-                    if "guidance_scale_delta" in adjusts:
-                        context["guidance_scale_override"] = 7.5 + adjusts["guidance_scale_delta"]
-                    if "steps_delta" in adjusts:
-                        context["steps_override"] = 25 + adjusts["steps_delta"]
-                        
-            if not panel_result:
-                raise RuntimeError(f"Failed to generate panel {panel_id} after {max_retries} retries.")
-                        
-            # Once accepted, run Phase 5: Text-Image bubble overlay
-            log.info(f"  Phase 5: Overlaying text on Panel {panel_id}")
-            speaker_pos = "center"
-            if context.get("scene_graph", {}).get("characters"):
-                speaker_pos = context["scene_graph"]["characters"][0].get("position", "center")
-                
-            final_img = self.text_integrator.integrate(
-                image=panel_result["image"],
-                dialogue=dialogue,
-                emotion_beat=emotion,
-                speaker_position=speaker_pos,
-                panel_id=panel_id,
-                scene_desc=scene_desc
-            )
+
+            # Validate that story configuration has correct layout/format
+            if not story_config or "panels" not in story_config:
+                raise ValueError("Story intake failed to return a valid story configuration with panels.")
+        
+            # ── Phase 1: Multi-Agent Planning ──
+            log.info("\n--- Phase 1: Multi-Agent Planning ---")
+            self.agent_coordinator.run_planning(story_config)
+            log.info(f"Loaded emotional pacing arc beats: {self.memory.arc_beats}")
+        
+            # Save story plan overview
+            plan_path = os.path.join(self.output_dir, "storyboard_plan.json")
+            self.memory.save_checkpoint(plan_path)
+            log.info(f"Storyboard plan saved to: {plan_path}")
             
-            # Save visual output to disk and replace image in result
-            annotated_filename = f"panel_{panel_id:03d}_final.png"
-            annotated_path = os.path.join(self.panels_dir, annotated_filename)
-            final_img.save(annotated_path)
+            panels_completed = []
+            total_panels = self.memory.total_panels
+        
+            # Panel 1 (Anchor) must run first to establish consistency priors
+            log.info("\n--- Phase 2: Anchor Panel Generation (Sequential) ---")
+            panel_1_result = self._generate_single_panel_with_retry(1)
+            panels_completed.append(panel_1_result)
+            self.agent_coordinator.notify_panel_generated(panel_1_result)
             
-            panel_result["image"] = final_img
-            panel_result["image_path"] = annotated_path
-            panel_result["dialogue"] = dialogue
-            panel_result["emotion_beat"] = emotion
-            panel_result["page_num"] = self.memory.get_page_num(panel_id)
-            
-            panels_completed.append(panel_result)
-            self.agent_coordinator.notify_panel_generated(panel_result)
-            
-            # Save checkpoint to prevent memory loss
+            # Save mid-generation checkpoint for panel 1
             checkpoint_name = "storyboard_checkpoint_latest.json"
             checkpoint_path = os.path.join(self.output_dir, checkpoint_name)
             self.memory.save_checkpoint(checkpoint_path)
-            log.info(f"Saved mid-generation checkpoint for panel {panel_id} to: {checkpoint_path}")
+            log.info(f"Saved mid-generation checkpoint for panel 1 to: {checkpoint_path}")
             
-        # Clean up hooks and cached VRAM tensors
-        self.panel_engine.cleanup()
+            # Generate remaining panels (2 to N) in parallel
+            if total_panels > 1:
+                log.info(f"\n--- Generating Remaining {total_panels - 1} Panels in Parallel ---")
+                import concurrent.futures
+                
+                def _gen_task(pid):
+                    return self._generate_single_panel_with_retry(pid)
+                    
+                with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, total_panels - 1)) as executor:
+                    future_to_pid = {executor.submit(_gen_task, pid): pid for pid in range(2, total_panels + 1)}
+                    for future in concurrent.futures.as_completed(future_to_pid):
+                        pid = future_to_pid[future]
+                        try:
+                            res = future.result()
+                            panels_completed.append(res)
+                            self.agent_coordinator.notify_panel_generated(res)
+                            
+                            # Save mid-generation checkpoint for each completed panel
+                            self.memory.save_checkpoint(checkpoint_path)
+                            log.info(f"Saved mid-generation checkpoint for panel {pid} to: {checkpoint_path}")
+                        except Exception as exc:
+                            log.error(f"Panel {pid} generation generated an exception: {exc}")
+                            raise exc
             
-        # ── Phase 7: MangaFlow Page Assembly ──
-        log.info("\n--- Phase 7: MangaFlow Layout Page Assembly ---")
-        pages = []
+            # Sort panels by ID to restore sequential order
+            panels_completed.sort(key=lambda x: x["panel_id"])
+            
+            # Clean up hooks and cached VRAM tensors
+            self.panel_engine.cleanup()
+            
+            # ── Phase 7: MangaFlow Page Assembly ──
+            log.info("\n--- Phase 7: MangaFlow Layout Page Assembly ---")
+            pages = []
         
-        # Group panels by page
-        panels_by_page = {}
-        for p in panels_completed:
-            page_num = p["page_num"]
-            panels_by_page.setdefault(page_num, []).append(p)
+            # Group panels by page
+            panels_by_page = {}
+            for p in panels_completed:
+                page_num = p["page_num"]
+                panels_by_page.setdefault(page_num, []).append(p)
             
-        for page_num, page_panels in sorted(panels_by_page.items()):
-            page_image = self.layout_engine.layout_page(page_panels, page_num)
+            for page_num, page_panels in sorted(panels_by_page.items()):
+                page_image = self.layout_engine.layout_page(
+                    page_panels, page_num, text_integrator=self.text_integrator
+                )
             
-            # Save page layouts conforming to the naming pattern expected by compile_comic_pdf.py
-            page_path = os.path.join(self.output_dir, f"page_{page_num:03d}_layout_integrated.png")
-            page_image.save(page_path)
-            log.info(f"Saved assembled Page {page_num} to: {page_path}")
+                # Save page layouts conforming to the naming pattern expected by compile_comic_pdf.py
+                page_path = os.path.join(self.output_dir, f"page_{page_num:03d}_layout_integrated.png")
+                page_image.save(page_path)
+                log.info(f"Saved assembled Page {page_num} to: {page_path}")
             
-            pages.append({
-                "page_num": page_num,
-                "page_image": page_image,
-                "panels": page_panels
-            })
+                pages.append({
+                    "page_num": page_num,
+                    "page_image": page_image,
+                    "panels": page_panels
+                })
             
-        # ── Phase 8: Multi-Format Export ──
-        log.info("\n--- Phase 8: Exporting Formats ---")
-        cbz_path = self.exporter.export_cbz(pages, title=prompt[:30])
-        html_path = self.exporter.export_web_comic(pages, os.path.join(self.output_dir, "web_comic.html"))
-        pdf_path = self.exporter.export_pdf(pages, title=prompt[:30])
+            # ── Phase 8: Multi-Format Export ──
+            log.info("\n--- Phase 8: Exporting Formats ---")
+            cbz_path = self.exporter.export_cbz(pages, title=prompt[:30])
+            html_path = self.exporter.export_web_comic(pages, os.path.join(self.output_dir, "web_comic.html"))
+            pdf_path = self.exporter.export_pdf(pages, title=prompt[:30])
             
-        # Unload model selector backends to save GPU memory
-        self.backend_selector.unload_all()
+            # Unload model selector backends to save GPU memory
         
-        return {
-            "pages": pages,
-            "cbz_path": cbz_path,
-            "html_path": html_path,
-            "pdf_path": pdf_path,
-            "panels": panels_completed
-        }
+            return {
+                "pages": pages,
+                "cbz_path": cbz_path,
+                "html_path": html_path,
+                "pdf_path": pdf_path,
+                "panels": panels_completed
+            }
+
+        finally:
+            log.info("Ensuring GPU resources are cleaned up (unload all backends)...")
+            self.backend_selector.unload_all()
 
     def run_batch(self, start_panel: int, end_panel: int, prompt: str = "", character_name: str = "Wanderer",
                   story_world: str = "The Abstract", panel_count: int = 4,
@@ -445,47 +485,36 @@ class IntegratedComicPipeline:
         actual_end = min(end_panel, self.memory.total_panels)
 
         log.info(f"\n--- Generating Panels {start_panel} to {actual_end} ---")
-        for panel_id in range(start_panel, actual_end + 1):
-            context = self.agent_coordinator.get_generation_context(panel_id)
-            dialogue = context.get("panel_dialogue", "...")
-            emotion = context.get("panel_emotion_beat", "neutral")
+        start_idx = start_panel
+        # Panel 1 (Anchor) must run first if within range
+        if start_panel == 1:
+            log.info("\n--- Phase 2: Anchor Panel Generation (Sequential) ---")
+            panel_1_result = self._generate_single_panel_with_retry(1)
+            panels_completed.append(panel_1_result)
+            self.agent_coordinator.notify_panel_generated(panel_1_result)
+            start_idx = 2
             
-            retry = 0
-            max_retries = self.quality_critic.max_retries
-            panel_result = None
+        # Generate remaining panels in parallel
+        if actual_end >= start_idx:
+            log.info(f"\n--- Generating Remaining Panels {start_idx} to {actual_end} in Parallel ---")
+            import concurrent.futures
             
-            while retry <= max_retries:
-                panel_result = self.panel_engine.generate_panel(
-                    panel_id=panel_id, context=context, style_prompt="", negative_base=""
-                )
-                evaluation = self.quality_critic.evaluate(panel_result, self.memory)
-                if not self.quality_critic.should_regenerate(evaluation) or self.dry_run:
-                    break
-                else:
-                    retry += 1
-                    adjusts = evaluation.get("adjustments", {})
-                    if "guidance_scale_delta" in adjusts:
-                        context["guidance_scale_override"] = 7.5 + adjusts["guidance_scale_delta"]
-                    if "steps_delta" in adjusts:
-                        context["steps_override"] = 25 + adjusts["steps_delta"]
+            def _gen_task(pid):
+                return self._generate_single_panel_with_retry(pid)
+                
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, actual_end - start_idx + 1)) as executor:
+                future_to_pid = {executor.submit(_gen_task, pid): pid for pid in range(start_idx, actual_end + 1)}
+                for future in concurrent.futures.as_completed(future_to_pid):
+                    pid = future_to_pid[future]
+                    try:
+                        res = future.result()
+                        panels_completed.append(res)
+                        self.agent_coordinator.notify_panel_generated(res)
+                    except Exception as exc:
+                        log.error(f"Panel {pid} generation generated an exception: {exc}")
+                        raise exc
             
-            if not panel_result:
-                raise RuntimeError(f"Failed to generate panel {panel_id}")
-                        
-            final_img = self.text_integrator.integrate(
-                image=panel_result["image"], dialogue=dialogue, emotion_beat=emotion,
-                panel_id=panel_id, scene_desc=context.get("panel_visual")
-            )
-            
-            annotated_path = os.path.join(self.panels_dir, f"panel_{panel_id:03d}_final.png")
-            final_img.save(annotated_path)
-            panel_result["image"] = final_img
-            panel_result["image_path"] = annotated_path
-            panel_result["dialogue"] = dialogue
-            panel_result["emotion_beat"] = emotion
-            
-            panels_completed.append(panel_result)
-            self.agent_coordinator.notify_panel_generated(panel_result)
+        panels_completed.sort(key=lambda x: x["panel_id"])
             
         # Assemble Layouts for the generated panels
         pages = []
@@ -494,7 +523,9 @@ class IntegratedComicPipeline:
             panels_by_page.setdefault(p["page_num"], []).append(p)
             
         for page_num, page_panels in sorted(panels_by_page.items()):
-            page_image = self.layout_engine.layout_page(page_panels, page_num)
+            page_image = self.layout_engine.layout_page(
+                page_panels, page_num, text_integrator=self.text_integrator
+            )
             page_path = os.path.join(self.output_dir, f"page_{page_num:03d}_batch_integrated.png")
             page_image.save(page_path)
             pages.append({"page_num": page_num, "page_image": page_image, "panels": page_panels})
@@ -508,8 +539,8 @@ class IntegratedComicPipeline:
 
     def collect_interactive_feedback(self, run_results: Dict[str, Any], no_feedback: bool = False):
         """Collect rating and comments from the user for RLHF tracking."""
-        if self.dry_run or no_feedback:
-            log.info("RLHF skipped in dry-run mode or non-interactive environment")
+        if no_feedback:
+            log.info("RLHF feedback collection skipped.")
             return
 
         print("\n" + "=" * 70)
@@ -553,14 +584,14 @@ class IntegratedComicPipeline:
 
             # Suggest updates
             log.info("RLHF entries logged. Suggesting pipeline optimizations...")
-            adjusts = self.optimizer.optimize_system_parameters()
+            adjusts = self.feedback_tuner.tune_from_feedback()
             if adjusts.get("quality_critic_threshold_delta", 0.0) != 0.0:
                 log.info(f"Recommendation: Adjust quality threshold by {adjusts['quality_critic_threshold_delta']}")
             if adjusts.get("lora_scale_adjustment", 0.0) != 0.0:
                 log.info(f"Recommendation: Adjust LoRA scale by {adjusts['lora_scale_adjustment']}")
                 
             # Apply weight adjustments and mutate prompt templates
-            if self.optimizer.apply_optimizations(adjusts):
+            if self.feedback_tuner.apply_optimizations(adjusts):
                 log.info("[OK] Optimization adjustments successfully applied to configuration!")
             else:
                 log.info("Optimization adjustments evaluated, no config updates needed.")
@@ -725,7 +756,7 @@ def main():
                         
     args = parser.parse_args()
     
-    pipeline = IntegratedComicPipeline(model_override=args.model)
+    pipeline = IntegratedComicPipeline(model_override=args.model, dry_run=args.dry_run)
     
     results = pipeline.run(
         prompt=args.prompt,

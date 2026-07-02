@@ -390,7 +390,7 @@ print("Page layout assembled. Size:", page_image.size)""")
 from PIL import Image
 from comic_exporter import ComicExporter
 from core.feedback import RLHFFeedbackLoop
-from core.optimizer import SystemOptimizer
+from core.feedback_tuner import HeuristicFeedbackTuner
 
 exporter = ComicExporter(output_dir="outputs/comics")
 mock_page = {'page_num': 1, 'page_image': Image.new('RGB', (800, 1200), 'white'), 'panels': []}
@@ -404,15 +404,15 @@ feedback_path = "outputs/comics/test_rlhf_feedback.json"
 feedback = RLHFFeedbackLoop(feedback_path=feedback_path)
 feedback.add_panel_feedback(panel_id=1, rating=5, comment="Excellent style consistency!", prompt_used="...", generation_backend="sdxl")
 
-# Run optimizer
-optimizer = SystemOptimizer(feedback_loop=feedback, settings_path="config/settings.yaml")
-adjusts = optimizer.optimize_system_parameters()
+# Run feedback tuner
+tuner = HeuristicFeedbackTuner(feedback_loop=feedback, settings_path="config/settings.yaml")
+adjusts = tuner.tune_from_feedback()
 
-print("System Optimization Recommendations:")
+print("System Tuning Recommendations:")
 print(adjusts)
 
-print("Applying optimization adjustments back to configuration...")
-if optimizer.apply_optimizations(adjusts):
+print("Applying tuning adjustments back to configuration...")
+if tuner.apply_optimizations(adjusts):
     print("Success: Config updated successfully.")
 else:
     print("No configuration updates required.")""")

@@ -256,13 +256,19 @@ class PanelEngine:
         log.info(f"  [3] Backend selected: {backend.name}")
 
         # ── Step 3b: Install advanced attention hooks (once per pipeline) ──
-        if (self.advanced_attention and not self._hooks_installed
-                and hasattr(backend, "get_raw_pipeline")):
-            pipe = backend.get_raw_pipeline()
-            if pipe is not None:
-                self.advanced_attention.install_on_pipeline(pipe)
+        if self.advanced_attention and not self._hooks_installed:
+            # Check if backend provides cross-attention modules list directly (Backend Adapter Pattern)
+            modules = getattr(backend, "get_cross_attention_modules", lambda: [])()
+            if modules:
+                self.advanced_attention.install_on_modules(modules)
                 self._hooks_installed = True
-                log.info("  [3b] Advanced attention hooks installed on UNet")
+                log.info(f"  [3b] Advanced attention hooks installed on {len(modules)} modules (Backend Adapter)")
+            elif hasattr(backend, "get_raw_pipeline"):
+                pipe = backend.get_raw_pipeline()
+                if pipe is not None:
+                    self.advanced_attention.install_on_pipeline(pipe)
+                    self._hooks_installed = True
+                    log.info("  [3b] Advanced attention hooks installed on UNet (Fallback)")
 
         # ── Step 4: Apply consistency priors ──
         negative_prompt = self._build_negative(context, negative_base)

@@ -1,0 +1,19 @@
+generation:
+  guidance_scale: 7.5
+models:
+  lora:
+    adapter_scale: 0.8
+quality_critic:
+  threshold: 0.55
+  strict_threshold: 0.70
+  weights:
+    visual_consistency: 0.30
+    aesthetic_quality: 0.25
+    readability: 0.10
+    emotional_engagement: 0.15
+    narrative_coherence: 0.20
+style:
+  positive_terms:
+    - minimalist line art
+  negative_terms:
+    - photorealistic

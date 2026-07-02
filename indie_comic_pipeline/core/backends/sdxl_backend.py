@@ -250,5 +250,23 @@ class SDXLBackend(BaseBackend):
     def is_loaded(self) -> bool:
         return self._pipe is not None
 
+    def get_cross_attention_modules(self) -> list:
+        """Expose cross-attention modules for SDXL's UNet (Backend Adapter Pattern)."""
+        if self._pipe is None:
+            return []
+        model = getattr(self._pipe, "unet", None)
+        if model is None:
+            return []
+        
+        modules = []
+        count = 0
+        for name, module in model.named_modules():
+            # Target cross-attention (attn2) layers with projections
+            is_attn = ("attn2" in name or ("attn" in name and "attn1" not in name))
+            if is_attn and hasattr(module, "to_k") and count < 4:  # max_layers limit (default 4)
+                modules.append(module)
+                count += 1
+        return modules
+
     def get_vram_estimate_mb(self) -> int:
         return 6500  # ~6.5GB for SDXL FP16 with CPU offload

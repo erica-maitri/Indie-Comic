@@ -11,7 +11,7 @@ Generic generative AI workflows produce single disjointed images with no tempora
 1. **Deterministic Visual Consistency** - IP-Adapter cross-attention layers paired with custom SDXL LoRAs bind facial contours, hair, clothing, and accessories across angles, lighting shifts, and diverse poses.
 2. **8-Metric Visual Coherence Engine** - Mathematical consistency scoring using Structural SSIM, Gram Matrix texture matching, Canny Edge Density, DINOv2 identity embeddings, CLIP semantic similarity, HSV color histograms, Aesthetic score, and Thumbnail correlation.
 3. **Emotion-Driven Visual Language** - Every emotion beat (e.g. `heaviness`, `breakthrough`, `quiet_hope`) maps to a specific lighting setup, color palette, and atmospheric descriptor injected directly into the diffusion prompt.
-4. **Closed-Loop RLHF Optimization** - An Incremental Learner module implements an RLHF loop that tracks user ratings, back-propagates preferences into prompt templates, and adjusts quality thresholds and LoRA weights automatically.
+4. **Preference-Driven Configuration Optimization** - An Incremental Learner module implements a feedback loop that tracks user ratings, optimizes parameters for prompt templates, and adjusts quality thresholds and LoRA weights automatically (legacy code refers to this as the `RLHFFeedbackLoop`).
 5. **Universal Colab-Local Interoperability** - Optimized for low-VRAM deployment. Automatically scales memory and offloads tensors. Runs on a free Google Colab T4 GPU or locally on a standard consumer laptop.
 6. **Rich Multimedia Output** - Interactive HTML comics, CBZ/CBR archives, production-ready print PDFs, and per-panel voice-cast dialogue via TTS.
 
@@ -119,7 +119,7 @@ indie_comic_pipeline/
 |   |-- quality_critic.py              Phase 6: COMIC validation critic loop
 |   |-- layout_engine.py               Phase 7: MangaFlow page geometry engine
 |   |-- feedback.py                    Phase 8: RLHF telemetry and star rating logs
-|   |-- optimizer.py                   Phase 8: Parameter backpropagation optimizer
+|   |-- feedback_tuner.py              Phase 8: Heuristic feedback tuner
 |   |-- evaluation_suite.py            ModelEvaluator: FID, BLEU, CLIP, DINOv2, IoU
 |   +-- backends/
 |       |-- backend_selector.py        Selects optimal backend per panel context
@@ -192,19 +192,19 @@ Six specialized Director agents operate sequentially on a shared Memory Blackboa
 | EmotionDirector | Translates dialogue/action into facial features |
 | CameraDirector | Determines cinematic framing angle and size class |
 
-### Phase 2: Reference-Free Anchoring (core/anchoring.py)
+### Phase 2: Self-Referential Visual Anchoring (core/anchoring.py)
 
-Isolates the first generated panel as the Primary Visual Anchor. Extracts identity embedding tokens (color profile, edge density, Gram matrix style, optional CLIP/DINOv2 semantics). Injects tokens into Memory Blackboard for all subsequent panel generations.
+Isolates the first generated panel as the Primary Visual Anchor (Self-Reference). Extracts multi-scale visual identity features (HSV color profiles, edge densities, Gram matrices, and optional DINOv2/CLIP semantic embeddings). Injects these tokens into the Memory Blackboard for all subsequent panel generations.
 
 ### Phases 3 and 4: In-Generation Consistency (core/compositor.py, core/advanced_attention.py)
 
 **CharCom Compositor** dynamically blends model weights at runtime based on scene action intensity, character emotional state, and panel position in the story arc.
 
-**Advanced Attention Manager** applies three physics-informed mechanisms:
+**Advanced Attention Manager** applies three cross-panel consistency mechanisms:
 
-- **L1 Heat Diffusion Prior** - Gaussian kernel suppresses high-frequency noise drift between panels
-- **L2 Shared Attention Masking** - Blends anchor panel UNet K/V matrices into subsequent attention layers
-- **L3 Spatiotemporal Prior** - Enforces channel-wise latent statistics toward anchor distribution
+- **L1 Dissipative Latent Smoothing** - Applies a Gaussian smoothing kernel to suppress high-frequency noise drift between panels (referred to as `HeatDiffusionPrior` / `L1 Heat Diffusion` in the codebase).
+- **L2 Shared Attention Masking** - Blends anchor panel UNet K/V matrices into subsequent attention layers to lock facial contours and structural patterns.
+- **L3 Sequential Latent Prior** - Enforces channel-wise latent statistics (mean, std) toward the anchor distribution to prevent color/style shift (referred to as `SpatiotemporalConsistencyEnforcer` / `L3 Spatiotemporal` in the codebase).
 
 ### Phase 5: Integrated Text-Image Generation (core/text_image_integrator.py)
 
@@ -228,9 +228,9 @@ Failed panels trigger a reject-and-regenerate loop (max 2 retries) with adjusted
 
 MangaFlow Layout Engine arranges panels dynamically based on action intensity and size class. Full-page panels receive dominant canvas real estate. Gutters (12px), margins (40px), and page numbers are applied professionally. Replaces static 2x2 grids.
 
-### Phase 8: Export and Adaptive RLHF (core/feedback.py, core/optimizer.py)
+### Phase 8: Export and Adaptive Configuration Tuning (core/feedback.py, core/feedback_tuner.py)
 
-Exports to CBZ, interactive HTML scrollbook, and print-ready PDF. Interactive RLHF Telemetry Loop collects user star ratings (1-5) per panel. SystemOptimizer back-propagates preferences into positive/negative prompts, LoRA scale, guidance scale, and quality critic thresholds written directly to `config/settings.yaml`.
+Exports to CBZ, interactive HTML scrollbook, and print-ready PDF. The interactive feedback loop collects user star ratings (1-5) per panel. HeuristicFeedbackTuner applies iterative configuration adjustments to adjust positive/negative prompts, LoRA scale, guidance scale, and quality critic thresholds written directly to `config/settings.yaml` (legacy codebase refers to this as the `RLHF` and feedback tuning loop).
 
 ---
 

@@ -6,6 +6,8 @@ using the blackboard pattern. Runs them sequentially, merges their outputs
 into the Story Section Memory, and provides a unified planning interface.
 """
 
+import os
+import json
 import time
 import logging
 import copy
@@ -36,21 +38,55 @@ class AgentCoordinator:
     All agents read from and write to the shared StorySectionMemory blackboard.
     """
 
-    def __init__(self, memory: Optional[StorySectionMemory] = None):
+    def __init__(self, memory: Optional[StorySectionMemory] = None, agent_config_path: Optional[str] = None):
         self.memory = memory or StorySectionMemory()
-
-        # Initialize agents in execution order
-        self.agents: List[BaseAgent] = [
-            StoryDirector(),
-            ActionDirector(),
-            DialogueWriter(),
-            PoseDirector(),
-            EmotionDirector(),
-            CameraDirector()
-        ]
-
+        self.agents: List[BaseAgent] = []
+        
+        if agent_config_path is None:
+            agent_config_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 
+                "config", "agents.json"
+            )
+            
+        if os.path.exists(agent_config_path):
+            self.load_agents_from_config(agent_config_path)
+        else:
+            raise FileNotFoundError(f"Agent configuration file not found at {agent_config_path}")
+            
         self._planning_results: Dict[str, Any] = {}
         self._planning_time: float = 0.0
+
+    def register_agent(self, agent: BaseAgent):
+        """Register a custom director agent into the swarm planning pipeline."""
+        self.agents.append(agent)
+        log.info(f"Dynamically registered custom planning agent: {agent.name}")
+
+    def load_agents_from_config(self, config_path: str):
+        """
+        Dynamically instantiate and load agents from a JSON registry file.
+        Matches class names to objects in the director swarm.
+        """
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            
+            agent_names = cfg.get("swarm_agents", [])
+            if not agent_names:
+                raise ValueError(f"No 'swarm_agents' found in agent config: {config_path}")
+                
+            # Dynamic lookup table mapping name to class in core.agents.director_swarm
+            import core.agents.director_swarm as swarm_module
+            for name in agent_names:
+                cls = getattr(swarm_module, name, None)
+                if cls is not None and issubclass(cls, BaseAgent):
+                    self.register_agent(cls())  # type: ignore
+                else:
+                    log.warning(f"Could not find agent class {name} in director_swarm.")
+            if not self.agents:
+                raise ValueError("No valid agents were loaded from config.")
+        except Exception as e:
+            log.error(f"Failed to load dynamic agent registry: {e}")
+            raise
 
     def run_planning(self, story_config: Dict[str, Any]) -> StorySectionMemory:
         """
@@ -69,21 +105,59 @@ class AgentCoordinator:
         story_config = copy.deepcopy(story_config)
         start_time = time.time()
 
-        for agent in self.agents:
+        # Run StoryDirector and ActionDirector sequentially as they form the core dependency chain
+        story_agent = next((a for a in self.agents if a.__class__.__name__ == "StoryDirector"), None)
+        action_agent = next((a for a in self.agents if a.__class__.__name__ == "ActionDirector"), None)
+        
+        def _safe_run_agent(agent) -> Dict[str, Any]:
             agent_start = time.time()
             log.info(f"\n  Running {agent.name} agent...")
-
             try:
                 result = agent.plan(story_config, self.memory)
-                self._planning_results[agent.name] = result
-
                 agent_elapsed = time.time() - agent_start
                 log.info(f"  ✓ {agent.name} agent complete ({agent_elapsed:.2f}s)")
-
+                return result
             except Exception as e:
-                log.error(f"  ✗ {agent.name} agent failed: {e}")
-                self._planning_results[agent.name] = {"error": str(e)}
-                raise RuntimeError(f"Critical planning agent '{agent.name}' failed: {e}")
+                log.warning(f"  ✗ {agent.name} agent failed: {e}. Applying heuristic fallback.")
+                
+                # CameraDirector fallback: guarantee layout directives exist
+                if agent.__class__.__name__ == "CameraDirector" and hasattr(self.memory, "raw_panels") and self.memory.raw_panels:
+                    from core.memory import LayoutDirective
+                    for idx, panel in enumerate(self.memory.raw_panels):
+                        panel_id = panel.get("panel", idx + 1)
+                        if panel_id not in self.memory.layout_directives:
+                            self.memory.set_layout_directive(panel_id, LayoutDirective(
+                                panel_id=panel_id,
+                                size_class="medium",
+                                camera_angle="medium_shot"
+                            ))
+                return {"error": str(e)}
+
+        if story_agent:
+            self._planning_results[story_agent.name] = _safe_run_agent(story_agent)
+        if action_agent:
+            self._planning_results[action_agent.name] = _safe_run_agent(action_agent)
+
+        # Run remaining independent planning agents concurrently
+        independent_agents = [
+            a for a in self.agents 
+            if a != story_agent and a != action_agent
+        ]
+        
+        if independent_agents:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            with ThreadPoolExecutor(max_workers=len(independent_agents)) as executor:
+                future_to_agent = {
+                    executor.submit(_safe_run_agent, agent): agent
+                    for agent in independent_agents
+                }
+                for future in as_completed(future_to_agent):
+                    agent = future_to_agent[future]
+                    try:
+                        self._planning_results[agent.name] = future.result()
+                    except Exception as e:
+                        log.error(f"Agent {agent.name} crashed completely: {e}")
+                        self._planning_results[agent.name] = {"error": str(e)}
 
         self._planning_time = time.time() - start_time
 

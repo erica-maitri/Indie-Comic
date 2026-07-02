@@ -53,6 +53,7 @@
             font-weight: 700;
             background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple), var(--accent-pink));
             -webkit-background-clip: text;
+            background-clip: text;
             -webkit-text-fill-color: transparent;
             letter-spacing: -0.5px;
             margin-bottom: 8px;
@@ -276,6 +277,7 @@
             line-height: 1.4;
             display: -webkit-box;
             -webkit-line-clamp: 2;
+            line-clamp: 2;
             -webkit-box-orient: vertical;
             overflow: hidden;
         }
@@ -755,6 +757,7 @@
             img.style.display = 'none';
             feedbackBox.style.display = 'none';
             downloadLinks.style.display = 'none';
+            loadingText.innerText = 'Initializing comic engine...';
 
             const character = encodeURIComponent(document.getElementById('character').value);
             const world = encodeURIComponent(document.getElementById('world').value);
@@ -765,25 +768,72 @@
                 const response = await fetch(`/generate?character=${character}&world=${world}&prompt=${prompt}&style=${style}`);
                 const data = await response.json();
 
-                if(data.error) {
+                if (data.error) {
                     alert('Error: ' + data.error);
-                } else if(data.image) {
+                    spinner.style.display = 'none';
+                    loadingText.style.display = 'none';
+                    btn.disabled = false;
+                    return;
+                }
+
+                if (data.status === 'pending' && data.task_id) {
+                    const taskId = data.task_id;
+                    loadingText.innerText = 'Generating comic storyboard & panels (this may take up to 2 minutes)...';
+                    
+                    // Poll task status every 2.5 seconds
+                    const pollInterval = setInterval(async () => {
+                        try {
+                            const statusResponse = await fetch(`/status/${taskId}`);
+                            const statusData = await statusResponse.json();
+                            
+                            if (statusData.status === 'completed') {
+                                clearInterval(pollInterval);
+                                if (statusData.error) {
+                                    alert('Error during generation: ' + statusData.error);
+                                } else if (statusData.image) {
+                                    img.src = statusData.image;
+                                    img.style.display = 'block';
+                                    currentFeedbackUrl = statusData.feedback_url;
+                                    feedbackBox.style.display = 'block';
+                                    downloadLinks.style.display = 'flex';
+                                    await loadComicData();
+                                }
+                                spinner.style.display = 'none';
+                                loadingText.style.display = 'none';
+                                btn.disabled = false;
+                            } else if (statusData.status === 'failed') {
+                                clearInterval(pollInterval);
+                                alert('Generation failed: ' + (statusData.error || 'Unknown error'));
+                                spinner.style.display = 'none';
+                                loadingText.style.display = 'none';
+                                btn.disabled = false;
+                            }
+                        } catch (pollErr) {
+                            clearInterval(pollInterval);
+                            alert('Failed to check task status.');
+                            spinner.style.display = 'none';
+                            loadingText.style.display = 'none';
+                            btn.disabled = false;
+                        }
+                    }, 2500);
+                } else if (data.image) {
                     img.src = data.image;
                     img.style.display = 'block';
                     currentFeedbackUrl = data.feedback_url;
                     feedbackBox.style.display = 'block';
                     downloadLinks.style.display = 'flex';
-                    
-                    // Reload workspace panels lists
                     await loadComicData();
+                    
+                    spinner.style.display = 'none';
+                    loadingText.style.display = 'none';
+                    btn.disabled = false;
                 }
             } catch (err) {
                 alert('Generation failed. Ensure backend is running.');
+                spinner.style.display = 'none';
+                loadingText.style.display = 'none';
+                btn.disabled = false;
             }
-
-            spinner.style.display = 'none';
-            loadingText.style.display = 'none';
-            btn.disabled = false;
         }
 
         // 4. Load Panels Data for Interactive Editor

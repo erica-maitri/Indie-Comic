@@ -48,10 +48,11 @@ class BackendSelector:
     Implements a fallback chain: preferred → SDXL → error
     """
 
-    def __init__(self, config: Dict[str, Any] = None):
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
         self._config = config or {}
         self._backends: Dict[str, BaseBackend] = {}
         self._active_backend: Optional[str] = None
+        self._model_config: Dict[str, Any] = {}
 
         # User override: force a specific backend for all panels
         self._force_backend = self._config.get("force_backend", None)
@@ -61,9 +62,27 @@ class BackendSelector:
         self._backends[name] = backend
         log.info(f"Registered backend: {name} ({backend.name})")
 
+    def _ensure_backend_loaded(self, name: str, backend: BaseBackend):
+        """Loads the weights for the specified backend lazily if not already loaded."""
+        if not backend.is_loaded():
+            log.info(f"Lazily loading model weights for backend: {name} ({backend.name})...")
+            model_config = self._model_config
+            sdxl_config = {
+                "model_name": model_config.get("sdxl", {}).get("name",
+                             "stabilityai/stable-diffusion-xl-base-1.0"),
+                "lora_name": model_config.get("lora", {}).get("name"),
+                "lora_scale": model_config.get("lora", {}).get("adapter_scale", 0.8),
+                "device": model_config.get("sdxl", {}).get("device", "cuda"),
+                "enable_cpu_offload": model_config.get("sdxl", {}).get("cpu_offload", True),
+                "enable_attention_slicing": True,
+                "enable_vae_slicing": True,
+                "safety_checker": False,
+            }
+            backend.load(sdxl_config)
+
     def select(self, context: Dict[str, Any]) -> BaseBackend:
         """
-        Select the best backend for a given panel context.
+        Select the best backend for a given panel context, loading it dynamically if needed.
 
         Args:
             context: Generation context from AgentCoordinator
@@ -74,7 +93,8 @@ class BackendSelector:
         # User override
         if self._force_backend:
             backend = self._backends.get(self._force_backend)
-            if backend and backend.is_loaded():
+            if backend:
+                self._ensure_backend_loaded(self._force_backend, backend)
                 return backend
             log.warning(f"Forced backend '{self._force_backend}' not available, using fallback")
 
@@ -89,52 +109,43 @@ class BackendSelector:
 
         # Try preferred backend
         backend = self._backends.get(preferred)
-        if backend and backend.is_loaded():
+        if backend:
+            self._ensure_backend_loaded(preferred, backend)
             log.debug(f"Selected backend: {preferred} for ({size_class}, {camera_angle})")
             return backend
 
         # Fallback to SDXL
         sdxl = self._backends.get("sdxl")
-        if sdxl and sdxl.is_loaded():
+        if sdxl:
+            self._ensure_backend_loaded("sdxl", sdxl)
             log.debug(f"Fallback to SDXL (preferred '{preferred}' not available)")
             return sdxl
 
-        # Emergency: try any loaded backend
+        # Emergency: try any registered backend
         for name, b in self._backends.items():
-            if b.is_loaded():
-                log.warning(f"Emergency fallback to '{name}'")
-                return b
+            self._ensure_backend_loaded(name, b)
+            log.warning(f"Emergency fallback to '{name}'")
+            return b
 
         raise RuntimeError("No loaded backends available for generation")
 
     def initialize_backends(self, model_config: Dict[str, Any]):
         """
-        Initialize and load available backends based on configuration.
+        Initialize available backends based on configuration without loading weights.
 
         Args:
             model_config: Model configuration from settings.yaml
         """
-        # Always initialize SDXL
+        self._model_config = model_config
+        
+        # Instantiate SDXL Backend
         sdxl = SDXLBackend()
-        sdxl_config = {
-            "model_name": model_config.get("sdxl", {}).get("name",
-                         "stabilityai/stable-diffusion-xl-base-1.0"),
-            "lora_name": model_config.get("lora", {}).get("name"),
-            "lora_scale": model_config.get("lora", {}).get("adapter_scale", 0.8),
-            "device": model_config.get("sdxl", {}).get("device", "cuda"),
-            "enable_cpu_offload": model_config.get("sdxl", {}).get("cpu_offload", True),
-            "enable_attention_slicing": True,
-            "enable_vae_slicing": True,
-            "safety_checker": False,
-        }
-        sdxl.load(sdxl_config)
         self.register_backend("sdxl", sdxl)
 
-        # Initialize Flux if not disabled
+        # Instantiate Flux Backend if enabled
         enable_flux = model_config.get("flux", {}).get("enabled", False)
         if enable_flux:
             flux = FluxBackend()
-            flux.load(sdxl_config)  # Uses SDXL fallback internally
             self.register_backend("flux", flux)
 
     def unload_all(self):

@@ -63,6 +63,13 @@ class BaseBackend(ABC):
         """Check if the model is currently loaded."""
         ...
 
+    def get_cross_attention_modules(self) -> list:
+        """
+        Expose cross-attention modules for consistency hook installation.
+        Overridden by backends that support hooks natively (Backend Adapter Pattern).
+        """
+        return []
+
     def get_vram_estimate_mb(self) -> int:
         """Estimated VRAM usage in MB. Override in subclasses."""
         return 0

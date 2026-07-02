@@ -8,8 +8,9 @@ focal crop fitting.
 """
 
 import os
+import random
 import logging
-from typing import List, Dict, Any, Tuple
+from typing import Dict, Any, List, Optional, Tuple
 from PIL import Image, ImageDraw, ImageFont
 
 log = logging.getLogger("pipeline.layout_engine")
@@ -35,13 +36,14 @@ class MangaFlowLayoutEngine:
         self.margin = margin
         self.bg_color = bg_color
 
-    def layout_page(self, panels: List[Any], page_num: int) -> Image.Image:
+    def layout_page(self, panels: List[Any], page_num: int, text_integrator: Optional[Any] = None) -> Image.Image:
         """
         Dynamically layouts panel images onto a single comic page.
         
         Args:
             panels: List of dicts or PIL Images representing panels on this page.
             page_num: Page number for typesetting
+            text_integrator: Optional TextImageIntegrator to apply bubble annotations after panel crop
             
         Returns:
             Assembled PIL Image of the page
@@ -79,15 +81,32 @@ class MangaFlowLayoutEngine:
             if i >= len(boxes):
                 break
                 
-            panel_img = panel.get("image")
+            # Fit the raw unannotated image first if available, otherwise fallback to image
+            panel_img = panel.get("raw_image") or panel.get("image")
             if panel_img is None:
                 continue
                 
             box = boxes[i]  # (x, y, w, h)
             bx, by, bw, bh = box
             
-            # Resize and crop panel image to fit the box aspect ratio
+            # Resize and crop panel image to fit the box aspect ratio (focal crop)
             fitted_img = self._fit_image_to_box(panel_img, bw, bh)
+            
+            # Typeset bubbles AFTER crop and resize to prevent bubble clipping (Typesetting Ordering Fix)
+            if text_integrator is not None:
+                dialogue = panel.get("dialogue")
+                emotion = panel.get("emotion_beat") or panel.get("emotion", "neutral")
+                speaker_pos = panel.get("speaker_position") or "center"
+                panel_id = panel.get("panel_id", 0)
+                
+                # Apply speech bubble overlay on the final fitted canvas
+                fitted_img = text_integrator.integrate(
+                    image=fitted_img,
+                    dialogue=dialogue,
+                    emotion_beat=emotion,
+                    speaker_position=speaker_pos,
+                    panel_id=panel_id
+                )
             
             # Paste onto page
             page.paste(fitted_img, (bx, by))
@@ -256,7 +275,7 @@ class MangaFlowLayoutEngine:
         if img_aspect > box_aspect:
             # Image is too wide, fit height and crop sides
             new_h = bh
-            new_w = int(bh * img_w // img_h)
+            new_w = bh * img_w // img_h
             resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
             
             # Crop horizontal center
@@ -265,7 +284,7 @@ class MangaFlowLayoutEngine:
         else:
             # Image is too tall, fit width and crop top/bottom
             new_w = bw
-            new_h = int(bw * img_h // img_w)
+            new_h = bw * img_h // img_w
             resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
             
             # Crop vertical center

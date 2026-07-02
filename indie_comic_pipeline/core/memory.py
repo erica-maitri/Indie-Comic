@@ -16,8 +16,67 @@ from typing import Dict, List, Optional, Any, Tuple
 from pathlib import Path
 
 
+class BlackboardValidatorMixin:
+    """Provides automatic write-time schema type verification using class annotations."""
+    def __setattr__(self, name, value):
+        annotations = getattr(self, "__annotations__", {})
+        if name in annotations:
+            expected_type = annotations[name]
+            from typing import get_origin, get_args, Union
+            origin = get_origin(expected_type)
+            
+            # Allow None if expected_type is Optional or Union with None
+            if value is None:
+                if origin is Union:
+                    args = get_args(expected_type)
+                    if type(None) in args:
+                        super().__setattr__(name, value)
+                        return
+                elif expected_type is Any:
+                    super().__setattr__(name, value)
+                    return
+                else:
+                    raise TypeError(f"Attribute '{name}' does not allow None values.")
+            
+            if origin is not None:
+                if origin is Union:
+                    args = get_args(expected_type)
+                    valid = False
+                    for arg in args:
+                        arg_origin = get_origin(arg)
+                        if arg_origin is not None:
+                            if isinstance(value, arg_origin):
+                                valid = True
+                                break
+                        elif arg is not Any and isinstance(value, arg):
+                            valid = True
+                            break
+                        elif arg is Any:
+                            valid = True
+                            break
+                    if not valid:
+                        raise TypeError(f"Attribute '{name}' must be one of types {args}, got {type(value)}")
+                elif origin in (list, List):
+                    if not isinstance(value, list):
+                        raise TypeError(f"Attribute '{name}' must be a list, got {type(value)}")
+                elif origin in (dict, Dict):
+                    if not isinstance(value, dict):
+                        raise TypeError(f"Attribute '{name}' must be a dictionary, got {type(value)}")
+                elif origin in (tuple, Tuple):
+                    if not isinstance(value, tuple):
+                        raise TypeError(f"Attribute '{name}' must be a tuple, got {type(value)}")
+            else:
+                if expected_type is float:
+                    if not isinstance(value, (int, float)):
+                        raise TypeError(f"Attribute '{name}' must be float/int, got {type(value)}")
+                elif expected_type is not Any:
+                    if not isinstance(value, expected_type):
+                        raise TypeError(f"Attribute '{name}' must be of type {expected_type}, got {type(value)}")
+        super().__setattr__(name, value)
+
+
 @dataclass
-class CharacterState:
+class CharacterState(BlackboardValidatorMixin):
     """Tracks a single character's state across panels."""
     name: str
     emotion: str = "neutral"
@@ -37,7 +96,7 @@ class CharacterState:
 
 
 @dataclass
-class SceneState:
+class SceneState(BlackboardValidatorMixin):
     """Tracks environment / scene state for spatial continuity."""
     location: str = ""
     time_of_day: str = "day"
@@ -52,7 +111,7 @@ class SceneState:
 
 
 @dataclass
-class PanelRecord:
+class PanelRecord(BlackboardValidatorMixin):
     """Immutable record of a generated panel."""
     panel_id: int
     page_num: int
@@ -80,7 +139,7 @@ class PanelRecord:
 
 
 @dataclass
-class LayoutDirective:
+class LayoutDirective(BlackboardValidatorMixin):
     """Layout hints for the assembly engine, produced by the Layout Agent."""
     panel_id: int
     size_class: str = "medium"         # "small", "medium", "large", "full_page"
@@ -93,47 +152,56 @@ class LayoutDirective:
         return asdict(self)
 
 
-class StorySectionMemory:
+class StorySectionMemory(BlackboardValidatorMixin):
     """
     Explicit RAM Blackboard — the central shared memory for the multi-agent system.
 
     All agents read from and write to this blackboard. The Panel Engine pulls
     context from here to construct generation prompts, and writes back features
     extracted from generated images.
-
-    Supports:
-    - Character state tracking with identity tokens
-    - Scene/environment continuity
-    - Panel history with configurable retention window
-    - Layout directives per panel
-    - Story arc tracking (mood journey, beats)
-    - Serialization to/from JSON for checkpointing
     """
+    characters: Dict[str, CharacterState]
+    scene: SceneState
+    panel_history: List[PanelRecord]
+    layout_directives: Dict[int, LayoutDirective]
+    story_config: Dict[str, Any]
+    mood_journey: str
+    recurring_motif: str
+    arc_beats: List[str]
+    current_beat_index: int
+    main_character: Optional[str]
+    page_plans: List[Dict[str, Any]]
+    raw_panels: List[Dict[str, Any]]
+    total_panels: int
+    total_pages: int
+    anchor_panel_id: Optional[int]
+    anchor_features: Optional[Dict[str, Any]]
+    retention_window: int
 
     def __init__(self, retention_window: int = 20):
         # ── Core State ──
-        self.characters: Dict[str, CharacterState] = {}
-        self.scene: SceneState = SceneState()
-        self.panel_history: List[PanelRecord] = []
-        self.layout_directives: Dict[int, LayoutDirective] = {}
+        self.characters = {}
+        self.scene = SceneState()
+        self.panel_history = []
+        self.layout_directives = {}
 
         # ── Story Arc ──
-        self.story_config: Dict[str, Any] = {}
-        self.mood_journey: str = ""
-        self.recurring_motif: str = ""
-        self.arc_beats: List[str] = []
-        self.current_beat_index: int = 0
-        self.main_character: Optional[str] = None
+        self.story_config = {}
+        self.mood_journey = ""
+        self.recurring_motif = ""
+        self.arc_beats = []
+        self.current_beat_index = 0
+        self.main_character = None
 
         # ── Planning Data ──
-        self.page_plans: List[Dict[str, Any]] = []   # Storyboard Agent output
-        self.raw_panels: List[Dict[str, Any]] = []   # Un-enriched/base panels from Intake
-        self.total_panels: int = 0
-        self.total_pages: int = 0
+        self.page_plans = []
+        self.raw_panels = []
+        self.total_panels = 0
+        self.total_pages = 0
 
         # ── Identity Anchor ──
-        self.anchor_panel_id: Optional[int] = None
-        self.anchor_features: Optional[Dict[str, Any]] = None
+        self.anchor_panel_id = None
+        self.anchor_features = None
 
         # ── Configuration ──
         self.retention_window = retention_window

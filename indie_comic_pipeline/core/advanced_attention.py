@@ -194,6 +194,27 @@ class SharedAttentionCache:
             log.debug(f"  [L2-Attn] Hook installation failed: {e}")
             return False
 
+    def install_on_modules(self, modules: list) -> bool:
+        """Register forward hooks directly on a list of cross-attention modules (Backend Adapter)."""
+        if not self.enabled:
+            return False
+            
+        self.remove_hooks()
+        count = 0
+        try:
+            for module in modules:
+                if count < self.max_layers:
+                    handle = module.register_forward_hook(self._hook_fn)
+                    self._hooks.append(handle)
+                    count += 1
+            if count > 0:
+                log.info(f"  [L2-Attn] Hooks installed directly on {count} attention modules.")
+                return True
+            return False
+        except Exception as e:
+            log.warning(f"  [L2-Attn] Hook installation directly on modules failed: {e}")
+            return False
+
     def remove_hooks(self):
         """Deregister all installed hooks and clear cached tensors to free VRAM."""
         for h in self._hooks:
@@ -208,15 +229,16 @@ class SharedAttentionCache:
         """Forward hook: capture or blend attention outputs by module reference."""
         try:
             if self._capture_mode and len(self._cached_outputs) < self.max_layers:
-                # Store a detached copy of the output tensor mapped directly by module
-                import torch
-                self._cached_outputs[module] = output.detach().clone()
+                # Offload cached tensor to CPU pinned memory to save VRAM on T4 GPUs
+                self._cached_outputs[module] = output.detach().cpu().pin_memory()
 
             elif self._apply_mode and module in self._cached_outputs:
                 # Blend: output = (1 − β) * output + β * cached
                 cached = self._cached_outputs[module]
                 if cached.shape == output.shape:
-                    blended = (1 - self.blend_ratio) * output + self.blend_ratio * cached.to(output.device)
+                    # Asynchronously prefetch cached tensor to the GPU device to minimize PCIe transfer latency
+                    cached_device = cached.to(device=output.device, dtype=output.dtype, non_blocking=True)
+                    blended = (1 - self.blend_ratio) * output + self.blend_ratio * cached_device
                     return blended
         except Exception:
             pass  # Silently skip on shape mismatch or device issues
@@ -410,6 +432,12 @@ class AdvancedAttentionManager:
         except Exception as e:
             log.debug(f"  [AdvAttn] Hook install failed: {e}")
             return False
+
+    def install_on_modules(self, modules: list) -> bool:
+        """Install L2 attention hooks directly on given modules (Backend Adapter)."""
+        if not self.enabled:
+            return False
+        return self.attn_cache.install_on_modules(modules)
 
     def remove_hooks(self):
         self.attn_cache.remove_hooks()

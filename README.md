@@ -31,9 +31,9 @@ The pipeline uses a rigorous, sequential **8-Phase Architecture** to turn an emo
     * **Camera Director:** Dictates framing layouts (camera angle, environment variables).
 * **Shared Storage:** All agents read from and write to the shared **Story Section Memory** (Explicit RAM Blackboard), which tracks active character states, visual anchors, scene settings, and layout plans.
 
-### [PHASE 2: REFERENCE-FREE ANCHORING]
+### [PHASE 2: SELF-REFERENTIAL VISUAL ANCHORING]
 * **Step 2.1:** Pulls initial context prompts from memory to execute Panel 1 Generation.
-* **Step 2.2:** Isolates Panel 1 to serve as the baseline Primary Visual Anchor.
+* **Step 2.2:** Isolates Panel 1 to serve as the baseline Primary Visual Anchor (Self-Reference).
 * **Step 2.3:** Runs Identity Embedding Extraction to capture raw facial topology, wardrobe, and style markers.
 * **Step 2.4:** Injects extracted identity tracking tokens directly back into the Story Section Memory cache.
 
@@ -41,9 +41,9 @@ The pipeline uses a rigorous, sequential **8-Phase Architecture** to turn an emo
 * **Action:** Sequentially generates panels 2 through N by pulling context and tokens from memory.
     * **CharCom Inference Compositor:** Calculates dynamic model weight blending at runtime: `W_total = W_base + Σ(α_i * W_i)`
     * **Multi-Backend Diffusion Denoising Stack (SDXL / Flux / Video DiT):**
-        * **Level 1:** Physics-Informed Attention (RealDiffusion). Injects dissipative heat diffusion priors to suppress high-frequency noise drift.
+        * **Level 1:** Dissipative Latent Smoothing (RealDiffusion). Applies a Gaussian smoothing kernel during denoising to suppress high-frequency noise drift (referred to as `HeatDiffusionPrior` in code).
         * **Level 2:** Shared Attention Matrix Masking (Accelerated TF). Applies cross-prompt masking to lock character identity keys/values across frames.
-        * **Level 3:** Spatiotemporal Architectural Priors (DreamingComics). Inherits structural motion window constraints from native video transformer processing.
+        * **Level 3:** Sequential Latent Prior (DreamingComics). Blends channel-wise latent statistics (mean, std) toward the anchor distribution (referred to as `SpatiotemporalConsistencyEnforcer` in code).
 
 ### [PHASE 5: INTEGRATED TEXT-IMAGE GENERATION]
 * **Action:** Processed latents are fed into the DiffSensei MLLM Domain.
@@ -61,10 +61,10 @@ The pipeline uses a rigorous, sequential **8-Phase Architecture** to turn an emo
 * **Processing:** Dynamically cuts border geometry channels depending on scene action intensity.
 * **Execution:** Runs typesetting algorithms to lock vector narrative speech bubbles based on focal subjects, creating the Compiled Master Sheet Layout.
 
-### [PHASE 8: EXPORT MODULE & ADAPTIVE RLHF SYSTEMS]
+### [PHASE 8: EXPORT MODULE & ADAPTIVE PARAMETER OPTIMIZATION]
 * **File Compilation:** Compiles raw layout vectors into final reader formats (PDF / CBZ / HTML).
 * **Human Alignment Telemetry Loop:** Gathers explicit user interface performance rankings and rating feedback metrics.
-* **System Backpropagation Optimization:** Executes weight adjustments to fine-tune COMIC LLM Critic evaluations and mutate prompt generation templates.
+* **System Parameter Optimization:** Executes weight adjustments to fine-tune COMIC LLM Critic evaluations and mutate prompt generation templates.
 
 ---
 

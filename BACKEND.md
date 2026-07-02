@@ -29,12 +29,12 @@ graph TD
     
     subgraph ICP_Phases [Indie Comic Pipeline - 8 Phases]
         P0[Phase 0: Story Intake Engine] --> P1[Phase 1: Multi-Agent Planning]
-        P1 --> P2[Phase 2: Reference-Free Anchoring]
-        P2 --> P3[Phase 3 & 4: Compositor & Advanced Attention]
+        P1 --> P2[Phase 2: Self-Referential Visual Anchoring]
+        P2 --> P3[Phase 3 & 4: Compositor & Sequential Latent Prior]
         P3 --> P5[Phase 5: DiffSensei Typesetting]
         P5 --> P6[Phase 6: Quality Critic Loop]
         P6 --> P7[Phase 7: MangaFlow Layout Assembly]
-        P7 --> P8[Phase 8: Export & RLHF Feedback]
+        P7 --> P8[Phase 8: Export & Config Optimization]
     end
     
     ICP -->|CBZ / PDF / HTML| Output([Compiled Comic Book])
@@ -61,8 +61,8 @@ graph TD
 ### C. Indie Comic Pipeline (Visual Panel Renderer & Publisher)
 * **Operational Flow**: Reads a structured `story_dynamic.json` output by Story Weaver or uses its internal LLM intake to construct panel instructions.
 * **Director Swarm**: Evaluates and schedules panel-by-panel generation requirements using dedicated agents (Story, Action, Dialogue, Pose, Emotion, Camera Directors).
-* **Reference-Free Anchoring**: Generates Panel 1 first, extracts character identity tokens, and caches them in the memory blackboard.
-* **Denoising & Consistency**: Blends custom LoRA scaling weights dynamically per frame (`CharCom`) and routes spatial-temporal attention layers across steps to lock identity details.
+* **Self-Referential Visual Anchoring**: Generates Panel 1 first, extracts multi-scale visual identity features (HSV color profiles, edge densities, Gram matrices, DINOv2/CLIP semantics), and caches them in the memory blackboard.
+* **Denoising & Consistency**: Blends custom LoRA scaling weights dynamically per frame (`CharCom`) and routes cross-panel latent alignment priors (Gaussian Latent Smoothing and Sequential Latent Prior) across denoising steps to lock identity details.
 * **Layout Engine (MangaFlow)**: Generates high-impact pane structures and typesetting bubble placements based on script dialogue and action levels.
 
 ---
@@ -160,9 +160,9 @@ Primary Label ("sadness") + Panel Count (6)
 story_dynamic.json
   --> [StoryIntakeEngine]
   --> [AgentCoordinator Swarm Planning] -> populates StorySectionMemory
-  --> [PanelEngine Generation Stack]
-        |--> Panel 1 Anchor Base -> identity_tokens extracted
-        |--> Panels 2-N -> blend identity_tokens + CharCom LoRA scales + Attention masks
+  --> [PanelEngine Denoising Stack]
+        |--> Panel 1 Base -> self-referential identity descriptors extracted
+        |--> Panels 2-N -> blend descriptors + CharCom LoRA scales + latent smoothing & sequential priors
   --> [QualityCritic Check] (Retries if composite score < threshold)
   --> [MangaFlow Assembly & typesetting]
   --> Output (CBZ, HTML, PDF)
