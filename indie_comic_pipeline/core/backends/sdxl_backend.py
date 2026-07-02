@@ -193,7 +193,8 @@ class SDXLBackend(BaseBackend):
                     tokenizer=[self._pipe.tokenizer, self._pipe.tokenizer_2],
                     text_encoder=[self._pipe.text_encoder, self._pipe.text_encoder_2],
                     returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED,
-                    requires_pooled=[False, True]
+                    requires_pooled=[False, True],
+                    device=self._pipe.device
                 )
             
             # Encode prompt
