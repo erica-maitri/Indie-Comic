@@ -68,12 +68,61 @@ from core.advanced_attention import AdvancedAttentionManager
 from comic_exporter import ComicExporter
 
 
+class MockBackend(BaseBackend):
+    """
+    Mock Backend used in dry-run mode.
+    Renders deterministic placeholder PIL images with prompt text overlay.
+    """
+    def __init__(self):
+        self._loaded = False
+
+    @property
+    def name(self) -> str:
+        return "Mock"
+
+    @property
+    def supports_lora(self) -> bool:
+        return False
+
+    def load(self, config: Dict[str, Any]):
+        self._loaded = True
+
+    def generate(self, prompt: str, negative_prompt: str,
+                 config: Dict[str, Any]) -> Image.Image:
+        width = config.get("width", 768)
+        height = config.get("height", 768)
+        seed = config.get("seed", 42)
+        
+        # Deterministic color background based on seed
+        import random
+        random.seed(seed)
+        r = random.randint(50, 180)
+        g = random.randint(50, 180)
+        b = random.randint(50, 180)
+        
+        image = Image.new("RGB", (width, height), color=(r, g, b))
+        
+        # Draw placeholder text on the image
+        from PIL import ImageDraw
+        draw = ImageDraw.Draw(image)
+        text = f"MOCK PANEL\nSeed: {seed}\nPrompt: {prompt[:60]}..."
+        draw.text((20, 20), text, fill=(255, 255, 255))
+        return image
+
+    def unload(self):
+        self._loaded = False
+
+    def is_loaded(self) -> bool:
+        return self._loaded
+
+
 class IntegratedComicPipeline:
     """The master pipeline orchestrator for the Ultimate AI Indie Comic Generator."""
     
-    def __init__(self, model_override: Optional[str] = None, skip_backends: bool = False):
+    def __init__(self, model_override: Optional[str] = None, skip_backends: bool = False, dry_run: bool = False):
+        self.dry_run = dry_run
         import torch
-        if not skip_backends and not torch.cuda.is_available():
+        if not skip_backends and not self.dry_run and not torch.cuda.is_available():
             log.error("❌ CRITICAL ERROR: CUDA GPU is not available! The pipeline has been configured to run ONLY on GPU (dry-run and mock modes are disabled). Please enable GPU acceleration in your Kaggle/Colab notebook settings.")
             raise RuntimeError("❌ CRITICAL ERROR: CUDA GPU is not available!")
 
@@ -109,11 +158,16 @@ class IntegratedComicPipeline:
         
         # Choose backend configuration
         self.backend_selector = BackendSelector()
-        if not skip_backends:
+        if not skip_backends and not self.dry_run:
             log.info("Initializing GPU Model Backends...")
             self.backend_selector.initialize_backends(self.settings.get("models", {}))
         else:
-            log.info("Skipping GPU Model Backends initialization (rebuild/editing mode)...")
+            log.info("Skipping GPU Model Backends initialization (rebuild/editing or dry-run mode)...")
+            if self.dry_run:
+                log.info("Registering MockBackend for dry-run...")
+                mock = MockBackend()
+                self.backend_selector.register_backend("sdxl", mock)
+                self.backend_selector.register_backend("flux", mock)
             
         # ── Advanced Attention Manager (L1 + L2 + L3 mechanisms) ──
         # Enabled for real generation.
@@ -564,7 +618,7 @@ class IntegratedComicPipeline:
             raw_img = Image.open(raw_path)
             
             context = {}
-            if self.agent_coordinator:
+            if self.agent_coordinator is not None:
                 try:
                     context = self.agent_coordinator.get_generation_context(panel_id)
                 except Exception:

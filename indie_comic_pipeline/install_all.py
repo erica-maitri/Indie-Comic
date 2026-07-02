@@ -37,7 +37,7 @@ subprocess.run([sys.executable, "-m", "pip", "install",
 
                 "torch", "torchvision", "diffusers", "transformers",
 
-                "accelerate", "safetensors", "pillow", "numpy"])
+                "accelerate", "safetensors", "pillow", "numpy", "compel"])
 
                    
 

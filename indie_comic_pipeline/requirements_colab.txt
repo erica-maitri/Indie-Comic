@@ -5,6 +5,7 @@
 diffusers>=0.28.0
 transformers>=4.40.0
 accelerate>=0.30.0
+compel>=2.0.2
 torchmetrics
 safetensors
 opencv-python

@@ -3,6 +3,7 @@
 # DO NOT re-pin them here — uv would conflict with the pre-installed wheels
 accelerate==1.13.0
 diffusers==0.30.2
+compel==2.4.0
 transformers==4.47.1
 safetensors>=0.8.0rc0
 tokenizers==0.21.0

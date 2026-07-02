@@ -11,7 +11,7 @@ app = Flask(__name__)
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Set up paths for serving outputs
-WORKSPACE_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+WORKSPACE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUTPUTS_DIR = os.path.join(WORKSPACE_ROOT, "outputs")
 
 # Try to import the IntegratedComicPipeline
@@ -89,12 +89,6 @@ def feedback(panel_id):
         rating = req_data.get('rating')
         comment = req_data.get('comment')
         
-        # Safely convert types to match RLHFFeedbackLoop requirements
-        try:
-            panel_id_val = int(panel_id)
-        except ValueError:
-            panel_id_val = 1
-            
         try:
             rating_val = int(rating) if rating is not None else 5
         except ValueError:
@@ -102,22 +96,69 @@ def feedback(panel_id):
             
         comment_val = str(comment) if comment is not None else ""
         
-        # Connect to RLHFFeedbackLoop if available
+        # Connect to RLHFFeedbackLoop and SystemOptimizer
         try:
             from core.feedback import RLHFFeedbackLoop
-            feedback_loop = RLHFFeedbackLoop()
-            feedback_loop.add_panel_feedback(
-                panel_id=panel_id_val,
-                rating=rating_val,
-                comment=comment_val,
-                engagement_time=0.0,
-                prompt_used="",
-                generation_backend=""
-            )
+            from utils.config_helper import load_settings
+            try:
+                settings = load_settings() or {}
+                comics_dir = settings.get("outputs", {}).get("comics_dir", "outputs/comics")
+            except Exception:
+                comics_dir = "outputs/comics"
+                
+            if not os.path.isabs(comics_dir):
+                feedback_path = os.path.join(WORKSPACE_ROOT, comics_dir, "rlhf_feedback.json")
+            else:
+                feedback_path = os.path.join(comics_dir, "rlhf_feedback.json")
+                
+            feedback_loop = RLHFFeedbackLoop(feedback_path=feedback_path)
+            
+            # Since this is page-level rating from the UI, we log it for the 4 generated panels (IDs 1-4)
+            # so the preference model and system optimizer can process them.
+            for pid in [1, 2, 3, 4]:
+                feedback_loop.add_panel_feedback(
+                    panel_id=pid,
+                    rating=rating_val,
+                    comment=comment_val,
+                    engagement_time=0.0,
+                    prompt_used="",
+                    generation_backend="sdxl"
+                )
+                
+            # 1. Auto-train user preference critic model
+            try:
+                from core.user_preference_critic import UserPreferenceCritic
+                pref_critic = UserPreferenceCritic(
+                    model_path=os.path.join(OUTPUTS_DIR, "user_preference_model.pt")
+                )
+                pref_critic.train_from_feedback_file(
+                    feedback_file=feedback_loop.feedback_path,
+                    panels_dir=os.path.join(OUTPUTS_DIR, "panels"),
+                    min_records=3
+                )
+            except Exception as e:
+                print(f"Failed to auto-train user preference critic: {e}")
+                
+            # 2. Run system optimizer and apply config adjustments
+            try:
+                from core.optimizer import SystemOptimizer
+                settings_path = os.path.join(WORKSPACE_ROOT, "config", "settings.yaml")
+                optimizer = SystemOptimizer(
+                    feedback_loop=feedback_loop,
+                    settings_path=settings_path
+                )
+                adjusts = optimizer.optimize_system_parameters()
+                if optimizer.apply_optimizations(adjusts):
+                    print("[OK] Optimization adjustments successfully applied to configuration!")
+                else:
+                    print("Optimization adjustments evaluated, no config updates needed.")
+            except Exception as e:
+                print(f"Failed to run system optimizer: {e}")
+                
         except Exception as e:
             print(f"Could not log feedback to RLHFFeedbackLoop: {e}")
             
-        print(f"Feedback received for panel {panel_id}: {rating}/5 - {comment}")
+        print(f"Feedback received: {rating_val}/5 - {comment_val}")
         
         return jsonify({'status': 'success'})
     except Exception as e:
@@ -201,13 +242,22 @@ def update_bubble():
         
     try:
         req_data = request.json or {}
-        panel_id = int(req_data.get("panel_id"))
-        x_ratio = float(req_data.get("x_ratio"))
-        y_ratio = float(req_data.get("y_ratio"))
+        panel_id_raw = req_data.get("panel_id")
+        x_ratio_raw = req_data.get("x_ratio")
+        y_ratio_raw = req_data.get("y_ratio")
+        
+        if panel_id_raw is None or x_ratio_raw is None or y_ratio_raw is None:
+            return jsonify({"error": "Missing panel_id, x_ratio, or y_ratio"}), 400
+            
+        panel_id = int(panel_id_raw)
+        x_ratio = float(x_ratio_raw)
+        y_ratio = float(y_ratio_raw)
         dialogue = req_data.get("dialogue", "").strip()
         speaker = req_data.get("speaker", "").strip()
         bubble_shape = req_data.get("bubble_shape", "ellipse")
-        font_scale = float(req_data.get("font_scale", 1.0))
+        
+        font_scale_raw = req_data.get("font_scale")
+        font_scale = float(font_scale_raw) if font_scale_raw is not None else 1.0
         
         # 1. Update layout JSON
         json_filename = f"panel_{panel_id:03d}_bubble_layout.json"
