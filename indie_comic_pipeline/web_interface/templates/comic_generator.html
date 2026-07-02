@@ -692,6 +692,15 @@
                             </div>
                         </div>
                         
+                        <div>
+                            <label style="display:block; font-weight:600; font-size:0.85rem; color:var(--accent-cyan); margin-bottom:6px;">Text Alignment</label>
+                            <select id="editAlign" onchange="updatePreviewAlignment()">
+                                <option value="center">Center (Recommended)</option>
+                                <option value="left">Left</option>
+                                <option value="right">Right</option>
+                            </select>
+                        </div>
+                        
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; background: rgba(255,255,255,0.02); padding: 12px; border-radius: 8px; border: 1px solid var(--border-color);">
                             <div>
                                 <label style="display:block; font-weight:600; font-size:0.75rem; color:var(--text-muted); margin-bottom:4px;">X Ratio (Horizontal)</label>
@@ -700,6 +709,17 @@
                             <div>
                                 <label style="display:block; font-weight:600; font-size:0.75rem; color:var(--text-muted); margin-bottom:4px;">Y Ratio (Vertical)</label>
                                 <input type="text" id="editYRatio" readonly style="background:transparent; border:none; padding:0; font-size:0.9rem; color:white;">
+                            </div>
+                            <div style="grid-column: span 2; margin-top: 8px;">
+                                <label style="display:block; font-weight:600; font-size:0.8rem; color:var(--accent-cyan); margin-bottom:6px;">Tail Target Coordinates (Optional)</label>
+                            </div>
+                            <div>
+                                <label style="display:block; font-weight:600; font-size:0.75rem; color:var(--text-muted); margin-bottom:4px;">Tail X (0.0 to 1.0)</label>
+                                <input type="number" id="editTailX" step="0.05" min="0.0" max="1.0" placeholder="Auto" style="background:rgba(0,0,0,0.3); border:1px solid var(--border-color); border-radius:4px; padding:4px 8px; font-size:0.85rem; color:white; width:100%;">
+                            </div>
+                            <div>
+                                <label style="display:block; font-weight:600; font-size:0.75rem; color:var(--text-muted); margin-bottom:4px;">Tail Y (0.0 to 1.0)</label>
+                                <input type="number" id="editTailY" step="0.05" min="0.0" max="1.0" placeholder="Auto" style="background:rgba(0,0,0,0.3); border:1px solid var(--border-color); border-radius:4px; padding:4px 8px; font-size:0.85rem; color:white; width:100%;">
                             </div>
                         </div>
                     </div>
@@ -949,6 +969,9 @@
             document.getElementById('editFontScale').value = panel.font_scale || 1.0;
             document.getElementById('editXRatio').value = panel.x_ratio.toFixed(3);
             document.getElementById('editYRatio').value = panel.y_ratio.toFixed(3);
+            document.getElementById('editAlign').value = panel.text_align || 'center';
+            document.getElementById('editTailX').value = panel.tail_x_ratio !== null && panel.tail_x_ratio !== undefined ? panel.tail_x_ratio : '';
+            document.getElementById('editTailY').value = panel.tail_y_ratio !== null && panel.tail_y_ratio !== undefined ? panel.tail_y_ratio : '';
             
             // Load raw image in editor
             const rawImg = document.getElementById('editorRawImage');
@@ -960,6 +983,7 @@
             document.getElementById('editorBubbleOverlayText').innerText = speaker ? `${speaker.toUpperCase()}: ${text}` : text;
             bubble.style.left = `${panel.x_ratio * 100}%`;
             bubble.style.top = `${panel.y_ratio * 100}%`;
+            bubble.style.textAlign = panel.text_align || 'center';
             
             // Set tail direction class based on speaker position
             const speakerPos = panel.speaker_position || 'center';
@@ -975,6 +999,11 @@
             
             // Open modal
             document.getElementById('editorModal').classList.add('active');
+        }
+
+        function updatePreviewAlignment() {
+            const align = document.getElementById('editAlign').value;
+            document.getElementById('editorBubbleOverlay').style.textAlign = align;
         }
 
         // Close Editor Modal
@@ -998,7 +1027,10 @@
                 dialogue: document.getElementById('editDialogue').value,
                 speaker: document.getElementById('editSpeaker').value,
                 bubble_shape: document.getElementById('editShape').value,
-                font_scale: parseFloat(document.getElementById('editFontScale').value)
+                font_scale: parseFloat(document.getElementById('editFontScale').value),
+                text_align: document.getElementById('editAlign').value,
+                tail_x_ratio: document.getElementById('editTailX').value ? parseFloat(document.getElementById('editTailX').value) : null,
+                tail_y_ratio: document.getElementById('editTailY').value ? parseFloat(document.getElementById('editTailY').value) : null
             };
             
             try {

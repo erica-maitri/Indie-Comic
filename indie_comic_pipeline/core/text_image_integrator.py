@@ -136,10 +136,33 @@ class TextImageIntegrator:
         self.output_dir = output_dir
         self.ollama_model = ollama_model
         self.ollama_url = os.environ.get("OLLAMA_URL") or ollama_url
-        self._font_cache: Dict[int, Any] = {}
+        self._font_cache: Dict[Tuple[int, str], Any] = {}
         self._llm = None
         
         Path(self.output_dir).mkdir(parents=True, exist_ok=True)
+        self._download_fonts_if_missing()
+
+    def _download_fonts_if_missing(self):
+        """Download Comic Neue (Regular, Bold, Italic) TTF files if they do not exist locally."""
+        font_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "utils", "fonts")
+        os.makedirs(font_dir, exist_ok=True)
+        
+        urls = {
+            "regular": "https://raw.githubusercontent.com/google/fonts/main/ofl/comicneue/ComicNeue-Regular.ttf",
+            "bold": "https://raw.githubusercontent.com/google/fonts/main/ofl/comicneue/ComicNeue-Bold.ttf",
+            "italic": "https://raw.githubusercontent.com/google/fonts/main/ofl/comicneue/ComicNeue-Italic.ttf"
+        }
+        
+        import urllib.request
+        for style, url in urls.items():
+            out_path = os.path.join(font_dir, f"ComicNeue-{style.capitalize()}.ttf")
+            if not os.path.exists(out_path):
+                log.info(f"Downloading Comic Neue {style} font to {out_path}...")
+                try:
+                    urllib.request.urlretrieve(url, out_path)
+                    log.info(f"Successfully downloaded Comic Neue {style} font.")
+                except Exception as e:
+                    log.warning(f"Failed to download Comic Neue {style} font: {e}")
 
     def _get_llm(self):
         """Lazy-load the appropriate LLM connection based on provider configuration."""
@@ -303,6 +326,9 @@ class TextImageIntegrator:
             "font_scale": style.get("font_scale", 1.0),
             "x_ratio": x_ratio,
             "y_ratio": y_ratio,
+            "text_align": "center",
+            "tail_x_ratio": None,
+            "tail_y_ratio": None,
             "source": "heuristic_fallback"
         }
         
@@ -323,15 +349,23 @@ Relative positions:
 - "right" (speaker is on the right of the image)
 - "center" (speaker is in the middle of the image)
 
+Text alignment:
+- "center" (standard comic book alignment)
+- "left" (for narratives or notebooks)
+- "right" (for sound effects/special placement)
+
 JSON structure:
 {
   "speaker": "name of speaker or null",
-  "dialogue_clean": "dialogue text without character name prefix",
+  "dialogue_clean": "dialogue text without character name prefix. Optionally add markdown emphasis on IMPORTANT words only (e.g. **bold** for major stress/shouting, *italic* for quiet stress/thoughts). NEVER bold random words.",
   "bubble_shape": "ellipse|dashed_ellipse|jagged|cloud|spiky",
   "speaker_position": "left|center|right",
   "font_scale": 1.0,
   "x_ratio": 0.5,
-  "y_ratio": 0.15
+  "y_ratio": 0.15,
+  "text_align": "center|left|right",
+  "tail_x_ratio": 0.5,
+  "tail_y_ratio": 0.8
 }"""
 
         prompt = f"""Panel ID: {panel_id}
@@ -339,7 +373,7 @@ Dialogue: "{dialogue}"
 Emotion Beat: {emotion_beat}
 Scene/Action Description: "{scene_desc or 'Not specified'}"
 
-Please design the speech bubble layout. Determine the speaker, clean dialogue, bubble shape best suited to the emotional beat, relative horizontal position (left, right, or center) and the relative X (x_ratio) and Y (y_ratio) coordinates for bubble placement (ratios between 0.05 and 0.95). Keep the bubble y_ratio near the top (e.g. 0.15 to 0.3) so it doesn't cover main character bodies, but adjust slightly based on panel ID to avoid overlap.
+Please design the speech bubble layout. Determine the speaker, clean dialogue, bubble shape best suited to the emotional beat, relative horizontal position (left, right, or center) and the relative X (x_ratio) and Y (y_ratio) coordinates for bubble placement (ratios between 0.05 and 0.95). Choose a suitable text_align (usually "center" for bubbles). Predict the coordinates of the speaker's head/body as tail_x_ratio and tail_y_ratio so the speech bubble tail points towards them. Keep the bubble y_ratio near the top (e.g. 0.15 to 0.3) so it doesn't cover main character bodies, but adjust slightly based on panel ID to avoid overlap.
 """
         
         log.info(f"Querying local Ollama ({self.ollama_model}) for bubble layout on panel {panel_id}...")
@@ -361,7 +395,7 @@ Please design the speech bubble layout. Determine the speaker, clean dialogue, b
         if llm_response:
             ollama_plan = self._parse_ollama_json(llm_response)
             if ollama_plan:
-                for key in ["speaker", "dialogue_clean", "bubble_shape", "speaker_position", "font_scale", "x_ratio", "y_ratio"]:
+                for key in ["speaker", "dialogue_clean", "bubble_shape", "speaker_position", "font_scale", "x_ratio", "y_ratio", "text_align", "tail_x_ratio", "tail_y_ratio"]:
                     if key in ollama_plan:
                         plan[key] = ollama_plan[key]
                 plan["source"] = f"ollama_{self.ollama_model}"
@@ -376,6 +410,37 @@ Please design the speech bubble layout. Determine the speaker, clean dialogue, b
             log.warning(f"Failed to save local layout JSON {json_path}: {e}")
             
         return plan
+
+    def _parse_rich_text(self, text: str) -> List[Tuple[str, str]]:
+        """
+        Parse a line of text containing Markdown-like tokens:
+        **bold** or __bold__ -> Bold style
+        *italic* or _italic_ -> Italic style
+        """
+        pattern = re.compile(r'(\*\*.*?\*\*|__.*?__|\*.*?\*|_.*?_|[^*_]+|[*_])')
+        matches = pattern.findall(text)
+        
+        segments = []
+        for m in matches:
+            if not m:
+                continue
+            if (m.startswith("**") and m.endswith("**")) or (m.startswith("__") and m.endswith("__")):
+                segments.append((m[2:-2], "bold"))
+            elif (m.startswith("*") and m.endswith("*")) or (m.startswith("_") and m.endswith("_")):
+                segments.append((m[1:-1], "italic"))
+            else:
+                segments.append((m, "regular"))
+        return segments
+
+    def _rich_text_width(self, text: str, font) -> int:
+        """Measure the total width of a rich text string including style changes."""
+        segments = self._parse_rich_text(text)
+        total_w = 0
+        size = font.size if hasattr(font, "size") else self.base_font_size
+        for val, style in segments:
+            style_font = self._get_font(size, style)
+            total_w += self._text_width(val, style_font)
+        return total_w
 
     def integrate(self, image: Image.Image,
                   dialogue: str,
@@ -416,8 +481,6 @@ Please design the speech bubble layout. Determine the speaker, clean dialogue, b
         if not dialogue or not isinstance(dialogue, str) or dialogue.strip() in ("...", ""):
             return image  # Silent panel
 
-
-
         # Get bubble layout plan (Ollama / Local JSON)
         plan = self.get_layout_plan(dialogue, emotion_beat, panel_id, scene_desc, speaker_position)
         
@@ -432,6 +495,7 @@ Please design the speech bubble layout. Determine the speaker, clean dialogue, b
         font_scale = plan.get("font_scale", 1.0)
         x_ratio = plan.get("x_ratio", 0.5)
         y_ratio = plan.get("y_ratio", 0.15)
+        text_align = plan.get("text_align", "center")
 
         # Get style from mapping or overrides
         bubble_cat = BEAT_TO_BUBBLE.get(emotion_beat, "calm")
@@ -456,18 +520,29 @@ Please design the speech bubble layout. Determine the speaker, clean dialogue, b
         font_size = int(self.base_font_size * font_scale)
         font = self._get_font(font_size)
 
+        # Use larger padding for cloud shapes to prevent circular arcs from clipping text
+        padding = 20 if bubble_shape == "cloud" else 14
+
         # Wrap text to fit bubble width
         wrapped_lines = self._wrap_text(text, font, max_bubble_w - 20)
 
         # Calculate text block size
-        line_height = font_size + 4
-        text_height = len(wrapped_lines) * line_height
-        text_width = max(
-            self._text_width(line, font) for line in wrapped_lines
-        ) if wrapped_lines else 100
+        line_height = font_size + 6  # Spacing for comic fonts
+        text_height = 0
+        max_line_w = 0
+        
+        for line in wrapped_lines:
+            if line == "":
+                text_height += 8  # paragraph break gap
+            else:
+                text_height += line_height
+                lw = self._rich_text_width(line, font)
+                if lw > max_line_w:
+                    max_line_w = lw
+                    
+        text_width = max_line_w if max_line_w > 0 else 100
 
         # Bubble dimensions with padding
-        padding = 14
         bubble_w = text_width + padding * 2
         bubble_h = text_height + padding * 2
 
@@ -477,29 +552,67 @@ Please design the speech bubble layout. Determine the speaker, clean dialogue, b
 
         # Position the bubble using ratios
         bx, by = self._calculate_bubble_position(
-            w, h, bubble_w, bubble_h, speaker_pos, panel_id, x_ratio, y_ratio
+            w, h, bubble_w, bubble_h, speaker_pos, panel_id, x_ratio, y_ratio, bubble_shape
         )
 
         # Draw the bubble shape
         self._draw_bubble(draw, bx, by, bubble_w, bubble_h, style)
 
         # Draw tail
-        tail_x = self._get_tail_x(bx, bubble_w, speaker_pos, x_ratio)
-        tail_y = by + bubble_h
-        self._draw_tail(draw, tail_x, tail_y, style)
+        tail_x_ratio = plan.get("tail_x_ratio")
+        tail_y_ratio = plan.get("tail_y_ratio")
+        
+        if tail_x_ratio is not None and tail_y_ratio is not None:
+            target_x = int(tail_x_ratio * w)
+            target_y = int(tail_y_ratio * h)
+        else:
+            target_x = self._get_tail_x(bx, bubble_w, speaker_pos, x_ratio)
+            target_y = by + bubble_h + 15
+            
+        base_x = self._get_tail_x(bx, bubble_w, speaker_pos, x_ratio)
+        base_y = by + bubble_h
+        
+        if bubble_shape == "cloud":
+            style["tail_style"] = "bubbles"
+            
+        self._draw_tail(draw, base_x, base_y, target_x, target_y, style)
 
         # Draw speaker name (bold) if present
         text_y = by + padding
         if speaker:
-            speaker_font = self._get_font(int(font_size * 0.85))
-            draw.text((bx + padding, text_y), speaker.upper(),
+            speaker_font = self._get_font(int(font_size * 0.85), "bold")
+            speaker_text = speaker.upper()
+            speaker_w = self._text_width(speaker_text, speaker_font)
+            speaker_x = bx + padding + (text_width - speaker_w) // 2 if text_align == "center" else (
+                bx + padding + (text_width - speaker_w) if text_align == "right" else bx + padding
+            )
+            draw.text((speaker_x, text_y), speaker_text,
                       fill=(60, 60, 60, 255), font=speaker_font)
             text_y += line_height
 
         # Draw dialogue text
         for line in wrapped_lines:
-            draw.text((bx + padding, text_y), line,
-                      fill=(20, 20, 20, 255), font=font)
+            if line == "":
+                text_y += 8  # Paragraph break gap
+                continue
+                
+            line_w = self._rich_text_width(line, font)
+            if text_align == "center":
+                line_x = bx + padding + (text_width - line_w) // 2
+            elif text_align == "right":
+                line_x = bx + padding + (text_width - line_w)
+            else:
+                line_x = bx + padding
+
+            # Draw segment by segment
+            segments = self._parse_rich_text(line)
+            cursor_x = line_x
+            for val, style_var in segments:
+                style_font = self._get_font(font_size, style_var)
+                draw.text((cursor_x, text_y), val,
+                          fill=(20, 20, 20, 255), font=style_font)
+                cursor_x += self._text_width(val, style_font)
+                
             text_y += line_height
 
         # Composite the overlay
@@ -542,21 +655,23 @@ Please design the speech bubble layout. Determine the speaker, clean dialogue, b
         border = style.get("border_color", (40, 40, 40))
         border_w = style.get("border_width", 2)
 
-        if shape in ("ellipse", "dashed_ellipse"):
+        if shape == "ellipse":
             radius = min(w, h) // 4
             self._draw_rounded_rect(draw, x, y, w, h, radius, fill, border, border_w)
+
+        elif shape == "dashed_ellipse":
+            radius = min(w, h) // 4
+            self._draw_dashed_rounded_rect(draw, x, y, w, h, radius, fill, border, border_w)
 
         elif shape == "jagged":
             radius = 6
             self._draw_rounded_rect(draw, x, y, w, h, radius, fill, border, border_w)
 
         elif shape == "cloud":
-            radius = min(w, h) // 3
-            self._draw_rounded_rect(draw, x, y, w, h, radius, fill, border, border_w)
+            self._draw_cloud_bubble(draw, x, y, w, h, fill, border, border_w)
 
         elif shape == "spiky":
-            # Rectangular with sharp corners for shouts
-            draw.rectangle([x, y, x + w, y + h], fill=fill, outline=border, width=border_w)
+            self._draw_spiky_bubble(draw, x, y, w, h, fill, border, border_w)
 
         else:
             self._draw_rounded_rect(draw, x, y, w, h, 12, fill, border, border_w)
@@ -573,32 +688,128 @@ Please design the speech bubble layout. Determine the speaker, clean dialogue, b
             width=width,
         )
 
+    def _draw_dashed_rounded_rect(self, draw: Any, x: int, y: int, w: int, h: int, radius: int, fill: Any, border: Any, width: int):
+        """Draw a rounded rectangle with a dashed outline."""
+        draw.rounded_rectangle([x, y, x + w, y + h], radius=radius, fill=fill)
+        
+        step = 12
+        dash_len = 6
+        
+        # Top edge
+        for dx in range(x + radius, x + w - radius, step):
+            draw.line([(dx, y), (min(dx + dash_len, x + w - radius), y)], fill=border, width=width)
+        # Bottom edge
+        for dx in range(x + radius, x + w - radius, step):
+            draw.line([(dx, y + h), (min(dx + dash_len, x + w - radius), y + h)], fill=border, width=width)
+        # Left edge
+        for dy in range(y + radius, y + h - radius, step):
+            draw.line([(x, dy), (x, min(dy + dash_len, y + h - radius))], fill=border, width=width)
+        # Right edge
+        for dy in range(y + radius, y + h - radius, step):
+            draw.line([(x + w, dy), (x + w, min(dy + dash_len, y + h - radius))], fill=border, width=width)
+            
+        # Draw corner arcs
+        draw.arc([x, y, x + 2*radius, y + 2*radius], 180, 270, fill=border, width=width)
+        draw.arc([x + w - 2*radius, y, x + w, y + 2*radius], 270, 360, fill=border, width=width)
+        draw.arc([x, y + h - 2*radius, x + 2*radius, y + h], 90, 180, fill=border, width=width)
+        draw.arc([x + w - 2*radius, y + h - 2*radius, x + w, y + h], 0, 90, fill=border, width=width)
+
+    def _draw_cloud_bubble(self, draw: Any, x: int, y: int, w: int, h: int, fill: Any, border: Any, border_w: int):
+        """Draw a cloud thought bubble using the exact circle configuration of the user's generator."""
+        cx = x + w / 2
+        cy = y + h / 2
+        
+        core_w = w
+        core_h = h
+        
+        # Calculate big and small radii relative to the core bubble height
+        big_r = core_h * 0.45
+        small_r = core_h * 0.38
+        
+        # Exact circle positions and scaling ratios from user code
+        circles = [
+            (cx - core_w * 0.20, ccy_val := cy - core_h * 0.15, big_r * 1.00),
+            (cx + core_w * 0.18, ccy_val := cy - core_h * 0.18, big_r * 1.05),
+            (cx - core_w * 0.42, ccy_val := cy - core_h * 0.00, big_r * 0.75),
+            (cx + core_w * 0.40, ccy_val := cy + core_h * 0.05, big_r * 0.80),
+            (cx - core_w * 0.30, ccy_val := cy + core_h * 0.20, small_r * 0.90),
+            (cx + core_w * 0.02, ccy_val := cy + core_h * 0.22, small_r * 1.00),
+            (cx + core_w * 0.30, ccy_val := cy + core_h * 0.18, small_r * 0.90),
+            (cx - core_w * 0.05, ccy_val := cy - core_h * 0.02, small_r * 1.10),
+        ]
+        
+        # Pass 1: Draw outer border outlines (filled with border color, radius enlarged by border_w)
+        for (ccx, ccy, r) in circles:
+            draw.ellipse([ccx - r - border_w, ccy - r - border_w, ccx + r + border_w, ccy + r + border_w], fill=border)
+            
+        # Pass 2: Draw inner fills (filled with fill color, exact radius r)
+        for (ccx, ccy, r) in circles:
+            draw.ellipse([ccx - r, ccy - r, ccx + r, ccy + r], fill=fill)
+
+    def _draw_spiky_bubble(self, draw: Any, x: int, y: int, w: int, h: int, fill: Any, border: Any, border_w: int):
+        """Draw a starburst shout bubble using the exact mathematical logic from the user's starburst generator."""
+        import math
+        cx = x + w / 2
+        cy = y + h / 2
+        rx = w / 2
+        ry = h / 2
+        
+        points = []
+        num_spikes = 12  # Exactly 12 spikes as configured in user code
+        n_points = num_spikes * 2
+        
+        # Spike ratio (how far spikes stick out vs inner radius) is 1.55
+        spike_ratio = 1.55
+        
+        for i in range(n_points):
+            angle = math.pi * 2 * i / n_points - math.pi / 2
+            
+            # Alternate between outer and inner radius
+            if i % 2 == 0:
+                dx = rx * spike_ratio
+                dy = ry * spike_ratio
+            else:
+                dx = rx
+                dy = ry
+                
+            px = cx + dx * math.cos(angle)
+            py = cy + dy * math.sin(angle)
+            points.append((px, py))
+            
+        draw.polygon(points, fill=fill, outline=border, width=border_w)
+
     def _draw_tail(self, draw: Any,
-                   tip_x: int, tip_y: int,
+                   base_x: int, base_y: int,
+                   target_x: int, target_y: int,
                    style: Dict[str, Any]):
-        """Draw the speech bubble tail pointing toward the speaker."""
+        """Draw the speech bubble tail pointing toward the target speaker coordinate."""
         tail_style = style.get("tail_style", "smooth")
         fill = style.get("fill", (255, 255, 255, 230))
         border = style.get("border_color", (40, 40, 40))
 
-        tail_height = 15
         tail_width = 12
 
         if tail_style == "bubbles":
             for i in range(3):
-                r = 4 - i
-                cy = tip_y + (i + 1) * 8
+                r = 5 - i
+                t = (i + 1) / 4.0
+                cx = int(base_x + (target_x - base_x) * t)
+                cy = int(base_y + (target_y - base_y) * t)
                 draw.ellipse(
-                    [tip_x - r, cy - r, tip_x + r, cy + r],
+                    [cx - r, cy - r, cx + r, cy + r],
                     fill=fill, outline=border, width=1,
                 )
         else:
             points = [
-                (tip_x - tail_width // 2, tip_y),
-                (tip_x + tail_width // 2, tip_y),
-                (tip_x, tip_y + tail_height),
+                (base_x - tail_width // 2, base_y),
+                (base_x + tail_width // 2, base_y),
+                (target_x, target_y),
             ]
             draw.polygon(points, fill=fill, outline=border)
+            
+            # Mask the bubble border at the tail base
+            border_w = style.get("border_width", 2)
+            draw.line([(base_x - tail_width // 2 + 1, base_y), (base_x + tail_width // 2 - 1, base_y)], fill=fill, width=border_w + 1)
 
     # ─────────────────────────────────────────────────────────────────────
     # Positioning
@@ -609,9 +820,11 @@ Please design the speech bubble layout. Determine the speaker, clean dialogue, b
                                    speaker_pos: str,
                                    panel_id: int,
                                    x_ratio: Optional[float] = None,
-                                   y_ratio: Optional[float] = None) -> Tuple[int, int]:
+                                   y_ratio: Optional[float] = None,
+                                   bubble_shape: str = "ellipse") -> Tuple[int, int]:
         """Calculate bubble position based on speaker position, panel ID, and optional planned ratios."""
         margin = 15
+        outer_margin = 15 if bubble_shape in ("spiky", "cloud") else 0
 
         if x_ratio is not None and y_ratio is not None:
             # Centered on ratio coordinates
@@ -619,18 +832,18 @@ Please design the speech bubble layout. Determine the speaker, clean dialogue, b
             y = int(y_ratio * img_h - bubble_h // 2)
         else:
             if speaker_pos == "left":
-                x = margin
+                x = margin + outer_margin
             elif speaker_pos == "right":
-                x = img_w - bubble_w - margin
+                x = img_w - bubble_w - margin - outer_margin
             else:
                 x = (img_w - bubble_w) // 2
 
             y_offset = (panel_id % 3) * 60
-            y = margin + y_offset
+            y = margin + y_offset + outer_margin
 
         # Clamp to image bounds
-        x = max(margin, min(x, img_w - bubble_w - margin))
-        y = max(margin, min(y, img_h - bubble_h - 40))
+        x = max(margin + outer_margin, min(x, img_w - bubble_w - margin - outer_margin))
+        y = max(margin + outer_margin, min(y, img_h - bubble_h - 40 - outer_margin))
 
         return x, y
 
@@ -656,11 +869,9 @@ Please design the speech bubble layout. Determine the speaker, clean dialogue, b
     def _parse_dialogue(self, dialogue: str) -> Tuple[Optional[str], str]:
         """Parse 'Speaker: text' format. Returns (speaker, text)."""
         if ":" in dialogue:
-            # Avoid splitting on colons inside time stamps (e.g., 12:30)
             idx = dialogue.find(":")
             if idx > 0 and idx < len(dialogue) - 1:
                 if dialogue[idx-1].isdigit() and dialogue[idx+1].isdigit():
-                    # Find next colon
                     idx = dialogue.find(":", idx + 1)
             
             if idx != -1:
@@ -673,24 +884,111 @@ Please design the speech bubble layout. Determine the speaker, clean dialogue, b
         return None, dialogue.strip()
 
     def _wrap_text(self, text: str, font, max_width: int) -> List[str]:
-        """Word-wrap text to fit within max_width pixels."""
-        words = text.split()
-        lines = []
-        current_line = ""
-
-        for word in words:
-            test_line = f"{current_line} {word}".strip()
-            if self._text_width(test_line, font) <= max_width:
-                current_line = test_line
-            else:
-                if current_line:
-                    lines.append(current_line)
-                current_line = word
-
-        if current_line:
-            lines.append(current_line)
-
-        return lines if lines else [text[:30]]
+        """Word-wrap rich text, respecting explicit newlines and actual bold/italic font widths."""
+        paragraphs = text.split('\n')
+        all_wrapped_lines = []
+        
+        for p_idx, paragraph in enumerate(paragraphs):
+            if not paragraph.strip():
+                if p_idx > 0 and p_idx < len(paragraphs) - 1:
+                    all_wrapped_lines.append("")
+                continue
+                
+            # Step 1: Parse the paragraph into styled segments
+            segments = self._parse_rich_text(paragraph)
+            
+            # Step 2: Build a list of characters with their associated style
+            char_styles = []
+            for val, style in segments:
+                for char in val:
+                    char_styles.append((char, style))
+                    
+            if not char_styles:
+                continue
+                
+            # Step 3: Reconstruct into tokens (words and spaces)
+            tokens = []
+            current_token_chars = []
+            current_style = char_styles[0][1]
+            current_is_space = char_styles[0][0].isspace()
+            
+            for char, style in char_styles:
+                is_space = char.isspace()
+                if style != current_style or is_space != current_is_space:
+                    if current_token_chars:
+                        tokens.append(("".join(current_token_chars), current_style, current_is_space))
+                    current_token_chars = [char]
+                    current_style = style
+                    current_is_space = is_space
+                else:
+                    current_token_chars.append(char)
+            if current_token_chars:
+                tokens.append(("".join(current_token_chars), current_style, current_is_space))
+                
+            # Step 4: Wrap tokens into lines
+            wrapped_lines_tokens = []
+            current_line_tokens = []
+            current_line_width = 0
+            size = font.size if hasattr(font, "size") else self.base_font_size
+            
+            for token_text, style, is_space in tokens:
+                tfont = self._get_font(size, style)
+                token_w = self._text_width(token_text, tfont)
+                
+                if current_line_width + token_w <= max_width:
+                    current_line_tokens.append((token_text, style, is_space))
+                    current_line_width += token_w
+                else:
+                    if is_space:
+                        continue
+                    if current_line_tokens:
+                        while current_line_tokens and current_line_tokens[-1][2]:
+                            current_line_tokens.pop()
+                        if current_line_tokens:
+                            wrapped_lines_tokens.append(current_line_tokens)
+                    current_line_tokens = [(token_text, style, is_space)]
+                    current_line_width = token_w
+                    
+            if current_line_tokens:
+                while current_line_tokens and current_line_tokens[-1][2]:
+                    current_line_tokens.pop()
+                if current_line_tokens:
+                    wrapped_lines_tokens.append(current_line_tokens)
+                    
+            # Step 5: Convert wrapped token lines back to strings with markdown tags
+            for line_tokens in wrapped_lines_tokens:
+                line_str = ""
+                prev_style = "regular"
+                
+                for token_text, style, is_space in line_tokens:
+                    if style == prev_style:
+                        line_str += token_text
+                    else:
+                        if prev_style == "bold":
+                            line_str += "**"
+                        elif prev_style == "italic":
+                            line_str += "*"
+                            
+                        if style == "bold":
+                            line_str += "**" + token_text
+                        elif style == "italic":
+                            line_str += "*" + token_text
+                        else:
+                            line_str += token_text
+                            
+                        prev_style = style
+                        
+                if prev_style == "bold":
+                    line_str += "**"
+                elif prev_style == "italic":
+                    line_str += "*"
+                    
+                all_wrapped_lines.append(line_str)
+                
+            if p_idx < len(paragraphs) - 1:
+                all_wrapped_lines.append("")
+                
+        return all_wrapped_lines if all_wrapped_lines else [""]
 
     def _text_width(self, text: str, font) -> int:
         """Get the pixel width of a text string."""
@@ -700,28 +998,60 @@ Please design the speech bubble layout. Determine the speaker, clean dialogue, b
         except Exception:
             return len(text) * 8
 
-    def _get_font(self, size: int) -> Any:
-        """Get or create a font at the given size."""
-        if size in self._font_cache:
-            return self._font_cache[size]
+    def _get_font(self, size: int, variant: str = "regular") -> Any:
+        """Get or create a font at the given size and variant (regular, bold, italic)."""
+        cache_key = (size, variant.lower())
+        if cache_key in self._font_cache:
+            return self._font_cache[cache_key]
 
         font = None
-        if self.font_path and os.path.exists(self.font_path):
-            try:
-                font = ImageFont.truetype(self.font_path, size)
-            except Exception:
-                pass
-
-        if font is None:
-            font_candidates = [
+        
+        # Determine local font paths for Comic Neue
+        font_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "utils", "fonts")
+        local_comic_font = os.path.join(font_dir, f"ComicNeue-{variant.capitalize()}.ttf")
+        
+        # Candidates list for regular, bold, and italic variants
+        font_candidates = {
+            "regular": [
+                local_comic_font,
                 "arial.ttf", "Arial.ttf",
                 "DejaVuSans.ttf", "LiberationSans-Regular.ttf",
                 "C:/Windows/Fonts/arial.ttf",
                 "/System/Library/Fonts/Supplemental/Arial.ttf",
                 "/Library/Fonts/Arial.ttf",
                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            ],
+            "bold": [
+                local_comic_font,
+                "arialbd.ttf", "Arialbd.ttf", "Arial-Bold.ttf",
+                "DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf",
+                "C:/Windows/Fonts/arialbd.ttf",
+                "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+                "/Library/Fonts/Arial Bold.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            ],
+            "italic": [
+                local_comic_font,
+                "ariali.ttf", "Ariali.ttf", "Arial-Italic.ttf",
+                "DejaVuSans-Oblique.ttf", "LiberationSans-Italic.ttf",
+                "C:/Windows/Fonts/ariali.ttf",
+                "/System/Library/Fonts/Supplemental/Arial Italic.ttf",
+                "/Library/Fonts/Arial Italic.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf",
             ]
-            for fp in font_candidates:
+        }
+
+        # Try user-defined font path first (only if style is regular, since single path provided)
+        if variant.lower() == "regular" and self.font_path and os.path.exists(self.font_path):
+            try:
+                font = ImageFont.truetype(self.font_path, size)
+            except Exception:
+                pass
+
+        # Try candidates based on variant
+        if font is None:
+            candidates = font_candidates.get(variant.lower(), font_candidates["regular"])
+            for fp in candidates:
                 try:
                     font = ImageFont.truetype(fp, size)
                     break
@@ -731,5 +1061,5 @@ Please design the speech bubble layout. Determine the speaker, clean dialogue, b
         if font is None:
             font = ImageFont.load_default()
 
-        self._font_cache[size] = font
+        self._font_cache[cache_key] = font
         return font
