@@ -32,6 +32,7 @@ class SDXLBackend(BaseBackend):
         self._pipe = None
         self._config: Dict[str, Any] = {}
         self._lora_loaded = False
+        self.device = "cuda"
 
     @property
     def name(self) -> str:
@@ -65,6 +66,8 @@ class SDXLBackend(BaseBackend):
         if device == "cuda" and not torch.cuda.is_available():
             log.warning("CUDA is requested but not available. Falling back to CPU.")
             device = "cpu"
+
+        self.device = device
 
         log.info(f"Loading SDXL pipeline: {model_name} on device: {device}")
 
@@ -194,7 +197,7 @@ class SDXLBackend(BaseBackend):
                     text_encoder=[self._pipe.text_encoder, self._pipe.text_encoder_2],
                     returned_embeddings_type=ReturnedEmbeddingsType.PENULTIMATE_HIDDEN_STATES_NON_NORMALIZED,
                     requires_pooled=[False, True],
-                    device=self._pipe.device
+                    device=self.device
                 )
             
             # Encode prompt
