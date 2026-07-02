@@ -397,7 +397,7 @@ class DynamicStoryGenerator:
                         "options": {
                             "temperature": TEMPERATURE,
                             "top_p": TOP_P,
-                            "num_predict": MAX_TPP * PANEL_COUNT
+                            "num_predict": max(3000, 350 * PANEL_COUNT)
                         }
                     }
                     r = httpx.post(url, json=payload, timeout=60.0)
@@ -449,7 +449,7 @@ class DynamicStoryGenerator:
             with torch.no_grad():
                 out = model.generate(
                     **ids,
-                    max_new_tokens=MAX_TPP * PANEL_COUNT,
+                    max_new_tokens=max(3000, 350 * PANEL_COUNT),
                     do_sample=True,
                     temperature=TEMPERATURE,
                     top_p=TOP_P,
