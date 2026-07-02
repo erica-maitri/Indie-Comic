@@ -196,9 +196,6 @@ class SharedAttentionCache:
 
     def install_on_modules(self, modules: list) -> bool:
         """Register forward hooks directly on a list of cross-attention modules (Backend Adapter)."""
-        if not self.enabled:
-            return False
-            
         self.remove_hooks()
         count = 0
         try:
