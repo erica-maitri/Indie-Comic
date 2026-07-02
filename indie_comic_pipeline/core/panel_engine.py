@@ -14,6 +14,7 @@ Orchestrates the full panel generation flow:
 import os
 import time
 import logging
+import threading
 from typing import Dict, Any, Optional, List, TYPE_CHECKING
 from PIL import Image
 from pathlib import Path
@@ -217,6 +218,7 @@ class PanelEngine:
         self.style_preset = style_preset
         self._prompt_optimizer = None
         self._hooks_installed = False
+        self._lock = threading.Lock()
 
         Path(self.output_dir).mkdir(parents=True, exist_ok=True)
 
@@ -224,6 +226,14 @@ class PanelEngine:
                        context: Dict[str, Any],
                        style_prompt: str = "",
                        negative_base: str = "") -> Dict[str, Any]:
+        """Generate a single panel using the full Phase 2-4 pipeline with thread safety."""
+        with self._lock:
+            return self._generate_panel_locked(panel_id, context, style_prompt, negative_base)
+
+    def _generate_panel_locked(self, panel_id: int,
+                               context: Dict[str, Any],
+                               style_prompt: str = "",
+                               negative_base: str = "") -> Dict[str, Any]:
         """
         Generate a single panel using the full Phase 2-4 pipeline.
 
