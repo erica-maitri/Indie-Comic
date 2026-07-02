@@ -1,0 +1,10 @@
+{
+  "swarm_agents": [
+    "StoryDirector",
+    "ActionDirector",
+    "DialogueWriter",
+    "PoseDirector",
+    "EmotionDirector",
+    "CameraDirector"
+  ]
+}

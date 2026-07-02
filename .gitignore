@@ -16,6 +16,8 @@ outputs/
 **/outputs/
 *.png
 *.json
+!indie_comic_pipeline/config/*.json
+!indie_comic_pipeline/tests/**/*.json
 
 # Python Cache
 __pycache__/

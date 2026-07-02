@@ -1,0 +1,207 @@
+{
+  "version": "2.1.0",
+  "_comment": "Single source of truth for all mood arcs, emotion mappings, and character profiles. Used by Story Weaver, Mood Weaver router, and Indie Comic Pipeline. 'arc_beats' are used by existing loaders; 'mood_stages' are the canonical stage labels used by EmotionRouter.",
+
+  "mood_to_arc": {
+    "sadness": {
+      "arc_key": "sad",
+      "journey": "uplifting",
+      "description": "From heaviness toward genuine small warmth",
+      "mood_stages": ["heaviness", "stillness", "faint_warmth", "tentative_light", "soft_openness", "quiet_hope"],
+      "arc_beats":   ["heaviness", "stillness", "faint_warmth", "tentative_light", "soft_openness", "quiet_hope"],
+      "motif_hint": "something small that holds warmth (a cup, a candle, a patch of sunlight)",
+      "end_note": "End with something small but genuinely warm. Not fixed. But lighter.",
+      "character_archetype": "The Melancholic Poet",
+      "character_traits": ["introspective", "sensitive", "observant"],
+      "default_character": "Wanderer",
+      "default_world": "The Abstract",
+      "visual_prompt": "from heaviness toward quiet hope"
+    },
+    "joy": {
+      "arc_key": "happy",
+      "journey": "elation",
+      "description": "From spark of joy toward luminous transcendence",
+      "mood_stages": ["spark", "warmth", "glow", "radiance", "overflow", "share"],
+      "arc_beats":   ["spark", "expansion", "overflow", "radiance", "luminous_still", "transcendence"],
+      "motif_hint": "something that multiplies light (reflections, laughter lines, open hands)",
+      "end_note": "End with pure presence. Joy has become larger than its cause.",
+      "character_archetype": "The Radiant Optimist",
+      "character_traits": ["energetic", "warm", "generous"],
+      "default_character": "Ember",
+      "default_world": "The Brightlands",
+      "visual_prompt": "from spark of joy to overflowing radiance"
+    },
+    "anger": {
+      "arc_key": "angry",
+      "journey": "calming",
+      "description": "From contained fire toward stillness",
+      "mood_stages": ["fire", "contained", "fracture", "exhale", "cooling", "grounded"],
+      "arc_beats":   ["contained_fire", "fracture", "exhale", "cooling", "ground", "stillness"],
+      "motif_hint": "something that absorbs heat (running water, open window, cold surface)",
+      "end_note": "End with the body calm. Situation unresolved but person grounded.",
+      "character_archetype": "The Fierce Warrior",
+      "character_traits": ["intense", "determined", "righteous"],
+      "default_character": "Kael",
+      "default_world": "The Ashen Wastes",
+      "visual_prompt": "from contained fire to grounded release"
+    },
+    "fear": {
+      "arc_key": "anxious",
+      "journey": "grounding",
+      "description": "From spiral toward root",
+      "mood_stages": ["tight", "quiver", "breath", "release", "steadiness", "calm"],
+      "arc_beats":   ["spiral", "peak_noise", "pause", "breath", "root", "present"],
+      "motif_hint": "something tactile and grounding (textured surface, bare feet, single object)",
+      "end_note": "End with presence. Not solved. But here, now, in this body.",
+      "character_archetype": "The Reluctant Hero",
+      "character_traits": ["anxious", "cautious", "observant"],
+      "default_character": "Wanderer",
+      "default_world": "The Abstract",
+      "visual_prompt": "from tight anxiety to grounded calm"
+    },
+    "love": {
+      "arc_key": "love",
+      "journey": "deepening",
+      "description": "From spark toward enduring warmth",
+      "mood_stages": ["tenderness", "warmth", "cherish", "hold", "bloom", "forever"],
+      "arc_beats":   ["spark", "recognition", "vulnerability", "trust", "embrace", "unity"],
+      "motif_hint": "something shared between two people (a held hand, a shared window, intertwined roots)",
+      "end_note": "End with both people changed. Love as transformation, not destination.",
+      "character_archetype": "The Devoted Lover",
+      "character_traits": ["gentle", "loyal", "passionate"],
+      "default_character": "Aria",
+      "default_world": "The Garden of Echoes",
+      "visual_prompt": "from tenderness to enduring forever"
+    },
+    "grief": {
+      "arc_key": "grief",
+      "journey": "tender continuance",
+      "description": "From the shape of absence toward carrying",
+      "mood_stages": ["loss", "echo", "memory", "soft_pain", "acceptance", "light"],
+      "arc_beats":   ["absence", "ache", "memory", "held", "continuance", "carried_forward"],
+      "motif_hint": "something that was shared (a chair, a mug, a particular quality of light)",
+      "end_note": "End with both things true: the loss is real, and life continues.",
+      "character_archetype": "The Haunted Mourner",
+      "character_traits": ["melancholic", "reflective", "yearning"],
+      "default_character": "Elias",
+      "default_world": "The Grey Shore",
+      "visual_prompt": "from loss through memory to light"
+    },
+    "surprise": {
+      "arc_key": null,
+      "fallback": "happy",
+      "journey": "wonder",
+      "description": "From unexpected revelation toward expansive curiosity",
+      "mood_stages": ["jolt", "disbelief", "recognition", "wonder", "curiosity", "openness"],
+      "arc_beats":   ["jolt", "disbelief", "recognition", "wonder", "curiosity", "openness"],
+      "motif_hint": "something found unexpectedly (an object out of place, a door where none was)",
+      "end_note": "End with curiosity replacing shock. The world is stranger and richer.",
+      "character_archetype": "The Curious Seeker",
+      "character_traits": ["curious", "adaptable", "open"],
+      "default_character": "Vesper",
+      "default_world": "The Unexpected",
+      "visual_prompt": "from surprise to wonder"
+    },
+    "determined": {
+      "arc_key": "determined",
+      "journey": "heroic rise",
+      "description": "From doubt toward resolute action",
+      "mood_stages": ["resolve", "grip", "climb", "surge", "breakthrough", "victory"],
+      "arc_beats":   ["doubt", "challenge", "resistance", "breakthrough", "momentum", "triumph"],
+      "motif_hint": "something that holds the cost of the climb (scarred hands, a broken weapon, a worn path)",
+      "end_note": "End with victory earned, not given. The character is changed by the climb.",
+      "character_archetype": "The Unyielding Champion",
+      "character_traits": ["resolute", "focused", "unyielding"],
+      "default_character": "Riven",
+      "default_world": "The Iron Peaks",
+      "visual_prompt": "from resolve to hard-won victory"
+    }
+  },
+
+  "tired": {
+    "arc_key": "tired",
+    "journey": "relaxing",
+    "description": "From bone-deep drag toward rest",
+    "mood_stages": ["weight", "pause", "small_light", "lift", "forward", "rest"],
+    "arc_beats":   ["drag", "surrender", "softness", "drift", "quiet_rest", "renewal"],
+    "motif_hint": "something soft and horizontal (a pillow, blanket fold, evening light)",
+    "end_note": "End with genuine rest. Tomorrow is not in this panel.",
+    "character_archetype": "The Exhausted Wanderer",
+    "character_traits": ["withdrawn", "slow", "yearning for stillness"],
+    "default_character": "Wanderer",
+    "default_world": "The Abstract",
+    "visual_prompt": "from exhaustion toward genuine rest"
+  },
+
+  "character_profiles": {
+    "Wanderer": {
+      "description": "a young figure with hollow eyes and tired expression, wearing a worn grey coat",
+      "traits": ["introspective", "sensitive", "anxious"],
+      "visual_style": "muted colors, soft edges, melancholic atmosphere"
+    },
+    "Ember": {
+      "description": "a radiant figure with a wide warm smile and bright observant eyes, wearing colorful layered garments",
+      "traits": ["energetic", "warm", "generous"],
+      "visual_style": "vibrant colors, warm golden tones, glowing light halos"
+    },
+    "Kael": {
+      "description": "a powerful broad-shouldered figure with an intense gaze and battle-worn layered armor, jaw set hard",
+      "traits": ["intense", "determined", "righteous"],
+      "visual_style": "dark desaturated colors, sharp angular lines, dramatic side-lighting"
+    },
+    "Aria": {
+      "description": "a graceful figure with soft eyes and a quiet smile, wearing flowing layered robes in blues and greens",
+      "traits": ["gentle", "loyal", "passionate"],
+      "visual_style": "soft cool colors, flowing organic lines, romantic light diffusion"
+    },
+    "Elias": {
+      "description": "a worn figure with deep-set shadowed eyes and a sorrowful downward expression, wearing dark layered clothing",
+      "traits": ["melancholic", "reflective", "yearning"],
+      "visual_style": "muted desaturated colors, deep shadows, dense atmospheric fog"
+    },
+    "Vesper": {
+      "description": "a nimble curious figure with wide alert eyes and an open expression, wearing practical travel clothes covered in pockets",
+      "traits": ["curious", "adaptable", "open"],
+      "visual_style": "mixed unexpected colors, dynamic angles, environment full of hidden details"
+    },
+    "Riven": {
+      "description": "a resolute compact figure with a steel-grey gaze and determined posture, wearing worn functional armor with visible repairs",
+      "traits": ["resolute", "focused", "unyielding"],
+      "visual_style": "strong clean lines, bold high-contrast colors, heroic grounded composition"
+    }
+  },
+
+  "secondary_emotion_defaults": {
+    "sadness":    [{"emotion": "exhaustion", "score": 0.15}, {"emotion": "longing",   "score": 0.08}],
+    "anger":      [{"emotion": "shame",      "score": 0.12}, {"emotion": "hurt",       "score": 0.09}],
+    "fear":       [{"emotion": "dread",      "score": 0.11}, {"emotion": "restless",   "score": 0.09}],
+    "joy":        [{"emotion": "gratitude",  "score": 0.14}, {"emotion": "wonder",     "score": 0.08}],
+    "grief":      [{"emotion": "loneliness", "score": 0.10}, {"emotion": "numbness",   "score": 0.07}],
+    "love":       [{"emotion": "tenderness", "score": 0.13}, {"emotion": "wonder",     "score": 0.09}],
+    "determined": [{"emotion": "fear",       "score": 0.10}, {"emotion": "resolve",    "score": 0.12}],
+    "surprise":   [{"emotion": "curiosity",  "score": 0.14}, {"emotion": "wonder",     "score": 0.10}],
+    "tired":      [{"emotion": "numbness",   "score": 0.13}, {"emotion": "longing",    "score": 0.07}]
+  },
+
+  "timing_phases": {
+    "4":  ["validation", "validation", "complication", "openness"],
+    "5":  ["validation", "validation", "complication", "shift", "openness"],
+    "6":  ["validation", "validation", "complication", "shift", "shift", "openness"],
+    "7":  ["validation", "validation", "validation", "complication", "shift", "shift", "openness"],
+    "8":  ["validation", "validation", "validation", "complication", "complication", "shift", "shift", "openness"],
+    "9":  ["validation", "validation", "validation", "complication", "complication", "shift", "shift", "shift", "openness"],
+    "10": ["validation", "validation", "validation", "complication", "complication", "shift", "shift", "shift", "shift", "openness"]
+  },
+
+  "mood_weaver_label_map": {
+    "sadness":    "sadness",
+    "joy":        "joy",
+    "anger":      "anger",
+    "fear":       "fear",
+    "love":       "love",
+    "surprise":   "surprise",
+    "grief":      "grief",
+    "determined": "determined",
+    "tired":      "tired"
+  }
+}

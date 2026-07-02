@@ -16,6 +16,8 @@ outputs/
 **/outputs/
 *.png
 *.json
+!config/*.json
+!tests/**/*.json
 
 # Python Cache
 __pycache__/

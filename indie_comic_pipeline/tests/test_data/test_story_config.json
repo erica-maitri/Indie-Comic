@@ -1,0 +1,34 @@
+{
+  "title": "Neon Sunset",
+  "characters": [
+    {
+      "name": "Akira",
+      "costume": "Leather jacket"
+    }
+  ],
+  "setting": {
+    "location": "Mega-city alleyway",
+    "lighting": "cyberpunk pink"
+  },
+  "mood_journey": "despair to hope",
+  "recurring_motif": "broken circuit",
+  "panels": [
+    {
+      "panel": 1,
+      "visual": "Akira looking at the sky",
+      "dialogue": "Is there anyone out there?",
+      "emotion_beat": "lonely"
+    },
+    {
+      "panel": 2,
+      "visual": "A drone lights up the alley",
+      "dialogue": "Intruder detected.",
+      "emotion_beat": "startled"
+    }
+  ],
+  "_metadata": {
+    "character": "Akira",
+    "world": "Mega-city",
+    "emotion": "lonely"
+  }
+}
