@@ -13,6 +13,182 @@ from core.memory import StorySectionMemory, LayoutDirective
 log = logging.getLogger("pipeline.agents.swarm")
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 5-LAYER CINEMATIC EXAGGERATION MAP  (The Cinematic Thesaurus)
+# ─────────────────────────────────────────────────────────────────────────────
+# Every entry produces a distinct, uniquely-identifiable visual in SDXL.
+# Diffusion models regress to the mean on generic verbs — these coordinates
+# push the generation to the extreme edge of cinematic language.
+#
+# Structure per entry:
+#   verb        — the aggressive, active-voice action verb phrase
+#   mechanics   — exact body-part positions under maximum tension
+#   impact      — the precise moment of contact or consequence
+#   reaction    — environmental / secondary object response to the action
+#   timing      — freeze-frame cue (anticipation / impact / follow-through)
+# ─────────────────────────────────────────────────────────────────────────────
+ACTION_EXAGGERATION_MAP: Dict[str, Dict[str, str]] = {
+    # ── Combat ──
+    "punch": {
+        "verb":      "delivers a devastating haymaker with full body rotation",
+        "mechanics": "entire torso twisted, arm cocked far back, knuckles white, veins raised on forearm",
+        "impact":    "fist craters into the target's face, skin distorting under impact wave",
+        "reaction":  "spit and sweat explode sideways, head snapping backward violently, hair whipping",
+        "timing":    "maximum-force impact freeze-frame, kinetic energy at absolute peak",
+    },
+    "kick": {
+        "verb":      "drives a brutal flying side-kick with explosive force",
+        "mechanics": "body fully horizontal, kicking leg fully extended, support leg tucked",
+        "impact":    "boot heel connects with center of mass, concussive shockwave radiating outward",
+        "reaction":  "target's torso buckles, shattered debris bursting outward, dust plume rising",
+        "timing":    "mid-air freeze-frame at maximum extension, peak velocity moment",
+    },
+    "dodge": {
+        "verb":      "contorts into a desperate last-millisecond limbo dodge",
+        "mechanics": "spine arched backward impossibly far, knees buckling, hair brushing the ground",
+        "impact":    "weapon grazes chest fabric, tearing threads, millimetres from skin",
+        "reaction":  "shockwave ripples past skin, neon sparks trailing from near-miss, dirt exploding upward",
+        "timing":    "anticipation freeze-frame, maximum tension before the action resolves",
+    },
+    "block": {
+        "verb":      "throws up a bone-rattling forearm block under brutal force",
+        "mechanics": "forearm raised vertical, elbow locked, knees bent absorbing impact, feet skidding",
+        "impact":    "strike slams forearm with bone-shaking force, shockwave up the arm",
+        "reaction":  "clothing rippling from force wave, gravel skidding under feet, dust kicked up",
+        "timing":    "impact hold-frame, force peak visible in the arm bend",
+    },
+    "slash": {
+        "verb":      "unleashes a wide diagonal slash with reckless power",
+        "mechanics": "sword arm extended fully, body rotating at the hip, opposite arm counterbalancing",
+        "impact":    "blade arc cutting clean through the air, energy trail visible",
+        "reaction":  "pressure wave parting hair and cloth, sparks if striking metal, air displacement visible",
+        "timing":    "mid-swing freeze-frame, blade at maximum velocity",
+    },
+    "tackle": {
+        "verb":      "launches into a full-body rugby tackle, shoulder lowered",
+        "mechanics": "shoulder dropped, legs driving, arms wrapping around torso",
+        "impact":    "shoulder drives into midsection, both bodies leaving the ground",
+        "reaction":  "ground cracks on landing, debris cloud, tumbling momentum",
+        "timing":    "collision impact freeze-frame, bodies airborne",
+    },
+    "throw": {
+        "verb":      "executes a judo hip-throw with explosive commitment",
+        "mechanics": "hips pivoting, attacker's centre of gravity dropping below the target's",
+        "impact":    "target arcing overhead in an inverted parabola, feet leaving ground",
+        "reaction":  "ground impact crater, dust explosion, shockwave through the floor",
+        "timing":    "apex of the throw, target fully inverted in mid-air",
+    },
+    # ── Movement ──
+    "run": {
+        "verb":      "hurtles forward in a desperate full-sprint, arms pumping",
+        "mechanics": "extreme forward lean, feet barely touching ground, hair streaming backward",
+        "impact":    "each footstrike leaving a small crater in the surface",
+        "reaction":  "dust wake trailing, air pressure wave bending nearby objects",
+        "timing":    "peak-stride freeze-frame, one foot off the ground entirely",
+    },
+    "land": {
+        "verb":      "crashes down from height into a predator's crouching impact stance",
+        "mechanics": "knees deeply bent absorbing impact, one fist touching ground, head raised",
+        "impact":    "boots hit concrete, spiderweb cracks radiating from impact point",
+        "reaction":  "dust and debris erupting in a circle around the landing point, loose gravel bouncing",
+        "timing":    "landing impact hold-frame, crater visible, dust cloud mid-expansion",
+    },
+    "leap": {
+        "verb":      "launches into a soaring aerial leap from a running start",
+        "mechanics": "legs fully extended, arms stretched wide, body forming a clean arc",
+        "impact":    "peak of arc, silhouetted against sky or background",
+        "reaction":  "air displaced beneath, cape or clothing billowing upward from velocity",
+        "timing":    "apex freeze-frame, maximum height, body fully extended",
+    },
+    "charge": {
+        "verb":      "erupts into a reckless full-body charge with total commitment",
+        "mechanics": "head lowered, arms back, legs driving with explosive force",
+        "impact":    "nothing in the path has time to react",
+        "reaction":  "ground churning underfoot, obstacles scattering aside, dust wake",
+        "timing":    "mid-charge freeze, maximum velocity, unstoppable force visible",
+    },
+    "fall": {
+        "verb":      "crumples and collapses in a dead-weight free-fall",
+        "mechanics": "knees buckling first, then torso folding, limbs loose and uncontrolled",
+        "impact":    "body hitting ground in a heap, unable to break the fall",
+        "reaction":  "dust rising, loose items scattering from impact, eerie stillness after",
+        "timing":    "moment of total surrender to gravity, body mid-collapse",
+    },
+    "crawl": {
+        "verb":      "drags forward on hands and knees through sheer will alone",
+        "mechanics": "arms trembling under weight, chin barely above ground, one knee forward",
+        "impact":    "each handprint pressing into the ground surface",
+        "reaction":  "trail of effort visible, surrounding environment emphasising the struggle",
+        "timing":    "mid-crawl hold, the weight of every centimetre visible",
+    },
+    # ── Dramatic ──
+    "stands": {
+        "verb":      "stands like a monument, rooted and immovable under pressure",
+        "mechanics": "feet planted wide, fists clenched, every muscle in visible tension",
+        "impact":    "occupies the centre of the frame with gravitational authority",
+        "reaction":  "wind moves around him rather than past him, environment yielding",
+        "timing":    "held still-frame, maximum presence, atmosphere charged with intent",
+    },
+    "raises": {
+        "verb":      "raises arms skyward in a full-body victory declaration",
+        "mechanics": "both arms fully extended overhead, chest open, chin raised to sky",
+        "impact":    "silhouetted against open sky or explosion, the embodiment of triumph",
+        "reaction":  "light catches the figure, surrounding space opens wide",
+        "timing":    "peak triumphant hold, the moment of absolute victory",
+    },
+    "holds": {
+        "verb":      "holds absolute ground under immense external pressure",
+        "mechanics": "heels dug in, arms braced, body angled against opposing force",
+        "impact":    "the line held, ground not given",
+        "reaction":  "wind and force bending everything around the fixed point",
+        "timing":    "maximum-resistance hold-frame, the tension of not breaking",
+    },
+    "sits": {
+        "verb":      "collapses into a seated position with the full weight of exhaustion",
+        "mechanics": "knees drawn up, arms resting on knees, head dropped forward",
+        "impact":    "the weight of everything visible in the curve of the spine",
+        "reaction":  "stillness around the figure, empty space amplifying the loneliness",
+        "timing":    "held contemplative frame, the breath between events",
+    },
+    "reaches": {
+        "verb":      "stretches every centimetre of reach toward something just out of grasp",
+        "mechanics": "full arm extension, body leaning forward at maximum tilt, fingers spread wide",
+        "impact":    "fingertips millimetres from the target, almost there",
+        "reaction":  "the gap between fingers and target visually charged",
+        "timing":    "anticipation freeze-frame, everything hanging on this moment",
+    },
+    "watches": {
+        "verb":      "stares with burning intensity at something that changes everything",
+        "mechanics": "body completely still, eyes locked, jaw tight, not breathing",
+        "impact":    "the thing being watched visible or implied in frame",
+        "reaction":  "the stillness itself is charged with unspoken reaction",
+        "timing":    "held observation frame, the weight of what is being witnessed",
+    },
+    "clutches": {
+        "verb":      "clutches head in both hands as sensation becomes overwhelming",
+        "mechanics": "fingers digging into scalp, elbows pulled inward, body curling around itself",
+        "impact":    "the internal experience externalised in every tense muscle",
+        "reaction":  "world blurring or warping around the figure, suggesting inner chaos",
+        "timing":    "peak internal crisis hold-frame, maximum overwhelm visible",
+    },
+    "floats": {
+        "verb":      "drifts with total surrender to weightlessness",
+        "mechanics": "limbs extended and relaxed, body horizontal, face upward",
+        "impact":    "separation from gravity complete, floating in the moment",
+        "reaction":  "environment becomes soft and secondary, depth-of-field blurring",
+        "timing":    "suspended drift frame, time itself slowing to a stop",
+    },
+    # ── Generic fallback ──
+    "observes": {
+        "verb":      "witnesses the moment with total, unguarded presence",
+        "mechanics": "body open and still, hands at sides, face forward",
+        "impact":    "the thing being witnessed reflected in the character's expression",
+        "reaction":  "surrounding environment resonating with the emotional weight",
+        "timing":    "contemplative witness frame, the now fully inhabited",
+    },
+}
+
+
 # Camera angle assignments based on emotion beat
 _BEAT_CAMERA_MAP: Dict[str, str] = {
     "contained_fire": "low_angle",
@@ -165,31 +341,90 @@ class ActionDirector(BaseAgent):
         super().__init__("action_director")
 
     def plan(self, story_config: Dict[str, Any], memory: "StorySectionMemory") -> Dict[str, Any]:
-        """Validates and enriches actions in each panel."""
+        """
+        Validates and cinematically exaggerates every action in every panel.
+
+        For each action dict on the blackboard, resolves the verb against
+        ACTION_EXAGGERATION_MAP and writes 5 additional fields:
+            exaggerated_verb, body_mechanics, impact_fx,
+            environmental_reaction, cinematic_timing
+
+        These fields are consumed by panel_engine._build_prompt() Step 7
+        to construct a 40-60 word action clause instead of a 3-word fragment.
+        If the raw verb does not match any entry, falls back to the 'observes'
+        entry so the prompt always has dimensional language.
+        """
         panels = memory.raw_panels or story_config.get("panels", [])
         enriched = 0
+        exaggerated = 0
+
+        # Beat → canonical verb key for panels that arrive with NO actions at all
+        _BEAT_DEFAULT_VERB: Dict[str, str] = {
+            "contained_fire": "holds",
+            "breakthrough":   "charge",
+            "triumph":        "raises",
+            "stillness":      "stands",
+            "drift":          "floats",
+            "spiral":         "clutches",
+            "ache":           "sits",
+            "momentum":       "run",
+            "fracture":       "punch",
+            "peak_noise":     "clutches",
+            "absence":        "watches",
+            "radiance":       "raises",
+            "transcendence":  "floats",
+            "vulnerability":  "reaches",
+            "recognition":    "watches",
+            "heaviness":      "crawl",
+            "surrender":      "fall",
+            "drag":           "crawl",
+        }
+
         for panel in panels:
             actions = panel.get("actions", [])
             beat = panel.get("emotion_beat", "neutral")
-            # If no actions, synthesize a default from the emotion beat
+
+            # ── Synthesise a default action if the panel has none ──
             if not actions:
                 char_list = panel.get("characters", [])
                 actor = char_list[0].get("id", "character") if char_list else "character"
-                action_map = {
-                    "contained_fire": ("holds", "ground"),
-                    "breakthrough":   ("charges", "forward"),
-                    "triumph":        ("raises", "arms"),
-                    "stillness":      ("stands", "still"),
-                    "drift":          ("floats", "inward"),
-                    "spiral":         ("clutches", "head"),
-                    "ache":           ("sits", "alone"),
-                    "momentum":       ("runs", "forward"),
-                }
-                verb, target = action_map.get(beat, ("observes", "the moment"))
-                panel["actions"] = [{"actor": actor, "verb": verb, "target": target}]
+                default_verb = _BEAT_DEFAULT_VERB.get(beat, "observes")
+                panel["actions"] = [{"actor": actor, "verb": default_verb, "target": ""}]
                 enriched += 1
-        self.log.info(f"Action Director enriched {enriched} panels with default actions.")
-        return {"status": "Actions verified", "enriched": enriched}
+
+            # ── Exaggerate every action with the 5-layer cinematic map ──
+            for action in panel["actions"]:
+                # Only enrich if mechanics is missing or empty
+                if not action.get("mechanics") or action["mechanics"].strip() == "":
+                    raw_verb = action.get("verb", "observes").lower().strip()
+
+                    # Fuzzy match: 'runs' hits 'run', 'punching' hits 'punch'
+                    matched_key = None
+                    for key in ACTION_EXAGGERATION_MAP:
+                        if raw_verb.startswith(key) or key.startswith(raw_verb):
+                            matched_key = key
+                            break
+                    if not matched_key:
+                        matched_key = "observes"
+
+                    cinematic = ACTION_EXAGGERATION_MAP[matched_key]
+
+                    # Enrich: use cinematic verb if original verb is empty or generic
+                    if action.get("verb", "").strip() in ("", "observes") or action.get("verb", "").lower().strip() == matched_key:
+                        action["verb"] = cinematic["verb"]
+
+                    action["mechanics"] = action.get("mechanics") or cinematic["mechanics"]
+                    action["impact"]    = action.get("impact") or cinematic["impact"]
+                    action["reaction"]  = action.get("reaction") or cinematic["reaction"]
+                    action["timing"]    = action.get("timing") or cinematic["timing"]
+                    exaggerated += 1
+
+        self.log.info(
+            f"Action Director: {enriched} panels given default actions, "
+            f"{exaggerated} action(s) exaggerated with 5-layer cinematic descriptors."
+        )
+        return {"status": "Actions verified and cinematically exaggerated",
+                "enriched": enriched, "exaggerated": exaggerated}
 
     def update(self, panel_result: Dict[str, Any], memory: "StorySectionMemory"):
         pass

@@ -462,10 +462,37 @@ class StoryIntakeEngine:
             f"Use its tropes, scene rhythms, and character dynamics as inspiration.\n"
         ) if story_reference else ""
 
-        system_prompt = f"""You are a master graphic novelist and cinematic director.
+        system_prompt = f"""You are a master graphic novelist, cinematic director, and stunt choreographer.
 Respond ONLY with a single valid JSON object. No markdown fences, no explanation, no comments.
 
 {style_str}{char_str}{story_ref_str}
+
+CORE RULE — THE SINGLE MOST IMPORTANT INSTRUCTION:
+This is a COMIC, not prose. Every single panel MUST depict ONE specific, visually distinct,
+dramatically exaggerated ACTION EVENT. Think Michael Bay storyboard meets Frank Miller.
+Diffusion models regress to static portraits when given weak verbs. You must FIGHT that
+by writing with maximum cinematic specificity.
+
+PER-PANEL MANDATORY CHECKLIST (every panel must pass ALL 5 points):
+1. ONE DOMINANT ACTION — a single physical event happening RIGHT NOW in this panel
+2. EXAGGERATED MECHANICS — describe exact body-part positions under maximum tension
+   - BAD: "Kage runs" / GOOD: "Kage hurls himself forward, spine horizontal, knuckles
+     grazing ground, one foot driving off a wall"
+3. IMPACT OR CONSEQUENCE — what physically happens as a result of the action
+   - BAD: "hits" / GOOD: "boot connects with the panel, spiderweb cracks radiating outward"
+4. ENVIRONMENTAL REACTION — how does the world around them respond to this action
+   - dust clouds, neon signs flickering, windows shattering, embers rising, sparks
+5. CINEMATIC FREEZE-FRAME CUE — tell the model WHICH millisecond of the action
+   - "anticipation frame", "maximum-force impact freeze", "follow-through recovery",
+     "peak of arc silhouetted against sky", "landing impact hold"
+
+EVENT SEQUENCING RULE:
+Each panel MUST depict a DIFFERENT physical state from every other panel.
+Panel 1 = setup/anticipation. Panel 2 = rising conflict. Panel 3 = escalation.
+Middle panels = confrontation + consequence. Final panels = climax + aftermath.
+No two panels can show the same action or the same body position.
+Consecutive panels must feel like frames from a single kinetic sequence.
+
 LITERARY CONSTRAINTS (from Story-Weaver blueprint):
 - NEVER name emotions directly. Show through action, objects, sensation.
 - ONE recurring visual motif must appear in every single panel.
@@ -489,11 +516,22 @@ VISUAL SPECIFICITY RULES — you MUST follow these for every panel:
    Example: "Narrow rain-soaked alleyway, 2am, dominant palette deep indigo and neon pink,
    single overhead streetlamp casting hard shadows downward"
 
-3. pose.body field: MUST include character's clothing/costume AND body position.
-   Example: "crouching forward in torn grey hoodie and black cargo pants, weight on left foot"
+3. actions field — THE MOST IMPORTANT FIELD. Must contain:
+   - "verb": a POWERFUL, SPECIFIC action verb (NOT walk/stand/look)
+     Use: sprint, hurl, slam, explode, pivot, wrench, crash, erupt, lunge, shatter
+   - "target": what or whom the verb acts on, with specific physical detail
+   - "mechanics": exact body position and tension (NEW MANDATORY FIELD)
+   - "impact": what physically happens at the point of contact or consequence
+   - "reaction": how the environment responds to this action
+   - "timing": the freeze-frame moment label
 
-4. dialogue.text: Write REAL dialogue. Punchy. Max 12 words. No placeholders.
-   Characters speak like real people under emotional pressure.
+4. pose.body field: MUST include character's clothing/costume AND EXTREME body position.
+   Good: "lunging forward in torn grey hoodie, spine parallel to ground,
+   right arm cocked back past the ear, left hand braced on a wall"
+   Bad: "crouching in grey hoodie"
+
+5. dialogue.text: Write REAL dialogue. Punchy. Max 12 words. No placeholders.
+   Characters speak like real people under extreme emotional pressure.
 
 Generate a {panel_count}-panel comic story. Output this exact JSON:
 {{
@@ -510,12 +548,20 @@ Generate a {panel_count}-panel comic story. Output this exact JSON:
       "characters": [
         {{
           "id": "character_name_lowercase",
-          "pose": {{"body": "clothing + physical stance", "head": "head direction", "arms": "arm position", "legs": "leg position"}},
+          "pose": {{"body": "clothing + EXTREME physical stance", "head": "head direction", "arms": "arm position", "legs": "leg position"}},
           "expression": {{"emotion": "specific emotion", "eyes": "eye description", "mouth": "mouth position"}},
           "dialogue": {{"text": "Actual spoken words.", "tone": "tone descriptor", "bubble": "speech|thought|shout|whisper"}}
         }}
       ],
-      "actions": [ {{"actor": "character_id", "verb": "action verb", "target": "what/whom"}} ],
+      "actions": [ {{
+        "actor": "character_id",
+        "verb": "powerful specific action verb",
+        "target": "what/whom with physical detail",
+        "mechanics": "exact body-part positions under tension",
+        "impact": "what physically happens at contact/consequence",
+        "reaction": "how the environment responds",
+        "timing": "freeze-frame moment label"
+      }} ],
       "camera": "angle + movement descriptor",
       "environment": "location, time, dominant palette, light source"
     }}
@@ -718,6 +764,69 @@ Generate a {panel_count}-panel comic story. Output this exact JSON:
         }
         default_dialogue = {"text": "...", "tone": "neutral", "bubble": "speech"}
 
+        # ── Beat → cinematic action mapping for the fallback generator ──
+        # Each entry is a raw action dict that ActionDirector will ALSO exaggerate,
+        # so even the fallback path produces 5-layer cinematic prompts.
+        # The verb keys match ACTION_EXAGGERATION_MAP in director_swarm.py.
+        _BEAT_ACTIONS: Dict[str, Dict[str, str]] = {
+            # Angry arc
+            "contained_fire": {"verb": "holds",    "target": "the edge, knuckles white on the railing"},
+            "fracture":       {"verb": "punch",    "target": "the cracked wall, plaster exploding"},
+            "exhale":         {"verb": "stands",   "target": "in the aftermath, chest heaving"},
+            "cooling":        {"verb": "sits",     "target": "on the ground, back against the wall"},
+            "ground":         {"verb": "watches",  "target": "the horizon, breath finally slowing"},
+            # Determined arc
+            "doubt":          {"verb": "watches",  "target": "the obstacle, jaw tight, calculating"},
+            "challenge":      {"verb": "stands",   "target": "at the base of the impossible climb"},
+            "resistance":     {"verb": "holds",    "target": "position against the crushing force"},
+            "breakthrough":   {"verb": "charge",   "target": "through the barrier, arms breaking through"},
+            "momentum":       {"verb": "run",      "target": "forward, nothing left to slow them down"},
+            "triumph":        {"verb": "raises",   "target": "arms to the open sky"},
+            # Sad arc
+            "heaviness":      {"verb": "crawl",    "target": "out of bed, the weight of everything"},
+            "stillness":      {"verb": "stands",   "target": "in the empty room, hands at sides"},
+            "faint_warmth":   {"verb": "reaches",  "target": "toward the single point of warm light"},
+            "tentative_light":{"verb": "reaches",  "target": "for the door handle, not yet turning it"},
+            "soft_openness":  {"verb": "watches",  "target": "the morning come through the curtain"},
+            "quiet_hope":     {"verb": "stands",   "target": "at the window, face tilted into the light"},
+            # Happy arc
+            "spark":          {"verb": "leap",     "target": "from the starting line, arms wide"},
+            "expansion":      {"verb": "runs",     "target": "across the open field, arms spread"},
+            "overflow":       {"verb": "raises",   "target": "both arms laughing into the sky"},
+            "radiance":       {"verb": "stands",   "target": "glowing in the full warm light"},
+            "luminous_still": {"verb": "watches",  "target": "the world with complete peace"},
+            "transcendence":  {"verb": "floats",   "target": "in the light, gravity forgotten"},
+            # Anxious arc
+            "spiral":         {"verb": "clutches", "target": "head, the noise becoming unbearable"},
+            "peak_noise":     {"verb": "block",    "target": "ears with both palms, eyes screwed shut"},
+            "pause":          {"verb": "stands",   "target": "at the eye of the storm, utterly still"},
+            "breath":         {"verb": "sits",     "target": "on the floor, hands on knees, breathing"},
+            "root":           {"verb": "stands",   "target": "with both feet planted, weight dropping"},
+            "present":        {"verb": "watches",  "target": "everything clearly for the first time"},
+            # Grief arc
+            "absence":        {"verb": "stands",   "target": "in the door of the empty room"},
+            "ache":           {"verb": "sits",     "target": "holding the last thing left of them"},
+            "memory":         {"verb": "reaches",  "target": "toward the photograph, not touching it"},
+            "held":           {"verb": "watches",  "target": "someone hold them without flinching"},
+            "continuance":    {"verb": "stands",   "target": "at the door, coat on, ready to go back"},
+            "carried_forward":{"verb": "walks",    "target": "forward, carrying everything that matters"},
+            # Tired arc
+            "drag":           {"verb": "crawl",    "target": "toward the sink, one step at a time"},
+            "surrender":      {"verb": "fall",     "target": "onto the bed without taking off shoes"},
+            "softness":       {"verb": "sits",     "target": "letting the blanket pull around them"},
+            "drift":          {"verb": "floats",   "target": "between waking and sleep"},
+            "quiet_rest":     {"verb": "lies",     "target": "completely still, finally resting"},
+            "renewal":        {"verb": "stands",   "target": "at the window, seeing morning"},
+            # Love arc
+            "recognition":    {"verb": "watches",  "target": "them across the room, seeing clearly"},
+            "vulnerability":  {"verb": "reaches",  "target": "out with open hand, not yet taken"},
+            "trust":          {"verb": "stands",   "target": "beside them, close enough to touch"},
+            "embrace":        {"verb": "holds",    "target": "them with every bit of strength left"},
+            "unity":          {"verb": "watches",  "target": "the same thing at the same moment"},
+            # Generic
+            "neutral":        {"verb": "stands",   "target": "taking stock of the moment"},
+        }
+
         panels = []
         for i in range(panel_count):
             beat = beats[i]
@@ -734,6 +843,9 @@ Generate a {panel_count}-panel comic story. Output this exact JSON:
             pose = pose_by_beat.get(beat, default_pose)
             dialogue = dialogue_by_beat.get(beat, default_dialogue)
 
+            # Resolve action: use the beat-specific dramatic action, fallback to generic
+            action_entry = _BEAT_ACTIONS.get(beat, {"verb": "stands", "target": "in the scene"})
+
             panels.append({
                 "panel": i + 1,
                 "emotion_beat": beat,
@@ -746,7 +858,14 @@ Generate a {panel_count}-panel comic story. Output this exact JSON:
                     }
                 ],
                 "actions": [
-                    {"actor": character_name.lower(), "verb": "moves through", "target": beat}
+                    {
+                        "actor": character_name.lower(),
+                        "verb": action_entry["verb"],
+                        "target": action_entry["target"],
+                        # mechanics/impact/reaction/timing are left empty here
+                        # so ActionDirector.plan() will populate them from
+                        # ACTION_EXAGGERATION_MAP during Phase 1 planning
+                    }
                 ],
                 "camera": camera,
                 "environment": environment,

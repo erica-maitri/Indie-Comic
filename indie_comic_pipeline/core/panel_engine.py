@@ -515,14 +515,35 @@ class PanelEngine:
             )
             parts.append(expr_str)
 
-        # ── 7. Actions ──
+        # ── 7. Actions (5-layer cinematic exaggeration) ──
+        # Each action dict contains standard keys:
+        #   actor, verb, target, mechanics, impact, reaction, timing
+        # We assemble these into a ~50-word, event-specific clause.
         for action in scene_graph.get("actions", []):
-            act_str = (
-                f"{action.get('actor', '')} "
-                f"{action.get('verb', '')} "
-                f"{action.get('target', '')}."
-            )
-            parts.append(act_str.strip())
+            actor = action.get("actor", "").strip()
+            verb = action.get("verb", "").strip()
+            target = action.get("target", "").strip()
+            mechanics = action.get("mechanics", "").strip()
+            impact = action.get("impact", "").strip()
+            reaction = action.get("reaction", "").strip()
+            timing = action.get("timing", "").strip()
+
+            # ── Check if we have rich cinematic layers ──
+            if mechanics or impact or reaction or timing:
+                layers = [
+                    f"{actor} {verb}" + (f" {target}" if target else ""),
+                    mechanics,
+                    impact,
+                    reaction,
+                    timing,
+                ]
+                act_str = ". ".join(part.strip() for part in layers if part.strip())
+            else:
+                # Fallback: simple actor verb target phrase
+                act_str = f"{actor} {verb} {target}.".strip()
+
+            if act_str:
+                parts.append(act_str)
 
         # ── 8. Recurring Motif ──
         motif = self.memory.recurring_motif
@@ -582,6 +603,45 @@ class PanelEngine:
             negatives += ["busy background", "chaotic", "high contrast", "intense action"]
         elif beat in ("heaviness", "drag", "surrender"):
             negatives += ["bright", "colorful", "vivid", "cheerful", "uplifting"]
+
+        # Action-type negatives — fight SDXL's mean-regression per action category
+        # Without these, combat panels produce static portraits; drift panels look busy.
+        scene_graph = context.get("scene_graph", {})
+        actions = scene_graph.get("actions", []) if scene_graph else []
+        action_verbs = {a.get("verb", "").lower() for a in actions}
+
+        _COMBAT_VERBS = {"punch", "kick", "slash", "block", "tackle", "throw",
+                         "dodge", "fight", "attack", "strike"}
+        _MOVEMENT_VERBS = {"run", "sprint", "charge", "leap", "jump", "dash"}
+        _REST_VERBS = {"sit", "sits", "lie", "rest", "float", "floats",
+                       "drift", "crawl", "sleep"}
+        _OBSERVE_VERBS = {"watch", "watches", "stare", "observe", "look", "stand", "stands"}
+
+        if action_verbs & _COMBAT_VERBS:
+            # Combat panels: SDXL freezes into portrait unless explicitly told not to
+            negatives += [
+                "static pose", "standing still", "neutral expression",
+                "symmetrical composition", "hands at sides", "portrait framing",
+                "slow motion blur", "passive",
+            ]
+        elif action_verbs & _MOVEMENT_VERBS:
+            # Motion panels: avoid static feet-on-ground looks
+            negatives += [
+                "standing still", "both feet on ground", "stiff", "frozen",
+                "stationary", "relaxed pose", "symmetrical",
+            ]
+        elif action_verbs & _REST_VERBS:
+            # Quiet panels: avoid busy, chaotic, high-contrast generation
+            negatives += [
+                "dynamic action", "explosion", "fight", "motion blur",
+                "busy background", "high contrast", "harsh lighting",
+            ]
+        elif action_verbs & _OBSERVE_VERBS:
+            # Contemplative panels: avoid drama creeping in
+            negatives += [
+                "action pose", "combat", "explosion", "extreme angle",
+                "motion lines", "speed lines",
+            ]
 
         return ", ".join(negatives)
 
