@@ -70,6 +70,13 @@ EMOTION             = env("EMOTION",              "sad").lower()
 PANEL_COUNT         = max(4, min(10, int(env("PANEL_COUNT", "6"))))
 USER_TEXT           = env("USER_TEXT",            "everything feels heavy lately")
 CONFIDENCE          = float(env("EMOTION_CONFIDENCE", "0.72"))
+# "literal"  -> USER_TEXT is the primary structural driver; the story is split
+#               into N sequential panels in its own order, with detected
+#               emotion used only as a tone/lighting hint per panel.
+# "mood_arc" -> legacy behaviour; a fixed generic emotional-arc template
+#               (MOOD_ARCS below) dictates the beat assigned to each panel,
+#               and USER_TEXT is passed only as one line of background context.
+STORY_MODE          = env("STORY_MODE",           "literal").lower()
 
 # Optimal parameter maps from parameter search GP optimization
 _OPT_MAP = {
@@ -91,7 +98,7 @@ MAX_TPP             = int(env("MAX_TOKENS_PER_PANEL",  str(_opt["m"])))
 RETRIES             = int(env("RETRY_ATTEMPTS",   "3"))
 OUTPUT_FILE         = env("OUTPUT_FILE",          "story_dynamic.json")
 
-log.info(f"Config loaded — emotion={EMOTION}, panels={PANEL_COUNT}, model={MODEL_PATH}")
+log.info(f"Config loaded — emotion={EMOTION}, panels={PANEL_COUNT}, model={MODEL_PATH}, story_mode={STORY_MODE}")
 
 # ---------------------------------------------------------------------------
 # Mood Arc Definitions
@@ -292,6 +299,36 @@ def build_prompt(n: int) -> str:
     sec    = SECONDARY_DEFAULTS.get(EMOTION, [{"emotion":"unnamed","score":0.10}])
     sec_str = ", ".join(f"{e['emotion']} {e['score']}" for e in sec)
 
+    if STORY_MODE == "literal":
+        # ── Literal mode ──────────────────────────────────────────────
+        # The user's story is the primary source. Emotion/arc data is
+        # demoted to an optional tone vocabulary instead of a mandatory
+        # per-panel beat sequence, so specific characters, settings, and
+        # events the user wrote are not steamrolled by a generic template.
+        beat_vocab = ", ".join(arc["arc_beats"])
+        return (
+            f'STORY TO ADAPT (primary source — follow its characters, setting, '
+            f'and events, in the order they occur; do not invent an unrelated '
+            f'plot):\n"""\n{USER_TEXT}\n"""\n\n'
+            f"Detected emotional tone: {EMOTION} (confidence {CONFIDENCE}). "
+            f"Secondary tones: {sec_str}.\n"
+            f"TONE VOCABULARY (optional — use only the words that genuinely fit "
+            f"what is happening in a given panel; leave any that don't apply "
+            f"unused, and don't force the story to visit all of them): "
+            f"{beat_vocab}.\n\n"
+            f"Write exactly {n} panels that divide the story above into {n} "
+            f"sequential moments, in story order. Carry the story's specific "
+            f"character names, setting details, and events into every panel's "
+            f"dialogue and visuals — do not summarize them away into generic "
+            f"description. Each panel's emotion_beat should name what that "
+            f"specific moment feels like (from the tone vocabulary if it fits, "
+            f"or a more precise word if it doesn't).\n\n"
+            "Write the JSON now."
+        )
+
+    # ── mood_arc mode (legacy behaviour) ────────────────────────────────
+    # A fixed generic emotional arc dictates the beat for every panel;
+    # USER_TEXT is passed only as one line of background context.
     beat_guide = "\n".join(
         f"  Panel {i+1} [{phases[i]}] → beat: {beats[i]}"
         for i in range(n)
@@ -378,6 +415,18 @@ class DynamicStoryGenerator:
         story_ref_str = os.environ.get("STORY_REF_STR", "")
         if style_str or char_str or story_ref_str:
             system_prompt = f"{style_str}{char_str}{story_ref_str}\n\n{system_prompt}"
+
+        if STORY_MODE == "literal":
+            fidelity_str = (
+                "STORY FIDELITY (highest priority — overrides the literary "
+                "constraints below wherever they conflict):\n"
+                "The user has supplied a specific story. Adapt THAT story panel "
+                "by panel — keep its named characters, setting, and plot events "
+                "intact. Do not replace it with a generic emotional-arc scene. "
+                "Emotion/mood language is a tone and lighting choice layered on "
+                "top of the actual events, never a substitute for them.\n\n"
+            )
+            system_prompt = f"{fidelity_str}{system_prompt}"
 
         if self.is_ollama:
             import httpx

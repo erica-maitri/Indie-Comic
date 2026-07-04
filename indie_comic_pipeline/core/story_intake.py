@@ -246,7 +246,8 @@ class StoryIntakeEngine:
                        character_characteristics: str = "",
                        story_reference: str = "",
                        mood_shifts: Optional[List[str]] = None,
-                       weave_mood: bool = False) -> Dict[str, Any]:
+                       weave_mood: bool = False,
+                       story_mode: str = "literal") -> Dict[str, Any]:
         """
         Process a raw user prompt into a structured story configuration.
 
@@ -256,6 +257,12 @@ class StoryIntakeEngine:
             character_name: Main character name
             story_world: Story world/setting name
             weave_mood: Enable Mood Weaver mode (auto-detects emotion, maps character, selects franchise style)
+            story_mode: "literal" (default) makes user_prompt the primary structural
+                driver — panels are the story split into N sequential moments, and
+                detected emotion only shades tone/lighting. "mood_arc" restores the
+                legacy behaviour where a fixed generic emotional-arc template
+                dictates each panel's beat and user_prompt is passed as one line
+                of background context.
 
         Returns:
             Structured story config dict with:
@@ -308,7 +315,7 @@ class StoryIntakeEngine:
             try:
                 story_config = self._generate_with_llm(
                     user_prompt, emotion, panel_count, character_name, story_world, style_reference,
-                    character_characteristics, story_reference, mood_shifts
+                    character_characteristics, story_reference, mood_shifts, story_mode
                 )
                 if story_config and self._validate_story(story_config, panel_count):
                     # Inject metadata so downstream agents can find character/world
@@ -351,7 +358,8 @@ class StoryIntakeEngine:
                            story_world: str, style_reference: str = "",
                            character_characteristics: str = "",
                            story_reference: str = "",
-                           mood_shifts: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
+                           mood_shifts: Optional[List[str]] = None,
+                           story_mode: str = "literal") -> Optional[Dict[str, Any]]:
         """Generate story by delegating to Story-Weaver's dynamic generator."""
         import sys
         import importlib.util
@@ -410,6 +418,7 @@ class StoryIntakeEngine:
                     story_gen_any.PANEL_COUNT = panel_count
                     story_gen_any.USER_TEXT = user_prompt
                     story_gen_any.MODEL_PATH = self.ollama_model
+                    story_gen_any.STORY_MODE = story_mode
 
                     # If custom mood shift beats are passed, override the arc beats in the module
                     if mood_shifts and len(mood_shifts) > 0:
@@ -462,10 +471,18 @@ class StoryIntakeEngine:
             f"Use its tropes, scene rhythms, and character dynamics as inspiration.\n"
         ) if story_reference else ""
 
+        fidelity_str = (
+            f"STORY FIDELITY (highest priority): The user has supplied a specific "
+            f"story below. Adapt THAT story panel by panel, in order — keep its "
+            f"named characters, setting, and plot events intact rather than "
+            f"substituting a generic scene. Emotion is a tone/lighting choice "
+            f"layered on top of the real events, never a replacement for them.\n"
+        ) if story_mode == "literal" else ""
+
         system_prompt = f"""You are a master graphic novelist, cinematic director, and stunt choreographer.
 Respond ONLY with a single valid JSON object. No markdown fences, no explanation, no comments.
 
-{style_str}{char_str}{story_ref_str}
+{fidelity_str}{style_str}{char_str}{story_ref_str}
 
 CORE RULE — THE SINGLE MOST IMPORTANT INSTRUCTION:
 This is a COMIC, not prose. Every single panel MUST depict ONE specific, visually distinct,
@@ -574,21 +591,41 @@ Generate a {panel_count}-panel comic story. Output this exact JSON:
             8: ["exposition", "inciting_incident", "rising_action", "complication", "crisis", "climax", "resolution", "aftermath"]
         }
         phases = TIMING_PHASES.get(panel_count, ["—"] * panel_count)
-        beat_guide = "\n".join(
-            f"  Panel {i+1} [{phases[i] if i < len(phases) else '—'}]: emotion_beat = \"{beats[i]}\""
-            for i in range(panel_count)
-        )
 
-        user_msg = (
-            f"Emotion: {emotion}\n"
-            f"Story world: {story_world}\n"
-            f"Character: {character_name}\n"
-            f"User prompt: \"{user_prompt}\"\n\n"
-            f"MOOD JOURNEY: {arc['journey']} — {arc['description']}\n\n"
-            f"Write exactly {panel_count} panels. Assign these emotion_beat values:\n"
-            f"{beat_guide}\n\n"
-            f"Remember: real dialogue, cinematic cameras, specific environments. Output JSON only."
-        )
+        if story_mode == "literal":
+            # The story itself drives panel content; arc_beats become an
+            # optional tone vocabulary instead of a mandatory per-panel list.
+            beat_vocab = ", ".join(arc.get("arc_beats", []))
+            user_msg = (
+                f'STORY TO ADAPT (primary source — follow it exactly, in order; '
+                f'do not invent an unrelated plot):\n"""\n{user_prompt}\n"""\n\n'
+                f"Character: {character_name}\n"
+                f"Story world: {story_world}\n"
+                f"Detected emotional tone: {emotion}\n"
+                f"TONE VOCABULARY (optional, use only where it genuinely fits): {beat_vocab}\n\n"
+                f"Write exactly {panel_count} panels that divide the story above into "
+                f"{panel_count} sequential moments, in story order. Carry the story's "
+                f"specific character names, setting details, and events into every "
+                f"panel's dialogue and visuals. Each panel's emotion_beat should name "
+                f"what that specific moment feels like.\n\n"
+                f"Remember: real dialogue, cinematic cameras, specific environments. Output JSON only."
+            )
+        else:
+            beat_guide = "\n".join(
+                f"  Panel {i+1} [{phases[i] if i < len(phases) else '—'}]: emotion_beat = \"{beats[i]}\""
+                for i in range(panel_count)
+            )
+
+            user_msg = (
+                f"Emotion: {emotion}\n"
+                f"Story world: {story_world}\n"
+                f"Character: {character_name}\n"
+                f"User prompt: \"{user_prompt}\"\n\n"
+                f"MOOD JOURNEY: {arc['journey']} — {arc['description']}\n\n"
+                f"Write exactly {panel_count} panels. Assign these emotion_beat values:\n"
+                f"{beat_guide}\n\n"
+                f"Remember: real dialogue, cinematic cameras, specific environments. Output JSON only."
+            )
 
         llm = self._get_llm()
         if llm is None:

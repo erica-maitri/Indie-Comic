@@ -305,6 +305,7 @@ class IntegratedComicPipeline:
             story_reference: str = "", mood_shifts: Optional[List[str]] = None,
             _prebuilt_story: Optional[Dict[str, Any]] = None,
             weave_mood: bool = False,
+            story_mode: str = "literal",
             **_kwargs) -> Dict[str, Any]:
         """Runs the entire 8-phase comic generation pipeline.
 
@@ -314,6 +315,13 @@ class IntegratedComicPipeline:
             A pre-built story config (from PipelineLauncher / StoryWeaverBridge)
             that bypasses Phase 0 (StoryIntakeEngine). Must conform to the
             StoryIntakeEngine output format (has ``"panels"``, ``"recurring_motif"``).
+        story_mode : str, default "literal"
+            "literal" makes `prompt` the primary structural driver — panels are
+            the story split into panel_count sequential moments, and detected
+            emotion only shades tone/lighting per panel. "mood_arc" restores the
+            legacy behaviour where a fixed generic emotional-arc template
+            dictates each panel's beat and `prompt` is passed as background
+            context only.
         **_kwargs
             Extra keyword arguments are silently ignored for forward compatibility.
         """
@@ -346,7 +354,8 @@ class IntegratedComicPipeline:
                     character_characteristics=character_characteristics,
                     story_reference=story_reference,
                     mood_shifts=mood_shifts,
-                    weave_mood=weave_mood
+                    weave_mood=weave_mood,
+                    story_mode=story_mode
                 )
 
             # Validate that story configuration has correct layout/format
@@ -458,7 +467,8 @@ class IntegratedComicPipeline:
                   story_world: str = "The Abstract", panel_count: int = 4,
                   style_reference: str = "", character_characteristics: str = "",
                   story_reference: str = "", mood_shifts: Optional[List[str]] = None,
-                  load_checkpoint: str = "", save_checkpoint: str = "") -> Dict[str, Any]:
+                  load_checkpoint: str = "", save_checkpoint: str = "",
+                  story_mode: str = "literal") -> Dict[str, Any]:
         """Runs the pipeline in chunks, allowing for pause/resume via JSON checkpointing."""
         log.info("=" * 80)
         log.info(f"Starting Batch Pipeline (Panels {start_panel} to {end_panel})")
@@ -476,7 +486,8 @@ class IntegratedComicPipeline:
                 user_prompt=prompt, panel_count=panel_count, character_name=character_name,
                 story_world=story_world, style_reference=style_reference,
                 character_characteristics=character_characteristics,
-                story_reference=story_reference, mood_shifts=mood_shifts
+                story_reference=story_reference, mood_shifts=mood_shifts,
+                story_mode=story_mode
             )
             log.info("\n--- Phase 1: Multi-Agent Planning ---")
             self.agent_coordinator.run_planning(story_config)
@@ -753,6 +764,9 @@ def main():
                         help="Enable Mood Weaver mode: auto-detect emotion, map character archetype, and select a random franchise setting style")
     parser.add_argument("--model", type=str, default=None,
                         help="Override default Ollama model (e.g. qwen2.5, mistral, llama3.2)")
+    parser.add_argument("--story-mode", type=str, default="literal", choices=["literal", "mood_arc"],
+                        help="'literal' (default) adapts your --prompt panel by panel, preserving its "
+                             "characters/events. 'mood_arc' uses the legacy generic emotional-arc template.")
                         
     args = parser.parse_args()
     
@@ -763,7 +777,8 @@ def main():
         character_name=args.character,
         story_world=args.world,
         panel_count=args.panels,
-        weave_mood=args.weave_mood
+        weave_mood=args.weave_mood,
+        story_mode=args.story_mode
     )
     
     print("\n" + "=" * 70)
