@@ -101,9 +101,10 @@ class QualityCritic:
             for k in self.weights:
                 current_weights[k] = self.weights[k] * scale
 
+        # Compute weighted composite score; missing dimensions contribute zero
         composite = sum(
-            scores[dim] * current_weights.get(dim, 0.2)
-            for dim in scores if dim in current_weights
+            scores.get(dim, 0.0) * current_weights.get(dim, 0.0)
+            for dim in current_weights
         )
 
         # Determine verdict
