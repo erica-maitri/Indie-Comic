@@ -130,18 +130,24 @@ class ReferenceFreeAnchor:
 
     def establish_anchor(self, panel_image, panel_id: int,
                          character_name: str,
-                         memory: "StorySectionMemory") -> Dict[str, Any]:
+                         memory: "StorySectionMemory",
+                         advanced_attention=None) -> Dict[str, Any]:
         """
         Establish the primary visual anchor from Panel 1.
 
         Args:
-            panel_image: PIL Image of the generated panel 1
-            panel_id: Panel identifier (usually 1)
-            character_name: Main character name
-            memory: Story Section Memory blackboard
+            panel_image:        PIL Image of the generated panel 1.
+            panel_id:           Panel identifier (usually 1).
+            character_name:     Main character name.
+            memory:             Story Section Memory blackboard.
+            advanced_attention: Optional AdvancedAttentionManager instance.
+                                If provided, computes foreground saliency mask
+                                (Mode 3) and structural detail fingerprint
+                                (Mode 1) immediately after anchor is saved,
+                                so they are available before panel 2 begins.
 
         Returns:
-            Identity tokens dict
+            Identity tokens dict.
         """
         log.info("=" * 50)
         log.info(f"PHASE 2: REFERENCE-FREE ANCHORING (Panel {panel_id})")
@@ -162,6 +168,24 @@ class ReferenceFreeAnchor:
         memory.set_anchor(panel_id, identity_tokens)
         memory.inject_identity_tokens(character_name, identity_tokens)
         log.info(f"  [Step 2.4] Identity tokens injected into Story Section Memory")
+
+        # ── MDCP Mitigations: step-zero anchor analysis ──────────────────────
+        # Mode 3 — Foreground Saliency: isolate character from background so
+        #           the L2 β blend is applied only to character spatial regions.
+        if advanced_attention is not None:
+            try:
+                advanced_attention.compute_anchor_saliency(panel_image)
+                log.info("  [Step 2.5] Foreground saliency mask computed (M3)")
+            except Exception as e:
+                log.debug(f"  [Step 2.5] Saliency computation skipped: {e}")
+
+            # Mode 1 — Detail Injector: Canny-edge structural fingerprint
+            try:
+                advanced_attention.compute_anchor_detail(anchor_path)
+                log.info("  [Step 2.6] Structural detail fingerprint computed (M1)")
+            except Exception as e:
+                log.debug(f"  [Step 2.6] Detail fingerprint skipped: {e}")
+        # ─────────────────────────────────────────────────────────────────────
 
         log.info("=" * 50)
         return identity_tokens

@@ -302,6 +302,22 @@ class PanelEngine:
             self.advanced_attention.on_panel_start(
                 panel_id=panel_id, is_anchor=is_anchor, total_steps=steps
             )
+
+            # Mode 2 — Regional Masking: extract per-character bounding boxes
+            # from the scene-graph and register them before generation begins.
+            # Boxes are in normalised [0, 1] coords derived from the LLM scene plan.
+            if self.advanced_attention.regional_masking_enabled:
+                boxes = self._extract_character_boxes(context)
+                if boxes:
+                    self.advanced_attention.set_character_regions(boxes)
+                    log.info(f"  [4b] RegionalMask: {len(boxes)} character box(es) registered")
+
+            # Mode 1 — Detail Injector: append structural hint to target panel prompts
+            if not is_anchor:
+                detail_suffix = self.advanced_attention.get_detail_prompt_suffix()
+                if detail_suffix:
+                    prompt += f", {detail_suffix}"
+
             log.info(f"  [4b] Advanced attention: "
                      f"{'ANCHOR capture' if is_anchor else 'consistency priors'} active")
 
@@ -336,7 +352,10 @@ class PanelEngine:
         # ── Step 6: Phase 2 Anchoring (if first panel) ──
         if panel_id == 1:
             char_name = self.memory.main_character or (list(self.memory.characters.keys())[0] if self.memory.characters else "Wanderer")
-            self.anchor_system.establish_anchor(image, panel_id, char_name, self.memory)
+            self.anchor_system.establish_anchor(
+                image, panel_id, char_name, self.memory,
+                advanced_attention=self.advanced_attention,
+            )
             log.info(f"  [6] Anchor established from Panel 1")
 
         # ── Step 6b: Finalise advanced attention for this panel ──
@@ -687,6 +706,51 @@ class PanelEngine:
 
         size_map = {"small": 0.3, "medium": 0.5, "large": 0.7, "full_page": 0.9}
         return size_map.get(layout.get("size_class", "medium"), 0.5)
+
+    def _extract_character_boxes(self, context: Dict[str, Any]) -> List[tuple]:
+        """
+        Extract per-character bounding boxes from the scene-graph for Mode 2 regional masking.
+
+        The LLM scene plan may optionally include a "bbox" key per character entry
+        in the format [x0, y0, x1, y1] with values normalised to [0, 1].
+
+        Falls back to evenly-distributed horizontal strips when no explicit boxes
+        are provided (heuristic: two characters side-by-side).
+
+        Returns:
+            List of (x0, y0, x1, y1) tuples in normalised coords, one per character.
+            Returns [] if fewer than 2 characters or no data available.
+        """
+        scene_graph = context.get("scene_graph", {})
+        characters = scene_graph.get("characters", []) if scene_graph else []
+        if len(characters) < 2:
+            return []  # Single character — regional masking not needed
+
+        boxes = []
+        for char in characters:
+            bbox = char.get("bbox") or char.get("bounding_box")
+            if bbox and len(bbox) == 4:
+                try:
+                    x0, y0, x1, y1 = [float(v) for v in bbox]
+                    # Clamp to [0, 1]
+                    x0, y0 = max(0.0, x0), max(0.0, y0)
+                    x1, y1 = min(1.0, x1), min(1.0, y1)
+                    if x1 > x0 and y1 > y0:
+                        boxes.append((x0, y0, x1, y1))
+                except (TypeError, ValueError):
+                    pass
+
+        if not boxes:
+            # Heuristic fallback: divide image into equal horizontal strips
+            n = len(characters)
+            strip_w = 1.0 / n
+            for i in range(n):
+                boxes.append((i * strip_w, 0.0, (i + 1) * strip_w, 1.0))
+            log.debug(
+                f"  [RegMask] No explicit bbox data — using {n} equal strips as fallback"
+            )
+
+        return boxes
 
     def cleanup(self):
         """Cleanup hooks and cached VRAM tensors to prevent leaks."""

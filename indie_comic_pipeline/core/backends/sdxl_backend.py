@@ -125,6 +125,24 @@ class SDXLBackend(BaseBackend):
         if config.get("enable_vae_slicing", True):
             self._pipe.enable_vae_slicing()
 
+        # FreeU: rebalances UNet skip-connection vs. backbone feature contributions
+        # to reduce over-smoothing / plastic-looking textures, with no extra
+        # training, checkpoints, or dependencies (native diffusers method).
+        # Defaults are the SDXL-specific values documented by HuggingFace diffusers
+        # (https://huggingface.co/docs/diffusers/using-diffusers/freeu), sourced from
+        # https://wandb.ai/nasirk24/UNET-FreeU-SDXL/reports/FreeU-SDXL-Optimal-Parameters
+        if config.get("enable_freeu", True):
+            try:
+                self._pipe.enable_freeu(
+                    s1=config.get("freeu_s1", 0.6),
+                    s2=config.get("freeu_s2", 0.4),
+                    b1=config.get("freeu_b1", 1.1),
+                    b2=config.get("freeu_b2", 1.2),
+                )
+                log.info("  FreeU enabled (s1=0.6, s2=0.4, b1=1.1, b2=1.2)")
+            except Exception as e:
+                log.warning(f"  FreeU enable failed (likely older diffusers version): {e}")
+
         # Safety checker removal
         if not config.get("safety_checker", False):
             self._pipe.safety_checker = None
