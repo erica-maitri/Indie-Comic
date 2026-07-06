@@ -255,6 +255,11 @@ class ModelEvaluator:
             inputs = self.siglip_processor(images=[img1, img2], return_tensors="pt", padding=True).to(self.device)
             with torch.no_grad():
                 features = self.siglip_model.get_image_features(**inputs)
+            if not isinstance(features, torch.Tensor):
+                if hasattr(features, "pooler_output"):
+                    features = features.pooler_output
+                elif isinstance(features, (list, tuple)):
+                    features = features[0]
             features = features / features.norm(p=2, dim=-1, keepdim=True)
             similarity = torch.nn.functional.cosine_similarity(features[0:1], features[1:2]).item()
             return max(0.0, min(1.0, similarity))

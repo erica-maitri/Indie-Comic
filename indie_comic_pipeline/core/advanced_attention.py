@@ -1050,7 +1050,7 @@ class AdvancedAttentionManager:
         L2 — SharedAttentionCache
         L3 — SpatiotemporalConsistencyEnforcer
 
-    Optional mitigations (each defaults to False — opt-in, non-breaking):
+    Optional mitigations (each defaults to True — enabled, non-breaking):
         freeu_enabled          — FreeUSkipScaler          (Mode 4)
         regional_masking_enabled — RegionalAttentionMask  (Mode 2)
         saliency_enabled       — ForegroundSaliencyMask   (Mode 3)
@@ -1069,12 +1069,12 @@ class AdvancedAttentionManager:
                  attention_blend: float = 0.15,
                  spatial_strength: float = 0.08,
                  enabled: bool = True,
-                 # ── Mitigation flags (opt-in) ──────────────────────────
-                 freeu_enabled: bool = False,
-                 regional_masking_enabled: bool = False,
-                 saliency_enabled: bool = False,
-                 adain_enabled: bool = False,
-                 detail_injector_enabled: bool = False,
+                 # ── Mitigation flags (enabled by default) ───────────────
+                 freeu_enabled: bool = True,
+                 regional_masking_enabled: bool = True,
+                 saliency_enabled: bool = True,
+                 adain_enabled: bool = True,
+                 detail_injector_enabled: bool = True,
                  # ── Mitigation tuning ──────────────────────────────────
                  freeu_backbone_scale: float = 1.2,
                  freeu_skip_scale: float = 0.9,

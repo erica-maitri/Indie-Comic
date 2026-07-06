@@ -1,9 +1,14 @@
 """
-RLHF TELEMETRY LOOP — Phase 8
-=============================
+HEURISTIC FEEDBACK TELEMETRY LOOP — Phase 8
+==========================================
 Collects user ratings and feedback per panel/page, storing them in a 
 local JSON file. Provides analytical aggregations to help optimize 
-pipeline settings over time.
+pipeline settings over time. 
+
+NOTE: This is a heuristic parameter adjustment loop from logged user ratings,
+not formal Reinforcement Learning from Human Feedback (RLHF), as there is no 
+trained reward model or policy-gradient update. The class name RLHFFeedbackLoop
+is kept for compatibility.
 """
 
 import os
@@ -17,10 +22,12 @@ log = logging.getLogger("pipeline.feedback")
 
 class RLHFFeedbackLoop:
     """
-    Phase 8: RLHF Telemetry Loop.
+    Phase 8: Heuristic Feedback Telemetry Loop.
     
     Manages collection and local JSON serialization of user star ratings (1-5),
-    qualitative feedback, and engagement metrics for pages and panels.
+    qualitative feedback, and engagement metrics for pages and panels. Functionally
+    serves as a telemetry recorder for heuristic hyperparameter tuning, rather than
+    formal RLHF with trained reward models.
     """
 
     def __init__(self, feedback_path: str = "outputs/rlhf_feedback.json"):

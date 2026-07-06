@@ -455,10 +455,35 @@ if dinov2 is not None:
     metrics['DINOv2 Similarity'] = dinov2
     print(f"  -> DINOv2: {metrics['DINOv2 Similarity']:.4f} (higher is better)")
 
+dinov3 = evaluator.compute_dinov3_similarity(gen_img, ref_img)
+if dinov3 is not None:
+    metrics['DINOv3 Similarity'] = dinov3
+    print(f"  -> DINOv3: {metrics['DINOv3 Similarity']:.4f} (higher is better)")
+
+siglip = evaluator.compute_siglip_similarity(gen_img, ref_img)
+if siglip is not None:
+    metrics['SigLIP Similarity'] = siglip
+    print(f"  -> SigLIP Similarity: {metrics['SigLIP Similarity']:.4f} (higher is better)")
+
 clip_img = evaluator.compute_clip_image_similarity(gen_img, ref_img)
 if clip_img is not None:
     metrics['CLIP Img2Img'] = clip_img
     print(f"  -> CLIP Img-Img: {metrics['CLIP Img2Img']:.4f} (higher is better)")
+
+lpips_score = evaluator.compute_lpips(gen_img, ref_img)
+if lpips_score is not None:
+    metrics['LPIPS'] = lpips_score
+    print(f"  -> LPIPS Perceptual: {metrics['LPIPS']:.4f} (lower is better)")
+
+ssim_score = evaluator.compute_ssim(gen_img, ref_img)
+if ssim_score is not None:
+    metrics['SSIM'] = ssim_score
+    print(f"  -> SSIM: {metrics['SSIM']:.4f} (higher is better)")
+
+psnr_score = evaluator.compute_psnr(gen_img, ref_img)
+if psnr_score is not None:
+    metrics['PSNR'] = psnr_score
+    print(f"  -> PSNR: {metrics['PSNR']:.4f} (higher is better)")
 
 print("\\n[3] Text-to-Image Alignment")
 clip_text = evaluator.compute_clip_text_alignment(gen_img, "A red square")
