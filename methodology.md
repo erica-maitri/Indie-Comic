@@ -39,7 +39,7 @@ flowchart TD
         Coord["AgentCoordinator"]:::process
         subgraph Swarm ["Swarm Agents (Blackboard Pattern)"]
             DirStory["StoryDirector\nRegisters characters & sequences"]:::process
-            DirAction["ActionDirector\nExaggeration Map & Action Intensity Scores ℐ_i"]:::process
+            DirAction["ActionDirector\nExaggeration Map & Action Intensity Scores"]:::process
             WriterDialogue["DialogueWriter\nDialogue texts, tones, bubble category"]:::process
             DirPose["PoseDirector\nBody posture mapping"]:::process
             DirEmotion["EmotionDirector\nGranular facial expressions"]:::process
@@ -56,7 +56,7 @@ flowchart TD
         AnchorGen["Generate Panel 1 (Anchor) from text"]:::process
         AnchorImg["Panel 1 Raw Image"]:::output
         Extractor["IdentityEmbeddingExtractor"]:::process
-        Sig["Identity Signature Tokens:\n- RGB Color Histogram\n- Canny Edge Density\n- Gram-Matrix Feature Map (G = F F^T)"]:::output
+        Sig["Identity Signature Tokens:\n- RGB Color Histogram\n- Canny Edge Density\n- Gram-Matrix Feature Map"]:::output
     end
 
     Blackboard --> AnchorGen
@@ -67,11 +67,11 @@ flowchart TD
 
     subgraph Phase3_4 ["Phase 3 & 4: Composable Control & Generation (panel_engine.py)"]
         ParallelLoop{"Parallel Panel Loop\n(Panels 2..N)"}:::decision
-        Compositor["CharComCompositor\nW_total = W_base + Σ(α_i * W_i)\nSets LoRA scale, steps, guidance"]:::process
+        Compositor["CharComCompositor\nBlends LoRA scale, steps, and guidance per panel"]:::process
         subgraph MDCP ["MDCP Prior Stack (advanced_attention.py)"]
-            T1["L1 Physics Latent Smoothing (T1)\nGaussian blur subtraction\nt/T ∈ [0.20, 0.80], α = 0.03"]:::process
-            T2["L2 Cross-Attention Cache (T2)\nAsynchronous prefetch stream\nLocks identity (K_anchor, V_anchor), β = 0.15"]:::process
-            T3["L3 Spatiotemporal Alignment (T3)\nAlign mean/variance to anchor\nt/T ∈ [0.30, 0.60], γ = 0.08"]:::process
+            T1["L1 Physics Latent Smoothing\nGaussian blur subtraction\nto suppress high-frequency noise"]:::process
+            T2["L2 Cross-Attention Cache\nAsynchronously streams cached K/V anchor\nattention maps to lock identity"]:::process
+            T3["L3 Spatiotemporal Alignment\nAligns mean/variance statistics\ntoward anchor layout signature"]:::process
         end
         RawPanel["Raw Generated Panel Image"]:::output
     end
@@ -83,10 +83,10 @@ flowchart TD
 
     subgraph Phase6 ["Phase 6: Quality Validation Gate (quality_critic.py)"]
         Critic["QualityCritic.evaluate()"]:::process
-        EqScore["Score = 0.30*S_cons + 0.25*S_aes + 0.20*S_narr + 0.15*S_emo + 0.10*S_read"]:::process
-        GateCheck{"Score ≥ Threshold (0.55)?"}:::decision
-        RetryCheck{"Retry Count ≤ 2?"}:::decision
-        AdjustParams["Adjust parameters:\nIncrease guidance scale & steps"]:::process
+        EqScore["Evaluate visual consistency, aesthetics, narrative,\nemotional alignment, and readability"]:::process
+        GateCheck{"Score ≥ Threshold?"}:::decision
+        RetryCheck{"Retry Count ≤ Max Retries?"}:::decision
+        AdjustParams["Adjust parameters:\nIncrease guidance scale & step count"]:::process
         GateFail["Raise QualityGateFailure"]:::error
         ApprovedPanel["Approved Raw Panel Image"]:::output
     end
@@ -114,7 +114,7 @@ flowchart TD
 
     subgraph Phase7 ["Phase 7: MangaFlow Layout Page Assembly (layout_engine.py)"]
         LayoutEng["MangaFlowLayoutEngine"]:::process
-        HeightCalc["Calculate panel heights proportional to Action Intensity:\nh_i = H_page * (ℐ_i / Σℐ_j)"]:::process
+        HeightCalc["Calculate panel heights proportional to action intensity"]:::process
         PageAssembly["Arrange panels, draw gutters/borders\nTypeset speech bubbles post-scale"]:::process
         CompletedPage["Assembled Comic Page Image"]:::output
     end
