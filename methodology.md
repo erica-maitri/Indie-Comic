@@ -136,7 +136,6 @@ flowchart TD
     Formats --> Ratings
     Ratings --> Tuner
     Tuner -->|"Update defaults"| A
-end
 ```
 
 ---
