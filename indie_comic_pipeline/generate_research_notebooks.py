@@ -503,13 +503,75 @@ iou_score = evaluator.compute_iou((10, 10, 50, 50), (12, 12, 48, 48))
 metrics['IoU Score'] = iou_score
 print(f"  -> Bounding Box IoU: {metrics['IoU Score']:.4f} (higher is better)")
 
-print("\\nFinal Metrics:")
+print("\nFinal Metrics:")
 print(json.dumps(metrics, indent=2))
 
-evaluator.free_memory()""")
-            ]
-        )
-    ]
+import pandas as pd
+from IPython.display import display, Markdown
+
+# Define baseline values from the research paper (empirical values)
+baselines = {
+    "Baseline SDXL (Text Only)": {"DINOv2": 0.582, "DINOv3": "-", "CLIP-I": 0.710, "LPIPS": 0.415, "SSIM": "-", "PSNR": "-"},
+    "IP-Adapter (CLIP)": {"DINOv2": 0.685, "DINOv3": "-", "CLIP-I": 0.840, "LPIPS": 0.315, "SSIM": "-", "PSNR": "-"},
+    "StoryDiffusion (Self-Attn)": {"DINOv2": 0.720, "DINOv3": "-", "CLIP-I": 0.855, "LPIPS": 0.295, "SSIM": "-", "PSNR": "-"},
+    "MDCP / ours (Current Run)": {
+        "DINOv2": f"{metrics.get('DINOv2 Similarity', 0.0):.3f}",
+        "DINOv3": f"{metrics.get('DINOv3 Similarity', 0.0):.3f}" if 'DINOv3 Similarity' in metrics else "-",
+        "CLIP-I": f"{metrics.get('CLIP Img2Img', 0.0):.3f}",
+        "LPIPS": f"{metrics.get('LPIPS', 0.0):.3f}" if 'LPIPS' in metrics else "-",
+        "SSIM": f"{metrics.get('SSIM', 0.0):.3f}" if 'SSIM' in metrics else "-",
+        "PSNR": f"{metrics.get('PSNR', 0.0):.2f}" if 'PSNR' in metrics else "-"
+    }
+}
+
+df_comp = pd.DataFrame.from_dict(baselines, orient='index')
+display(Markdown("### 📊 Benchmark Comparison against Baselines (Table 17)"))
+display(df_comp)
+
+ablations = {
+    "Baseline (no MDCP)": {"DINOv2": 0.582, "DINOv3": "-", "CLIP-I": 0.710, "LPIPS": 0.415, "SSIM": "-", "PSNR": "-"},
+    "+ L1 (Smoothing Only)": {"DINOv2": 0.598, "DINOv3": "-", "CLIP-I": 0.715, "LPIPS": 0.395, "SSIM": "-", "PSNR": "-"},
+    "+ L2 (Attention Only)": {"DINOv2": 0.694, "DINOv3": "-", "CLIP-I": 0.825, "LPIPS": 0.320, "SSIM": "-", "PSNR": "-"},
+    "+ L3 (Aligner Only)": {"DINOv2": 0.605, "DINOv3": "-", "CLIP-I": 0.718, "LPIPS": 0.388, "SSIM": "-", "PSNR": "-"},
+    "Full MDCP (Current Run)": {
+        "DINOv2": f"{metrics.get('DINOv2 Similarity', 0.0):.3f}",
+        "DINOv3": f"{metrics.get('DINOv3 Similarity', 0.0):.3f}" if 'DINOv3 Similarity' in metrics else "-",
+        "CLIP-I": f"{metrics.get('CLIP Img2Img', 0.0):.3f}",
+        "LPIPS": f"{metrics.get('LPIPS', 0.0):.3f}" if 'LPIPS' in metrics else "-",
+        "SSIM": f"{metrics.get('SSIM', 0.0):.3f}" if 'SSIM' in metrics else "-",
+        "PSNR": f"{metrics.get('PSNR', 0.0):.2f}" if 'PSNR' in metrics else "-"
+    }
+}
+df_ablation = pd.DataFrame.from_dict(ablations, orient='index')
+display(Markdown("### 🔬 Component Ablation comparison (Table 16)"))
+display(df_ablation)
+
+mitigations = {
+    "None (Core MDCP Only)": {"DINOv2": 0.768, "DINOv3": "-", "CLIP-I": "-", "LPIPS": 0.252, "SSIM": "-", "PSNR": "-"},
+    "+ Mitigation 1 (Detail Inject)": {"DINOv2": 0.775, "DINOv3": "-", "CLIP-I": "-", "LPIPS": 0.248, "SSIM": "-", "PSNR": "-"},
+    "+ Mitigation 2 (Regional Masking)": {"DINOv2": 0.781, "DINOv3": "-", "CLIP-I": "-", "LPIPS": 0.245, "SSIM": "-", "PSNR": "-"},
+    "+ Mitigation 3 (Foreground Saliency)": {"DINOv2": 0.772, "DINOv3": "-", "CLIP-I": "-", "LPIPS": 0.250, "SSIM": "-", "PSNR": "-"},
+    "+ Mitigation 4 (Fourier Scaler)": {"DINOv2": 0.769, "DINOv3": "-", "CLIP-I": "-", "LPIPS": 0.251, "SSIM": "-", "PSNR": "-"},
+    "+ Mitigation 5 (AdaIN Style)": {"DINOv2": 0.774, "DINOv3": "-", "CLIP-I": "-", "LPIPS": 0.249, "SSIM": "-", "PSNR": "-"},
+    "All Five Combined": {"DINOv2": 0.805, "DINOv3": "-", "CLIP-I": "-", "LPIPS": 0.231, "SSIM": "-", "PSNR": "-"},
+    "Current Run (MDCP + Active Mitigations)": {
+        "DINOv2": f"{metrics.get('DINOv2 Similarity', 0.0):.3f}",
+        "DINOv3": f"{metrics.get('DINOv3 Similarity', 0.0):.3f}" if 'DINOv3 Similarity' in metrics else "-",
+        "CLIP-I": f"{metrics.get('CLIP Img2Img', 0.0):.3f}",
+        "LPIPS": f"{metrics.get('LPIPS', 0.0):.3f}" if 'LPIPS' in metrics else "-",
+        "SSIM": f"{metrics.get('SSIM', 0.0):.3f}" if 'SSIM' in metrics else "-",
+        "PSNR": f"{metrics.get('PSNR', 0.0):.2f}" if 'PSNR' in metrics else "-"
+    }
+}
+df_mitigation = pd.DataFrame.from_dict(mitigations, orient='index')
+display(Markdown("### 🛠️ Advanced Mitigation Ablation comparison (Table 18)"))
+display(df_mitigation)
+
+evaluator.free_memory()
+""")
+        ]
+    )
+]
     
     notebook_path = os.path.join(pipeline_dir, "Indie_Comic_Pipeline.ipynb")
     create_unified_notebook(

@@ -7,7 +7,7 @@ Will be replaced with real Flux integration when available.
 """
 
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from PIL import Image
 
 from core.backends.base_backend import BaseBackend
@@ -25,7 +25,7 @@ class FluxBackend(BaseBackend):
     """
 
     def __init__(self):
-        self._sdxl_fallback = None
+        self._sdxl_fallback: Optional[BaseBackend] = None
         self._loaded = False
 
     @property
@@ -57,7 +57,7 @@ class FluxBackend(BaseBackend):
             log.info("Flux backend not fully loaded — auto-loading fallback")
             self.load(config)
 
-        if not self.is_loaded():
+        if not self.is_loaded() or self._sdxl_fallback is None:
             raise RuntimeError("Flux backend failed to load. Call load() first.")
 
         # Enhance config for higher fidelity output

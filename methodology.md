@@ -1,96 +1,283 @@
-[USER INPUT: Emotion / Story Prompt]
-       │
-       ▼
-[PHASE 0: INTELLIGENT STORY INTAKE (WRITER'S ROOM)]
-       │  • Action: User prompts (character, world, traits, reference) are passed to local Ollama (default: llama3.2).
-       │  • Processing: Runs a single-pass JSON-structured LLM chain to generate both a 'Story Bible' and 
-       │                a detailed hierarchical scene graph script (characters, actions, camera, environment).
-       │  • Output: Generates an in-memory structured configuration dictionary (story_config).
-       │
-       ▼
-[story_config (In-Memory)]
-       │
-       ▼
-[PHASE 1: NARRATIVE PLANNING LAYER]
-       │  • Action: Director Swarm (Multi-Agent System) parses and loads the scene graph into memory.
-       │  ├─ Story Director: Registers characters and sets up the base panel sequence.
-       │  ├─ Action Director: Parses character actions, physical verbs, and interactions.
-       │  ├─ Dialogue Writer: Details dialogue text, tone, and vector speech bubble categories.
-       │  ├─ Pose Director: Identifies body language posture/stance mapping constraints.
-       │  ├─ Emotion Director: Resolves granular facial taxonomies (eyes, mouth, expressions).
-       │  └─ Camera Director: Dictates framing layouts (camera angle, environment variables).
-       │
-       ▼
-[STORY SECTION MEMORY (EXPLICIT RAM BLACKBOARD)]
-       │  • Dynamic Cache: Tracks active character states, visual anchors, scene settings, and layout plans.
-       │
-       ▼
-[PHASE 2: SELF-REFERENTIAL VISUAL ANCHORING]
-       │  • Step 2.1: Pulls initial context prompts from memory to execute Panel 1 Generation.
-       │  • Step 2.2: Isolates Panel 1 to serve as the baseline Primary Visual Anchor (Self-Reference).
-       │  • Step 2.3: Runs Identity Embedding Extraction to capture raw facial topology, wardrobe, and style markers.
-       │  • Step 2.4: Injects extracted identity tracking tokens directly back into the Story Section Memory cache.
-       │
-       ▼
-[UPDATED STORY SECTION MEMORY (WITH IDENTITY TOKENS)]
-       │
-       ▼
-[PHASE 3 & 4: IN-GENERATION CONSISTENCY & COMPOSABLE CONTROL]
-       │  • Action: Sequentially generates panels 2 through N by pulling context and tokens from memory.
-       │  │
-       │  ├─ [CharCom Inference Compositor]
-       │  │     Calculates dynamic model weight blending at runtime: W_total = W_base + Σ(α_i * W_i)
-       │  │
-       │  └─ [Multi-Backend Diffusion Denoising Stack (SDXL / Flux / Video DiT)]
-       │        ├─ Level 1: Dissipative Latent Smoothing (RealDiffusion)
-       │        │    Applies a Gaussian smoothing kernel during denoising to suppress high-frequency noise drift.
-       │        ├─ Level 2: Shared Attention Matrix Masking (Accelerated TF)
-       │        │    Applies cross-prompt masking to lock character identity keys/values across frames.
-       │        └─ Level 3: Sequential Latent Prior (DreamingComics)
-       │             Blends channel-wise latent statistics (mean, std) toward anchor distribution.
-       │
-       ▼
-[LATENT SPACE IMAGE CANVAS DATA]
-       │
-       ▼
-[PHASE 5: INTEGRATED TEXT-IMAGE GENERATION]
-       │  • Action: Processed latents are fed into the DiffSensei MLLM Domain.
-       │  • Processing: Merges image matrices and script dialogue inside a single Unified Multimodal Semantic Space.
-       │  • Execution: Binds language vectors directly into cross-attention loops to render dynamic expressions/poses.
-       │
-       ▼
-[RAW PANEL RASTER SHEET]
-       │
-       ▼
-[PHASE 6: QUALITY VALIDATION LAYER]
-       │  • Action: Raw panel imagery is intercepted by the COMIC Critic Pipeline.
-       │  • Processing: Evaluates performance across an evolutionary ring of human-aligned LLM Critics.
-       │  │
-       │  ├─── [IF Composite Score < Quality Performance Threshold]
-       │  │        Adjusts guidance scale parameters, updates prompting weights, and triggers Regeneration Loop.
-       │  │
-       │  └─── [IF Composite Score >= Quality Performance Threshold]
-       │           Approves frame data and caches the cleared panel asset straight to the assembly stack.
-       │
-       ▼
-[APPROVED RASTER PANELS STACK]
-       │
-       ▼
-[PHASE 7: LAYOUT & ASSEMBLY]
-       │  • Action: MangaFlow Engine takes the approved panels and layout parameters from memory.
-       │  • Processing: Dynamically cuts border geometry channels depending on scene action intensity.
-       │  • Execution: Runs typesetting algorithms to lock vector narrative speech bubbles based on focal subjects.
-       │
-       ▼
-[COMPILED MASTER SHEET LAYOUT]
-       │
-       ▼
-[PHASE 8: EXPORT MODULE & ADAPTIVE PARAMETER OPTIMIZATION]
-       │  ├─ File Compilation: Compiles raw layout vectors into final reader formats (PDF / CBZ / HTML).
-       │  │
-       │  └─ Human Alignment Telemetry Loop:
-       │       Gathers explicit user interface performance rankings and rating feedback metrics.
-       │       │
-       │       ▼
-       └─► [SYSTEM PARAMETER OPTIMIZATION]
-               Executes weight adjustments to fine-tune COMIC LLM Critic evaluations and mutate prompt generation templates.
+# MDCP & Composable Indie Comic Pipeline: System Methodology
+
+This document outlines the detailed system architecture, processing pipeline phases, mathematical formulations, and software implementations for the training-free **Multi-Level Diffusion Consistency Prior (MDCP)** and the 8-phase comic generation pipeline.
+
+---
+
+## 1. Pipeline Execution Flow Diagram
+
+```mermaid
+flowchart TD
+    %% Define styles
+    classDef input fill:#e1f5fe,stroke:#0288d1,stroke-width:2px;
+    classDef process fill:#fff3e0,stroke:#f57c00,stroke-width:2px;
+    classDef decision fill:#ede7f6,stroke:#5e35b1,stroke-width:2px;
+    classDef output fill:#e8f5e9,stroke:#388e3c,stroke-width:2px;
+    classDef error fill:#ffebee,stroke:#c62828,stroke-width:2px;
+
+    subgraph Inputs ["User Prompt & Settings"]
+        A["User Input: Story Prompt / Emotion / Characteristics"]:::input
+        ModeSwitch{"story_mode Switch"}:::decision
+    end
+
+    subgraph Phase0 ["Phase 0: Intelligent Story Intake (story_intake.py)"]
+        Intake["StoryIntakeEngine"]:::process
+        OllamaLLM["Local Ollama (llama3.2)\nJSON-structured LLM Chain"]:::process
+        FallbackGen["_generate_fallback()\nTemplate configurations"]:::process
+        StoryConfig["story_config (In-Memory JSON)"]:::output
+    end
+
+    A --> ModeSwitch
+    ModeSwitch -- "literal (Default)" --> Intake
+    ModeSwitch -- "mood_arc (Legacy)" --> Intake
+    Intake --> OllamaLLM
+    OllamaLLM -- "Timeout/Error Fallback" --> FallbackGen
+    OllamaLLM -- "Success" --> StoryConfig
+    FallbackGen --> StoryConfig
+
+    subgraph Phase1 ["Phase 1: Narrative Swarm Planning (agent_coordinator.py)"]
+        Coord["AgentCoordinator"]:::process
+        subgraph Swarm ["Swarm Agents (Blackboard Pattern)"]
+            DirStory["StoryDirector\nRegisters characters & sequences"]:::process
+            DirAction["ActionDirector\nExaggeration Map & Action Intensity Scores ℐ_i"]:::process
+            WriterDialogue["DialogueWriter\nDialogue texts, tones, bubble category"]:::process
+            DirPose["PoseDirector\nBody posture mapping"]:::process
+            DirEmotion["EmotionDirector\nGranular facial expressions"]:::process
+            DirCamera["CameraDirector\nFraming & camera angles"]:::process
+        end
+        Blackboard["StorySectionMemory Blackboard"]:::output
+    end
+
+    StoryConfig --> Coord
+    Coord --> Swarm
+    Swarm --> Blackboard
+
+    subgraph Phase2 ["Phase 2: Self-Referential Visual Anchoring (anchoring.py)"]
+        AnchorGen["Generate Panel 1 (Anchor) from text"]:::process
+        AnchorImg["Panel 1 Raw Image"]:::output
+        Extractor["IdentityEmbeddingExtractor"]:::process
+        Sig["Identity Signature Tokens:\n- RGB Color Histogram\n- Canny Edge Density\n- Gram-Matrix Feature Map (G = F F^T)"]:::output
+    end
+
+    Blackboard --> AnchorGen
+    AnchorGen --> AnchorImg
+    AnchorImg --> Extractor
+    Extractor --> Sig
+    Sig -->|"Cache signature"| Blackboard
+
+    subgraph Phase3_4 ["Phase 3 & 4: Composable Control & Generation (panel_engine.py)"]
+        ParallelLoop{"Parallel Panel Loop\n(Panels 2..N)"}:::decision
+        Compositor["CharComCompositor\nW_total = W_base + Σ(α_i * W_i)\nSets LoRA scale, steps, guidance"]:::process
+        subgraph MDCP ["MDCP Prior Stack (advanced_attention.py)"]
+            T1["L1 Physics Latent Smoothing (T1)\nGaussian blur subtraction\nt/T ∈ [0.20, 0.80], α = 0.03"]:::process
+            T2["L2 Cross-Attention Cache (T2)\nAsynchronous prefetch stream\nLocks identity (K_anchor, V_anchor), β = 0.15"]:::process
+            T3["L3 Spatiotemporal Alignment (T3)\nAlign mean/variance to anchor\nt/T ∈ [0.30, 0.60], γ = 0.08"]:::process
+        end
+        RawPanel["Raw Generated Panel Image"]:::output
+    end
+
+    Blackboard --> ParallelLoop
+    ParallelLoop --> Compositor
+    Compositor --> MDCP
+    MDCP --> RawPanel
+
+    subgraph Phase6 ["Phase 6: Quality Validation Gate (quality_critic.py)"]
+        Critic["QualityCritic.evaluate()"]:::process
+        EqScore["Score = 0.30*S_cons + 0.25*S_aes + 0.20*S_narr + 0.15*S_emo + 0.10*S_read"]:::process
+        GateCheck{"Score ≥ Threshold (0.55)?"}:::decision
+        RetryCheck{"Retry Count ≤ 2?"}:::decision
+        AdjustParams["Adjust parameters:\nIncrease guidance scale & steps"]:::process
+        GateFail["Raise QualityGateFailure"]:::error
+        ApprovedPanel["Approved Raw Panel Image"]:::output
+    end
+
+    RawPanel --> Critic
+    Critic --> EqScore
+    EqScore --> GateCheck
+    GateCheck -- "No" --> RetryCheck
+    RetryCheck -- "Yes" --> AdjustParams
+    AdjustParams -->|Regenerate| Compositor
+    RetryCheck -- "No" --> GateFail
+    GateCheck -- "Yes" --> ApprovedPanel
+
+    subgraph Phase5 ["Phase 5: Dialogue Integration (text_image_integrator.py)"]
+        BubblePlanner["TextImageIntegrator"]:::process
+        RegionDetect["Detect face/subject bounding boxes\n(Avoid collision/occlusion)"]:::process
+        BubbleStyle["Select style based on emotion:\n- calm (ellipse)\n- intense (jagged)\n- thought (cloud)\n- whisper (dashed)\n- shout (spiky)"]:::process
+        AnnotatedPanel["Annotated Panel Image\n(dialogue overlaid)"]:::output
+    end
+
+    ApprovedPanel --> BubblePlanner
+    BubblePlanner --> RegionDetect
+    RegionDetect --> BubbleStyle
+    BubbleStyle --> AnnotatedPanel
+
+    subgraph Phase7 ["Phase 7: MangaFlow Layout Page Assembly (layout_engine.py)"]
+        LayoutEng["MangaFlowLayoutEngine"]:::process
+        HeightCalc["Calculate panel heights proportional to Action Intensity:\nh_i = H_page * (ℐ_i / Σℐ_j)"]:::process
+        PageAssembly["Arrange panels, draw gutters/borders\nTypeset speech bubbles post-scale"]:::process
+        CompletedPage["Assembled Comic Page Image"]:::output
+    end
+
+    AnnotatedPanel --> LayoutEng
+    LayoutEng --> HeightCalc
+    HeightCalc --> PageAssembly
+    PageAssembly --> CompletedPage
+
+    subgraph Phase8 ["Phase 8: Export Harness & Feedback Optimization"]
+        Export["ComicExporter"]:::process
+        Formats["Generate CBZ, PDF, and HTML Scrollbook"]:::output
+        Ratings["Gather user ratings & logs"]:::process
+        Tuner["HeuristicFeedbackTuner\nMutates settings.yaml config"]:::process
+    end
+
+    CompletedPage --> Export
+    Export --> Formats
+    Formats --> Ratings
+    Ratings --> Tuner
+    Tuner -->|"Update defaults"| A
+end
+```
+
+---
+
+## 2. Technical Component Breakdown
+
+### Phase 0: Intelligent Story Intake (Writer's Room)
+- **File:** [story_intake.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/story_intake.py) (`StoryIntakeEngine`)
+- **Mechanism:** Takes user prompts (characters, world, settings) and coordinates with local LLMs (default: `llama3.2` via Ollama) to output a JSON-structured story configuration.
+- **Story Modes:** Controlled via the `story_mode` parameter:
+  - `literal` (Default): Evaluates and divides the user's specific plot into sequential moments (preserving story beats). The emotion beats shade prompt keywords (e.g. lighting, environment) rather than overwriting structural actions.
+  - `mood_arc` (Legacy): Generates panel-level prompts directly from a pre-defined emotional progression trajectory, passing the user script as background context.
+
+### Phase 1: Multi-Agent Planning Layer
+- **File:** [agent_coordinator.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/agents/agent_coordinator.py) (`AgentCoordinator`)
+- **Architecture:** Coordinates a decentralized blackboard architecture comprising six specialized director agents:
+  - `StoryDirector`: Builds the layout structure, total page allotments, and basic sequential beats.
+  - `ActionDirector`: Translates plain verbs into hyper-expressive poses using a *Cinematic Exaggeration Map* and calculates **Action Intensity Scores** (used for dynamic layouts in Phase 7).
+  - `DialogueWriter`: Dictates narrative text, dialouges, speech bubble type assignments, and positions.
+  - `PoseDirector` / `EmotionDirector` / `CameraDirector`: Enrich prompts with joint rotation constraints, expressions, facial geometry, framing, and camera positions.
+
+### Phase 2: Self-Referential Visual Anchoring
+- **File:** [anchoring.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/anchoring.py) (`IdentityEmbeddingExtractor`)
+- **Mechanism:** Isolates Panel 1 to act as the primary visual anchor. Instead of training custom model checkpoints or feeding reference image files, the anchor panel is synthesized directly from text. It extracts a visual identity signature using three non-learned classical descriptors:
+  - **RGB Color Histogram**: Channel-wise pixel color distributions.
+  - **Canny Edge Density**: High-frequency geometric boundary contours.
+  - **Gram-Matrix Feature Maps**: Computes Gram matrices over intermediate texture layers to summarize stylistic texture:
+    $$G_{i,j} = \sum_k F_{i,k}F_{j,k}$$
+- **Extracted Tokens**: The signature parameters are cached into the blackboard [memory.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/memory.py) (`StorySectionMemory`) to guide subsequent generations.
+
+### Phase 3 & 4: In-Generation Consistency & Composable Control (MDCP)
+- **Files:** [panel_engine.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/panel_engine.py) (`PanelEngine`), [compositor.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/compositor.py) (`CharComCompositor`), and [advanced_attention.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/advanced_attention.py) (`AdvancedAttentionManager`)
+- **CharCom Compositor:** Blends base prompts with character-specific LoRA weights, guidance, seeds, and steps at runtime:
+  $$W_{\text{total}} = W_{\text{base}} + \sum (\alpha_i \cdot W_i)$$
+- **Multi-Level Diffusion Consistency Prior (MDCP):** An analytical, gradient-free inference-time optimizer that reduces latent consistency energy $\mathcal{E}_{\text{cons}}(z)$:
+  $$\mathcal{E}_{\text{cons}}(z) = w_{\text{HF}}\cdot\phi_{\text{HF}}(z) + w_{\text{sem}}\cdot\phi_{\text{sem}}(z) + w_{\text{str}}\cdot\phi_{\text{str}}(z)$$
+  This energy is minimized via a sequential operator-splitting composition at each denoising step ($\mathcal{T}_{\text{MDCP}} = \mathcal{T}_3 \circ \mathcal{T}_2 \circ \mathcal{T}_1$):
+  1. **Level 1 (L1) Physics-Informed Latent Smoothing ($\mathcal{T}_1$):** Approximates the heat-equation Laplacian during denoising steps $t/T \in [0.20, 0.80]$ using a normalized 2D Gaussian kernel ($G_\sigma, \sigma=\text{size}/3$) to suppress high-frequency noise accumulation:
+     $$u(t+1) = u(t) + \alpha_{\text{eff}}(t)\cdot\big(u * G_\sigma - u(t)\big)$$
+     $$\alpha_{\text{eff}}(t) = \alpha\cdot\frac{t-0.20}{0.80-0.20}, \quad \alpha = 0.03$$
+  2. **Level 2 (L2) Shared Cross-Attention Key/Value Caching ($\mathcal{T}_2$):** Binds semantic traits (face, hair, attire) by caching projected Key and Value tensors from the anchor panel's primary four cross-attention blocks. 
+     $$\text{output} = (1-\beta)\cdot\text{Softmax}\left(\frac{Q_{\text{cur}}K_{\text{cur}}^T}{\sqrt{d}}\right)V_{\text{cur}} + \beta\cdot\text{Softmax}\left(\frac{Q_{\text{cur}}K_{\text{anchor}}^T}{\sqrt{d}}\right)V_{\text{anchor}}, \quad \beta = 0.15$$
+     - *Pinned Memory Streaming:* Caches are stored in page-locked host CPU memory and prefetched asynchronously to GPU CUDA device memory (`non_blocking=True`) concurrently with self-attention computation, maintaining a strict $O(1)$ memory complexity of ~150 MB VRAM overhead regardless of the panel sequence length $N$.
+  3. **Level 3 (L3) Spatiotemporal Channel-Statistic Alignment ($\mathcal{T}_3$):** Aligns target latent statistics to the anchor distribution during the structural formation window $t/T \in [0.30, 0.60]$ to stabilize contrast, lighting, and global layouts under camera cuts:
+     $$z_{\text{final},c} = z_c\cdot\big(1+\text{blend}_w\cdot(\text{std\_ratio}_c-1)\big) + \text{blend}_w\cdot\gamma\cdot(\mu_{\text{anchor},c}-\mu_{\text{current},c})$$
+     $$\text{std\_ratio}_c = \text{clamp}(\sigma_{\text{anchor},c}/\sigma_{\text{current},c},\,0.80,\,1.20), \quad \text{blend}_w(t) = \gamma\cdot\frac{t-0.30}{0.60-0.30}, \quad \gamma = 0.08$$
+
+### Phase 5: Dialogue Placement (DiffSensei Approximation)
+- **File:** [text_image_integrator.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/text_image_integrator.py) (`TextImageIntegrator`)
+- **Mechanism:** Integrates text bubbles by executing a layout optimizer via local Ollama.
+- **Collision Mitigation:** Checks the raster image using edge filters and face coordinate bounding boxes to map bubble coordinates that avoid covering visual details or character faces.
+- **Styling Map:** Dynamically styles typography and balloon graphics depending on the emotional beat:
+  - `calm`: Smooth white ellipses.
+  - `intense`: Sharp, red-bordered jagged balloons.
+  - `thought`: Blue-tinted cloud-like bubbles.
+  - `whisper`: Light gray dashed ellipses with reduced text sizes.
+  - `shout`: Spiky, oversized balloons with bold, scaled-up fonts.
+
+### Phase 6: Automated Quality Validation Loop
+- **File:** [quality_critic.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/quality_critic.py) (`QualityCritic`)
+- **Mechanism:** Automatically intercepts raw panel raster outputs and runs evaluation metrics across five distinct quality dimensions:
+  $$\text{Score} = 0.30\,S_{\text{cons}} + 0.25\,S_{\text{aes}} + 0.20\,S_{\text{narr}} + 0.15\,S_{\text{emo}} + 0.10\,S_{\text{read}}$$
+  - **Visual Consistency ($S_{\text{cons}}$):** Evaluates re-identification distance against the anchor image using SSIM, edge correlation, color statistics, and style metrics.
+  - **Aesthetic Quality ($S_{\text{aes}}$):** Computes local sharpness (Laplacian variance), contrast, and colorfulness opponent-space metrics.
+  - **Narrative Coherence ($S_{\text{narr}}$):** Checks theme and prompt adherence using semantic text/image comparisons.
+  - **Emotional Engagement ($S_{\text{emo}}$):** Evaluates text-to-image emotion label alignment.
+  - **Readability ($S_{\text{read}}$):** Validates text clarity and bubble boundary margins.
+- **Reject & Regenerate:** If the composite score falls below the threshold (default: `0.55`, strict: `0.70`), the engine updates generation parameters (e.g. increments guidance scale, steps, or alters prompt weights) and triggers a retry loop (up to `2` retries).
+
+### Phase 7: MangaFlow Layout Assembly Engine
+- **File:** [layout_engine.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/layout_engine.py) (`MangaFlowLayoutEngine`)
+- **Mechanism:** Assembles panels onto pages dynamically based on Action Intensity Scores ($\mathcal{I}_i$) computed in Phase 1:
+  $$h_i = H_{\text{page}}\cdot\frac{\mathcal{I}_i}{\sum_{j=1}^N \mathcal{I}_j}$$
+  High-intensity action sequences are allocated larger panel heights, while quiet scenes are scaled down.
+- **Anti-Distortion Typesetting:** During page assembly, dialogue bubbles are programmatically overlaid *after* the panel cropping and resizing operations are completed. This guarantees text bubbles and letters are never warped, stretched, or cut off by the MangaFlow borders.
+
+### Phase 8: Multi-Format Export & Adaptive Parameter Tuning
+- **Files:** [comic_exporter.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/comic_exporter.py) (`ComicExporter`), [feedback.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/feedback.py) (`RLHFFeedbackLoop`), and [feedback_tuner.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/feedback_tuner.py) (`HeuristicFeedbackTuner`)
+- **Export Formats:** Assembles layout streams into three standard reader formats:
+  - **CBZ:** Zip archive containing sequential PNG assets.
+  - **PDF:** Document packaging page raster outputs.
+  - **HTML Scrollbook:** Responsive scrollable layout with dynamic web formatting.
+- **Telemetry Loop:** Gathers user interface feedback ratings. If a sequence receives low consistency ratings, `HeuristicFeedbackTuner` mutates the master settings YAML configuration (e.g. updates default guidance, steps, quality thresholds, or adds positive/negative style terms to prompts) to guide future iterations.
+
+---
+
+## 3. Predefined Configurations & Hardcoded Fallbacks
+
+This section documents the static parameters, predefined dictionary mappings, and fallback templates hardcoded into the pipeline modules to ensure system robustness.
+
+### 3.1 Mood-Arc & Emotion Beat Configurations
+Defined in [story_intake.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/story_intake.py) (`MOOD_ARCS`), these rules govern the visual journey mappings and sequence beats for the eight primary user-specified emotions:
+
+| Emotion Key | Journey Type | Description | Sequential Mood Arc Beats |
+| :--- | :--- | :--- | :--- |
+| `sad` | uplifting | From heaviness toward genuine small warmth | heaviness $\to$ stillness $\to$ faint_warmth $\to$ tentative_light $\to$ soft_openness $\to$ quiet_hope |
+| `angry` | calming | From contained fire toward stillness | contained_fire $\to$ fracture $\to$ exhale $\to$ cooling $\to$ ground $\to$ stillness |
+| `anxious` | grounding | From spiral toward root | spiral $\to$ peak_noise $\to$ pause $\to$ breath $\to$ root $\to$ present |
+| `tired` | relaxing | From bone-deep drag toward rest | drag $\to$ surrender $\to$ softness $\to$ drift $\to$ quiet_rest $\to$ renewal |
+| `happy` | elation | From spark of joy toward luminous transcendence | spark $\to$ expansion $\to$ overflow $\to$ radiance $\to$ luminous_still $\to$ transcendence |
+| `grief` | tender continuance | From the shape of absence toward carrying | absence $\to$ ache $\to$ memory $\to$ held $\to$ continuance $\to$ carried_forward |
+| `determined` | heroic rise | From doubt toward resolute action | doubt $\to$ challenge $\to$ resistance $\to$ breakthrough $\to$ momentum $\to$ triumph |
+| `love` | deepening | From spark toward enduring warmth | spark $\to$ recognition $\to$ vulnerability $\to$ trust $\to$ embrace $\to$ unity |
+
+*Fallback Default Arc:* If the emotion is not recognized, the system defaults to the `reflective` journey with beats: `["acknowledgment", "presence", "shift", "openness"]` (`DEFAULT_ARC`).
+
+### 3.2 Visual Generation Fallbacks
+If calls to the local Ollama LLM timeout, fail, or are disabled, [story_intake.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/story_intake.py) invokes `_generate_fallback(...)` to produce a template-based story config using hardcoded maps:
+- **Visual Motif Fallbacks:** e.g., `sad` $\to$ "A solitary paper boat floating in a dark puddle", `angry` $\to$ "Cracks spreading across a concrete wall", `grief` $\to$ "An empty chair at a kitchen table".
+- **Camera Configurations:** Maps specific emotional beats to camera angles to ensure visual dynamism (e.g., `contained_fire` $\to$ "Low-angle medium shot, slow upward tilt", `fracture` $\to$ "Dutch tilt close-up, handheld shake", `triumph` $\to$ "Wide shot, slow pull-back reveal").
+- **Environment Context:** Pre-baked prompt fragments tailored to `story_world` (e.g., `contained_fire` $\to$ "cramped rooftop of {story_world}, deep night, dominant palette crimson and charcoal, single sodium lamp").
+- **Default Pose Constraints:** Specific structural positions based on emotional beats (e.g., `contained_fire` $\to$ `{"body": "standing rigid, fists clenched at sides", "head": "jaw tight, chin slightly lowered", ...}`).
+- **Default Dialogue Templates:** e.g., `contained_fire` $\to$ `"Not yet."`, `fracture` $\to$ `"That's enough."`, `drift` $\to$ `"Just for a moment."`.
+
+### 3.3 Speech Bubble Preset Parameters
+Bubble shapes, rendering configurations, and fonts are hardcoded in [text_image_integrator.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/text_image_integrator.py) (`BUBBLE_STYLES`):
+
+| Beat Style Category | Bubble Graphic Shape | Border Width | Border Color | Fill Color (RGBA) | Font Scale | Tail Shape Style |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `calm` | ellipse | 2 px | `(40, 40, 40)` | `(255, 255, 255, 230)` | $1.0\times$ | smooth curve |
+| `intense` | jagged polygon | 3 px | `(180, 30, 30)` | `(255, 255, 240, 240)` | $1.15\times$ | sharp pointer |
+| `thought` | cloud bubbles | 2 px | `(100, 100, 140)` | `(240, 240, 255, 200)` | $0.90\times$ | small bubbles |
+| `whisper` | dashed ellipse | 1 px | `(120, 120, 120)` | `(255, 255, 255, 180)` | $0.85\times$ | smooth curve |
+| `shout` | spiky burst | 4 px | `(200, 50, 20)` | `(255, 250, 230, 245)` | $1.30\times$ | sharp pointer |
+
+### 3.4 Quality Validation Constants
+The quality scoring weights and regeneration conditions are hardcoded in [quality_critic.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/quality_critic.py):
+- **Weights (Must sum to 1.0):**
+  - Visual Consistency: `0.30`
+  - Aesthetic Quality: `0.25`
+  - Narrative Coherence: `0.20`
+  - Emotional Engagement: `0.15`
+  - Readability: `0.10`
+- **Rejection Thresholds:**
+  - Standard Acceptance: $\ge 0.55$
+  - Strict Acceptance: $\ge 0.70$
+- **Retry Controls:** Max retries = `2`. For each retry, the system increases guidance scale (+0.5 to +1.0) and step counts (+5) to attempt quality enhancement.
+
+### 3.5 Layout Engine Dimensions
+The canvas geometry parameters are hardcoded in [layout_engine.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/layout_engine.py):
+- Page Canvas Size: $1000 \times 1500$ pixels.
+- Margin Padding: $40$ pixels.
+- Panel Gutter Width: $12$ pixels.
+- Page Background: `"white"` (default).
