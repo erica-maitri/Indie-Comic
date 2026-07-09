@@ -158,6 +158,12 @@ flowchart TD
 - **Files:** [panel_engine.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/panel_engine.py) (`PanelEngine`), [compositor.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/compositor.py) (`CharComCompositor`), and [advanced_attention.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/advanced_attention.py) (`AdvancedAttentionManager`)
 - **CharCom Compositor:** Blends base prompts with character-specific LoRA weights, guidance, seeds, and steps at runtime:
   $$W_{\text{total}} = W_{\text{base}} + \sum (\alpha_i \cdot W_i)$$
+- **SDXL Generation Engine:** Implemented in [sdxl_backend.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/backends/sdxl_backend.py) (`SDXLBackend`), wraps the diffusion pipeline with custom optimization hooks:
+  - **Scheduler Configuration:** Uses a DPMSolverMultistepScheduler configured with Karras sigmas (`sde-dpmsolver++`, order 2) for rapid 25-step inference.
+  - **Compel Embedding Parser:** Integrates Compel to bypass the standard 77-token limit of the SDXL dual text encoders by producing penultimate hidden states and pooled embeds.
+  - **Memory & VRAM Optimizations:** Enables model CPU offloading, attention slicing, and VAE slicing to run inference within a 6.5 GB VRAM ceiling.
+  - **FreeU Image Enhancement:** Applies FreeU skip-connection and backbone adjustments ($s_1=0.6$, $s_2=0.4$, $b_1=1.1$, $b_2=1.2$) to reduce texture over-smoothing.
+  - **U-Net Feature Adapter:** Exposes U-Net cross-attention modules (`attn2` layers) to allow `AdvancedAttentionManager` to inject the L2 key/value caches at runtime.
 - **Multi-Level Diffusion Consistency Prior (MDCP):** An analytical, gradient-free inference-time optimizer that reduces latent consistency energy $\mathcal{E}_{\text{cons}}(z)$:
   $$\mathcal{E}_{\text{cons}}(z) = w_{\text{HF}}\cdot\phi_{\text{HF}}(z) + w_{\text{sem}}\cdot\phi_{\text{sem}}(z) + w_{\text{str}}\cdot\phi_{\text{str}}(z)$$
   This energy is minimized via a sequential operator-splitting composition at each denoising step ($\mathcal{T}_{\text{MDCP}} = \mathcal{T}_3 \circ \mathcal{T}_2 \circ \mathcal{T}_1$):
