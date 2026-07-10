@@ -739,3 +739,26 @@ Output: evaluation_report (14-metric dict), performance_summary
 
 22. return evaluation_report, performance_summary
 ```
+
+### 7. Automated Hyperparameter Grid Sweep & Optimization Engine
+
+To validate the resource-performance trade-offs outlined in Algorithm 6 and Proposition 1, the framework implements an automated hyperparameter tuning and benchmarking suite. This engine performs a systematic grid search over key generation parameters to locate the Pareto-optimal configuration for any given hardware setup.
+
+#### 7.1 Parameter Grid Formulation
+The sweep space $\mathcal{S}$ is defined as the Cartesian product of the target resolution scale $\mathcal{R}$, denoising step count $\mathcal{T}$, and adapter LoRA scale $\mathcal{L}$:
+$$\mathcal{S} = \mathcal{R} \times \mathcal{T} \times \mathcal{L}$$
+Where:
+- $\mathcal{R} \in \{512 \times 512, 768 \times 768\}$
+- $\mathcal{T} \in [15, 40] \cap \mathbb{Z}$
+- $\mathcal{L} \in [0.5, 1.0]$
+
+#### 7.2 Objective Function and Recommendation Logic
+For each configuration $c = (r, t, l) \in \mathcal{S}$, the benchmark suite evaluates generation latency ($t_{\text{latency}}$), peak VRAM delta ($M_{\text{peak}}$), and quality similarity metrics relative to a high-quality baseline image generated at the maximum bounds ($c_{\text{max}} = (r_{\text{max}}, t_{\text{max}}, l_{\text{max}})$):
+$$S_{\text{quality}}(c) = w_1 \cdot \text{SSIM}(g_c, g_{\text{baseline}}) + w_2 \cdot S_{\text{edge}}(g_c, g_{\text{baseline}}) + w_3 \cdot S_{\text{color}}(g_c, g_{\text{baseline}})$$
+Where $w_1 = 0.5$, $w_2 = 0.2$, and $w_3 = 0.3$.
+
+The recommendation engine identifies the optimal configuration $c^*$ by maximizing the efficiency index (quality per unit of latency) while satisfying hard hardware VRAM constraints:
+$$c^* = \arg\max_{c \in \mathcal{S}} \frac{S_{\text{quality}}(c)}{\max(\epsilon, t_{\text{latency}}(c))} \quad \text{subject to} \quad M_{\text{peak}}(c) \le M_{\text{threshold}}$$
+
+#### 7.3 Memory Tracking & Defragmentation
+The benchmark runner measures peak VRAM using PyTorch memory allocations ($M_{\text{peak}} = \text{max\_memory\_allocated()}$) and monitors memory fragmentation. Following each generation step, the engine invokes explicit garbage collection and CUDA cache clearing ($gc.collect()$, $torch.cuda.empty\_cache()$) to isolate and prevent cumulative memory leaks across sequential runs, ensuring stable long-term inference.
