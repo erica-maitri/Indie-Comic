@@ -81,36 +81,37 @@ def main():
 
     # Print summary leaderboard
     print("\n" + "=" * 80)
-    print(f"🏆 BENCHMARK RESULTS LEADERBOARD ({'MOCK MODE' if args.mock else 'GPU MODE'})")
+    print(f"BENCHMARK RESULTS LEADERBOARD ({'MOCK MODE' if args.mock else 'GPU MODE'})")
     print("=" * 80)
     print(f"{'Run ID':<8} | {'Resolution':<12} | {'Steps':<8} | {'LoRA':<6} | {'Latency':<9} | {'Peak VRAM':<12} | {'SSIM':<8}")
     print("-" * 80)
     for run in results:
         vram_str = f"{run['vram_peak_mb']:.1f} MB" if run['vram_peak_mb'] > 0 else "N/A (CPU)"
-        status_suffix = "" if not run.get("error") else " ❌ (Err)"
-        print(f"{run['run_id']:<8} | {f'{run['resolution']}x{run['resolution']}':<12} | {run['steps']:<8} | {run['lora_scale']:<6} | {run['generation_time_s']:<8}s | {vram_str:<12} | {run['ssim_similarity']:<8}{status_suffix}")
+        status_suffix = "" if not run.get("error") else " [ERR]"
+        res_str = f"{run['resolution']}x{run['resolution']}"
+        print(f"{run['run_id']:<8} | {res_str:<12} | {run['steps']:<8} | {run['lora_scale']:<6} | {run['generation_time_s']:<8}s | {vram_str:<12} | {run['ssim_similarity']:<8}{status_suffix}")
     print("=" * 80)
 
     # Print recommendation info
     if recommendation:
-        print("\n💡 OPTIMIZATION RECOMMENDATION:")
-        print(f"  • Optimal Configuration: {recommendation['resolution']}x{recommendation['resolution']} resolution, {recommendation['steps']} steps, LoRA scale {recommendation['lora_scale']}")
-        print(f"  • Expected Generation Latency: {recommendation['generation_time_s']:.3f} seconds")
+        print("\n[RECOMMENDATION]")
+        print(f"  - Optimal Configuration: {recommendation['resolution']}x{recommendation['resolution']} resolution, {recommendation['steps']} steps, LoRA scale {recommendation['lora_scale']}")
+        print(f"  - Expected Generation Latency: {recommendation['generation_time_s']:.3f} seconds")
         if recommendation['vram_peak_mb'] > 0:
-            print(f"  • Expected Peak GPU Memory: {recommendation['vram_peak_mb']:.1f} MB")
+            print(f"  - Expected Peak GPU Memory: {recommendation['vram_peak_mb']:.1f} MB")
         
         # Apply configurations if requested
         if args.apply:
             apply_ok = suite.apply_configuration(recommendation)
             if apply_ok:
-                print("  ✅ Recommended settings successfully applied to config/settings.yaml!")
+                print("  [SUCCESS] Recommended settings successfully applied to config/settings.yaml!")
             else:
-                print("  ❌ Failed to write recommended settings to config/settings.yaml.")
+                print("  [ERROR] Failed to write recommended settings to config/settings.yaml.")
         else:
-            print("\n  👉 Pass the '--apply' flag to automatically configure your pipeline to use these optimal settings.")
+            print("\n  Note: Pass the '--apply' flag to automatically configure your pipeline to use these optimal settings.")
             
     if report_ok:
-        print(f"\n📊 Interactive HTML report generated at:")
+        print(f"\n[REPORT] Interactive HTML report generated at:")
         print(f"   file:///{os.path.abspath(report_path).replace(os.sep, '/')}")
     print("=" * 80 + "\n")
 
