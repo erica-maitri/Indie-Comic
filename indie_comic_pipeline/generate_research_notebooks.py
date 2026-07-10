@@ -570,6 +570,41 @@ display(df_mitigation)
 evaluator.free_memory()
 """)
         ]
+    ),
+    # Phase 10
+    (
+        "🚀 Phase 10: Automated Tuning & Performance Benchmarking",
+        "This section runs parameter sweeps over step counts, LoRA scales, and resolutions to locate the Pareto-optimal configuration matching your hardware's capabilities.",
+        [
+            ("md", "### 📊 1. Parameter Grid Sweep & Optimization Engine"),
+            ("code", """import os
+import pandas as pd
+from core.benchmark_suite import BenchmarkSuite
+from utils.report_generator import ReportGenerator
+
+# Initialize the benchmarking suite
+suite = BenchmarkSuite()
+
+# Run a mock sweep on CPU (fast dry-run, no GPU or models needed)
+print("Running parameter grid sweep in Mock mode...")
+results = suite.run_sweeps(prompt="A futuristic cyberpunk street", mock=True)
+
+# Identify the recommended configuration
+recommendation = suite.get_recommendation(results)
+print("\\n[RECOMMENDATION]")
+print(f"  - Optimal Configuration: {recommendation.get('resolution')}x{recommendation.get('resolution')} resolution, {recommendation.get('steps')} steps, LoRA scale {recommendation.get('lora_scale')}")
+print(f"  - Expected Latency: {recommendation.get('generation_time_s')} seconds")
+
+# Compile and show results in a pandas DataFrame
+df_results = pd.DataFrame(results)
+display(df_results.sort_values(by="ssim_similarity", ascending=False).head(5))
+
+# Generate the interactive HTML report
+report_path = os.path.join(suite.output_dir, "notebook_benchmark_report.html")
+ReportGenerator.generate_html_report(results, recommendation, report_path)
+print(f"\\n[REPORT] Interactive HTML report generated at: {report_path}")
+""")
+        ]
     )
 ]
     
