@@ -428,6 +428,15 @@ class IntegratedComicPipeline:
             # Clean up hooks and cached VRAM tensors
             self.panel_engine.cleanup()
             
+            # Explicit VRAM Garbage Collection & Defragmentation (additive optimization)
+            import gc
+            import torch
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+                log.info("[Pipeline] Cleared PyTorch CUDA cache and defragmented VRAM.")
+            
             # ── Phase 7: MangaFlow Page Assembly ──
             log.info("\n--- Phase 7: MangaFlow Layout Page Assembly ---")
             pages = []
