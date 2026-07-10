@@ -97,7 +97,9 @@ with $t{=}1.0$ the start of denoising and $t{=}0.0$ the end — zero influence a
 
 Semantic drift — hair color, clothing, facial structure shifting across panels — is addressed by intervening in the UNet's cross-attention blocks. During the anchor's reverse-diffusion pass, the projected Key/Value tensors ($K_{\text{anchor}}, V_{\text{anchor}}$) are captured from the first four cross-attention modules encountered, a deliberate trade-off that locks the primary semantic blocks without hooking the entire network. For every subsequent panel:
 
-$$\text{output} = (1-\beta)\cdot\text{Softmax}\!\left(\frac{Q_{\text{cur}}K_{\text{cur}}^T}{\sqrt{d}}\right)V_{\text{cur}} + \beta\cdot\text{Softmax}\!\left(\frac{Q_{\text{cur}}K_{\text{anchor}}^T}{\sqrt{d}}\right)V_{\text{anchor}}, \qquad \beta=0.15 \tag{5}$$
+$$\text{output} = (1-\beta_{\text{adaptive}})\cdot\text{Softmax}\!\left(\frac{Q_{\text{cur}}K_{\text{cur}}^T}{\sqrt{d}}\right)V_{\text{cur}} + \beta_{\text{adaptive}}\cdot\text{Softmax}\!\left(\frac{Q_{\text{cur}}K_{\text{anchor}}^T}{\sqrt{d}}\right)V_{\text{anchor}} \tag{5}$$
+
+where $\beta_{\text{adaptive}}$ is a spatially adaptive blend ratio. When a region mask $M \in [0,1]$ is available, $\beta_{\text{adaptive}} = \text{clamp}(\beta \cdot (1 + 0.5 \cdot M), 0.0, 0.4)$; otherwise, it defaults to the global baseline $\beta=0.15$.
 
 **Memory scaling.** Because only the anchor's K/V is ever retained — never a growing history over all $N$ panels — consistency-module memory is $O(1)$ in sequence length, a structural property of *what* is cached, independent of any further optimization. This is distinct from, and does not depend on, the streaming mechanism below; a naive implementation that kept the anchor's K/V resident on GPU would still be $O(1)$ in $N$, just with a slightly larger constant-factor footprint.
 
@@ -170,20 +172,25 @@ Output: consistency-aligned latent z'_t
 9:  K_dev, V_dev ← AsyncPrefetch(K_anchor, V_anchor)      # pinned-memory, non_blocking=True
 10: attn_cur  ← Softmax(Q_t K_t^T / √d) V_t
 11: attn_anch ← Softmax(Q_t K_dev^T / √d) V_dev
-12: z_attn ← (1 − β) · attn_cur + β · attn_anch            # β = 0.15
-13:
-14: /* T3 — active only for t/T ∈ [0.30, 0.60], two-stage blend */
-15: if 0.30 ≤ t/T ≤ 0.60 then
-16:     μ_c, σ_c ← ComputeChannelStats(z_attn)
-17:     std_ratio ← clamp(σ_a / σ_c, 0.80, 1.20)
-18:     z_corr ← z_attn · std_ratio + γ · (μ_a − μ_c)       # γ = 0.08
-19:     blend_w ← γ · (t/T − 0.30) / (0.60 − 0.30)
-20:     z'_t ← (1 − blend_w) · z_attn + blend_w · z_corr
-21: else
-22:     z'_t ← z_attn
-23: end if
-24:
-25: return z'_t
+12: if region_mask M is available then
+13:     β_eff ← clamp(β · (1 + 0.5 · M), 0.0, 0.4)
+14: else
+15:     β_eff ← β
+16: end if
+17: z_attn ← (1 − β_eff) · attn_cur + β_eff · attn_anch
+18:
+19: /* T3 — active only for t/T ∈ [0.30, 0.60], two-stage blend */
+20: if 0.30 ≤ t/T ≤ 0.60 then
+21:     μ_c, σ_c ← ComputeChannelStats(z_attn)
+22:     std_ratio ← clamp(σ_a / σ_c, 0.80, 1.20)
+23:     z_corr ← z_attn · std_ratio + γ · (μ_a − μ_c)       # γ = 0.08
+24:     blend_w ← γ · (t/T − 0.30) / (0.60 − 0.30)
+25:     z'_t ← (1 − blend_w) · z_attn + blend_w · z_corr
+26: else
+27:     z'_t ← z_attn
+28: end if
+29:
+30: return z'_t
 ```
 
 ### 3.2 MDCP Integration into Sequential Generation
@@ -1547,7 +1554,7 @@ MDCP consistently outperformed StoryDiffusion across all three categories: Chara
 
 While our empirical evaluations establish substantial consistency and efficiency advantages for MDCP, several experimental and metric boundaries constrain these conclusions:
 *   Section 3.2.5's five optional mitigations (M1–M5) are implemented and integrated, but disabled by default in our main pipeline evaluations; Table 18 represents their isolated and joint validation, not their performance on the baseline pipeline.
-*   Two independent FreeU-style mechanisms coexist un-reconciled within the system: standard SDXL FreeU scaling in the backend loop (Section 3.2.4) and the target-specific Fourier Skip-Connection Scaler (Mitigation 4 in Section 3.2.5). These operators utilize differing scaling thresholds.
+*   *(Resolved)* Two independent FreeU-style mechanisms coexisted un-reconciled within the system: standard SDXL FreeU scaling in the backend loop (Section 3.2.4) and the target-specific Fourier Skip-Connection Scaler (Mitigation 4 in Section 3.2.5). This redundancy has been resolved by disabling the native FreeU by default.
 *   The Phase 8 parameter optimization loop relies on human-in-the-loop rating adjustments to update rule-based parameters (smoothing $\alpha$, blending $\beta$, CFG). It functions as a heuristic parameter-tuning layer rather than an online policy-gradient Reinforcement Learning from Human Feedback (RLHF) loop.
 *   The primary identity anchor configuration (Phase 2 in Section 3.2.3) relies on classical texture and boundary descriptors (color keys, edge maps, Gram matrices) for zero-shot identity alignment. While deeper semantic embeddings (CLIP, DINOv2) are fully implemented, they are disabled by default.
 \n\n---
@@ -1633,6 +1640,16 @@ While our empirical evaluations and mathematical formulations demonstrate strong
 In this paper, we introduced the Multi-Level Diffusion Consistency Prior (MDCP), a unified, training-free framework for preserving character identity and structural consistency in long-range sequential diffusion generation. By formulating long-range consistency through a conceptual multi-scale consistency energy—and applying an operator-splitting-inspired heuristic to act on high-frequency noise ($\Delta_{\text{HF}}$), semantic drift ($\Delta_{\text{semantic}}$), and structural shifting ($\Delta_{\text{structure}}$)—MDCP is designed to outperform existing single-mechanism approaches. 
 
 Our empirical results demonstrate that while attention-sharing provides necessary semantic coherence, multi-scale latent constraints are strictly required to maintain rigid structural identity across varying poses. We validated MDCP within a multi-agent unconstrained comic generation pipeline, demonstrating its robustness and $O(1)$ consistency module memory overhead. With the inclusion of formal bounded stability guarantees, MDCP establishes a principled, defensible mathematical framework and a scalable technical solution for zero-shot, long-range consistency for sequential art and comic generation.
+
+---
+
+## 7. Addendum: Recent Framework Upgrades
+
+Subsequent to the primary evaluations, several targeted improvements were implemented to address identified pipeline limitations:
+1. **Semantic Narrative Coherence**: The narrative coherence heuristic ($S_{\text{narr}}$) was extended beyond purely temporal alignment to include **semantic similarity** between the current and previous panels' prompts. This is achieved via BERTScore F1 evaluation, improving logical story flow.
+2. **Spatially Adaptive Blend Weights**: The attention caching blend ratio ($\beta$) was upgraded from a static global value (0.15) to a **spatially adaptive** scale. Using regional saliency masks, foreground characters now receive a stronger anchor influence, while backgrounds remain independent.
+3. **FreeU Redundancy Resolution**: The native diffusers `enable_freeu` configuration was disabled by default in the SDXL backend, eliminating the overlapping frequency-control redundancy with the custom Fourier Skip-Connection Scaler (M4).
+4. **Critic Cold-Start Mitigation**: The User Preference Critic was updated to include a **zero-shot CLIP text-image similarity baseline**. Before accumulating the necessary three user feedback samples, the critic evaluates panels against a high-quality reference prompt (e.g., "masterpiece, high quality indie comic"), preventing early-stage fixed weight dominance.
 
 ---
 

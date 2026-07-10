@@ -51,6 +51,7 @@ class QualityCritic:
 
         self._consistency_checker = None
         self._user_pref_critic = None
+        self._bert_cache = {}
 
     def _get_user_pref_critic(self):
         """Lazy-load user preference critic."""
@@ -221,6 +222,7 @@ class QualityCritic:
         """
         Evaluate narrative flow continuity.
         Checks if the panel logically follows from recent panels.
+        Combines temporal alignment with semantic similarity (if bert_score is available).
         """
         panel_id = panel_result.get("panel_id", 0)
         recent = memory.get_recent_panels(3)
@@ -228,16 +230,37 @@ class QualityCritic:
         if not recent or panel_id == 1:
             return 0.8  # First panel: good baseline
 
-        # Check for emotional arc continuity
+        # Check for emotional arc continuity (Temporal)
         current_beat_idx = memory.current_beat_index
         total_beats = len(memory.arc_beats)
 
+        temporal = 0.65
         if total_beats > 0:
             progress = current_beat_idx / total_beats
             # Coherence is high when we're following the planned arc
-            return 0.65 + 0.25 * (1.0 - abs(progress - panel_id / memory.total_panels))
+            temporal = 0.65 + 0.25 * (1.0 - abs(progress - panel_id / memory.total_panels))
 
-        return 0.65
+        # Check semantic continuity using BERTScore
+        semantic = 0.5
+        current_prompt = panel_result.get("prompt", "")
+        prev_panel = recent[-1] if recent else None
+        
+        if prev_panel and current_prompt:
+            prev_prompt = getattr(prev_panel, "prompt", "")
+            if prev_prompt and current_prompt:
+                cache_key = (prev_prompt, current_prompt)
+                if cache_key in self._bert_cache:
+                    semantic = self._bert_cache[cache_key]
+                else:
+                    try:
+                        from bert_score import score as bert_score
+                        _, _, F1 = bert_score([current_prompt], [prev_prompt], lang="en", verbose=False, idf=False, batch_size=1)
+                        semantic = max(0.0, min(1.0, float(F1.item())))
+                        self._bert_cache[cache_key] = semantic
+                    except ImportError:
+                        semantic = 0.5
+                        
+        return 0.6 * temporal + 0.4 * semantic
 
     def _eval_aesthetic_quality(self, panel_result: Dict[str, Any]) -> float:
         """

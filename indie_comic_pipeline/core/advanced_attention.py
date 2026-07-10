@@ -290,8 +290,11 @@ class SharedAttentionCache:
                             # mask: (1, 1, H, W) → (1, H*W, 1) for broadcast over channels
                             mask_flat = mask.view(1, -1, 1)
                             if mask_flat.shape[1] == output.shape[1]:
-                                blended = (1 - self.blend_ratio * mask_flat) * output \
-                                        + self.blend_ratio * mask_flat * cached_device
+                                mask_scale = 0.5
+                                beta_adaptive = self.blend_ratio * (1.0 + mask_scale * mask_flat)
+                                beta_adaptive = torch.clamp(beta_adaptive, 0.0, 0.4)
+                                blended = (1 - beta_adaptive) * output \
+                                        + beta_adaptive * cached_device
                                 return blended
                         except Exception:
                             pass  # Fall through to global blend

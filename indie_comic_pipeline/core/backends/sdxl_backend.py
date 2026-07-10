@@ -131,7 +131,7 @@ class SDXLBackend(BaseBackend):
         # Defaults are the SDXL-specific values documented by HuggingFace diffusers
         # (https://huggingface.co/docs/diffusers/using-diffusers/freeu), sourced from
         # https://wandb.ai/nasirk24/UNET-FreeU-SDXL/reports/FreeU-SDXL-Optimal-Parameters
-        if config.get("enable_freeu", True):
+        if config.get("enable_freeu", False):
             try:
                 self._pipe.enable_freeu(
                     s1=config.get("freeu_s1", 0.6),

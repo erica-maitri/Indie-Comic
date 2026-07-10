@@ -99,17 +99,31 @@ class UserPreferenceCritic:
         features = features / features.norm(p=2, dim=-1, keepdim=True)
         return features
 
+    def _get_text_embedding(self) -> torch.Tensor:
+        """Lazy load text embedding for zero-shot cold start."""
+        if not hasattr(self, "_text_embedding") or self._text_embedding is None:
+            self._lazy_load_clip()
+            text = "masterpiece, high quality indie comic, beautiful artwork"
+            inputs = self._clip_processor(text=[text], return_tensors="pt", padding=True).to(self.device)
+            with torch.no_grad():
+                emb = self._clip_model.get_text_features(**inputs)
+                emb = emb / emb.norm(dim=-1, keepdim=True)
+            self._text_embedding = emb.squeeze(0)
+        return self._text_embedding
+
     def predict(self, image: Image.Image) -> float:
         """
         Predict the user rating score for an image.
         Returns a float between 0.0 and 1.0 (representing 1-5 stars normalized).
-        If the model is not trained, returns a default neutral score of 0.5.
+        If the model is not trained, returns a zero-shot similarity score.
         """
-        if not self._is_trained:
-            return 0.5
-            
         try:
             features = self.extract_features(image)
+            if not self._is_trained:
+                text_emb = self._get_text_embedding()
+                sim = torch.dot(features.squeeze(0), text_emb)
+                return max(0.0, min(1.0, sim.item()))
+                
             self.model.eval()
             with torch.no_grad():
                 pred = self.model(features)
