@@ -375,6 +375,29 @@ def update_bubble():
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
+@app.route('/benchmarks/<path:filename>')
+def serve_benchmarks_assets(filename):
+    benchmark_dir = os.path.join(OUTPUTS_DIR, "benchmarks")
+    return send_from_directory(benchmark_dir, filename)
+
+
+@app.route('/benchmarks')
+def benchmarks():
+    benchmark_dir = os.path.join(OUTPUTS_DIR, "benchmarks")
+    report_path = os.path.join(benchmark_dir, "benchmark_report.html")
+    if not os.path.exists(report_path):
+        return f"<html><body style='background:#0a0b10;color:#9ca3af;font-family:sans-serif;padding:2rem;'><h2>No benchmark report found.</h2><p>Please run the benchmark suite first using: <code>python run_benchmarks.py --mock</code></p></body></html>", 404
+        
+    with open(report_path, "r", encoding="utf-8") as f:
+        content = f.read()
+        
+    # Redirect image references to the Flask serving route
+    content = content.replace('src="baseline_image.png"', 'src="/benchmarks/baseline_image.png"')
+    content = content.replace('src="', 'src="/benchmarks/')
+    content = content.replace('overlay.src = imageName;', 'overlay.src = "/benchmarks/" + imageName;')
+    
+    return content
+
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
