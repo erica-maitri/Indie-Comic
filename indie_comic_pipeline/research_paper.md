@@ -56,10 +56,7 @@ Outside the visual domain, emotional-arc-guided generation has recently been exp
 
 This section introduces the methodology of the Indie-Comic pipeline with the Multi-Level Diffusion Consistency Prior (MDCP) approach. This is a training-free, zero-shot sequential comic generation framework featuring an inference-time latent intervention approach that preserves character identity without per-character fine-tuning or model training. It considers multi-scale latent trajectory deviations, where MDCP examines high-frequency noise drift ($\Delta_{\text{HF}}$), semantic concept forgetting ($\Delta_{\text{semantic}}$), and global structural shifting ($\Delta_{\text{structure}}$) during the reverse diffusion loop to enforce consistency. By decoupling this multi-scale energy profile into lightweight operations, this framework reduces consistency-module memory overhead to a strict $\mathcal{O}(1)$ GPU VRAM complexity profile by offloading the anchor panel's cached attention-block output activations asynchronously to CPU pinned memory. This mathematical decoupling shifts the sequential generation constraint from a hard, algorithmic memory ceiling to a systems-level PCIe streaming bandwidth trade-off, reframing a machine-learning memory bottleneck as a systems/HPC-style engineering trade-off. Furthermore, this study proposes a spatiotemporal statistical correction to navigate "temporal leaps" — the discontinuous narrative transitions between panel gutters — allowing characters the dynamic pose flexibility required for comic action, which video-centric sequential models actively suppress.
 
-Along with MDCP, this framework also proposes an automated comic composition workflow designed to orchestrate the entire production lifecycle. Figure 1 presents the framework of the proposed research, which consists of eight core phases: (i) story intake and emotion-conditioned narrative parsing, (ii) multi-agent panel enrichment via a six-agent blackboard swarm (Story, Action, Dialogue, Pose, Emotion, and Camera directors), (iii) reference-free identity anchoring, (iv) the unified MDCP generation loop, (v) LLM-planned dialogue placement, (vi) automated quality gating, (vii) cadence layout engine, and (viii) multi-format export and feedback tuning. These eight phases are further augmentable, on an opt-in basis, by five specialized consistency mitigation modules that address specific edge-case failure modes of the core operator chain; consistent with their disabled-by-default status in the released implementation, they are not counted among the eight core phases. The five opt-in modules are: (1) localized detail injection (ConsistentID/InstantID-style) to preserve micro-geometric details like scars or emblems, (2) regional attention masking (OMOST/BoxDiff) to reduce multi-character semantic feature bleed, (3) foreground saliency segmentation (SAM/GrabCut) to isolate the character foreground so that anchor-panel background content is not blended into a new panel's independently specified background, (4) skip-connection Fourier scaling (FreeU) to suppress over-smoothing of fine line art, and (5) adaptive instance normalization (AdaIN/StyleAligned) to relax the core L3 statistic clamp during dramatic lighting or contrast shifts while keeping color identity anchored in a deeper feature space, rather than clamped in raw channel statistics. This section explains in detail the complete methodology of the proposed framework with all steps. The initial story-intake phase considers both literal plot-preservation and legacy mood-arc emotional mapping to ensure high narrative fidelity, the subsequent multi-agent enrichment phase adds pose, camera, and action detail before generation begins, and later phases programmatically enforce artistic rendering coherence and automated layout orchestration.
-
-
-
+Along with MDCP, this framework also proposes an automated comic composition workflow designed to orchestrate the entire production lifecycle. Figure 1 presents the framework of the proposed research, which consists of eight core phases: (i) story intake and emotion-conditioned narrative parsing, (ii) multi-agent panel enrichment via a six-agent blackboard swarm (Story, Action, Dialogue, Pose, Emotion, and Camera directors), (iii) reference-free identity anchoring, (iv) the unified MDCP generation loop, (v) LLM-planned dialogue placement, (vi) automated quality gating, (vii) cadence layout engine, and (viii) multi-format export and feedback tuning. These eight phases are further augmentable, on an opt-in basis, by five specialized consistency mitigation modules that address specific edge-case failure modes of the core operator chain; consistent with their disabled-by-default status in the released implementation, they are not counted among the eight core phases. The five opt-in modules are: (1) localized detail injection (ConsistentID/InstantID-style) to preserve micro-geometric details like scars or emblems, (2) regional attention masking (OMOST/BoxDiff) to reduce multi-character semantic feature bleed, (3) foreground saliency segmentation (SAM/GrabCut) to isolate the character foreground so that anchor-panel background content is not blended into a new panel's independently specified background, (4) skip-connection Fourier scaling (FreeU) to suppress over-smoothing of fine line art, and (5) adaptive instance normalization (AdaIN/StyleAligned) to relax the core $\mathcal{T}_3$ statistic clamp during dramatic lighting or contrast shifts while keeping color identity anchored in a deeper feature space, rather than clamped in raw channel statistics. This section explains in detail the complete methodology of the proposed framework with all steps. The initial story-intake phase considers both literal plot-preservation and legacy mood-arc emotional mapping to ensure high narrative fidelity, the subsequent multi-agent enrichment phase adds pose, camera, and action detail before generation begins, and later phases programmatically enforce artistic rendering coherence and automated layout orchestration.
 
 Generating a comic from a natural-language story is not one problem but several stacked on top of each other: the narrative must be broken into discrete moments without losing the author's intent, the same characters must remain recognizable across images produced by independent diffusion runs, panels must be arranged to reflect the story's pacing, and dialogue must be placed without destroying the art beneath it. Treating this as a single end-to-end model would require a scale of paired, panel-consistent training data that does not publicly exist; treating it as a single-image text-to-image problem, run once per panel, ignores the sequential-consistency problem entirely and produces characters whose faces, clothing, and palette drift from frame to frame. Our approach instead decomposes the problem into eight explicit phases, each addressing one sub-problem with the lightest mechanism that solves it, and introduces a dedicated mathematical framework — the Multi-Level Diffusion Consistency Prior (MDCP) — for the sub-problem that most directly determines whether the output reads as one story rather than eight unrelated images: cross-panel visual identity.
 
@@ -93,40 +90,33 @@ $$\alpha_{\text{eff}}(t) = \alpha\cdot\frac{t-t_{\text{end}}}{t_{\text{start}}-t
 
 with $t{=}1.0$ the start of denoising and $t{=}0.0$ the end — zero influence at $t{=}0.20$, full strength at $t{=}0.80$, tapering global structure formation at the very start and fine detail at the very end from ever being touched.
 
-#### 3.1.3 $\mathcal{T}_2$ — Shared Cross-Attention Caching with Pinned-Memory Streaming
+#### 3.1.3 $\mathcal{T}_2$ — Shared Attention-Output Caching with Pinned-Memory Streaming
 
-Semantic drift — hair color, clothing, facial structure shifting across panels — is addressed by intervening in the UNet's cross-attention blocks. During the anchor's reverse-diffusion pass, the projected Key/Value tensors ($K_{\text{anchor}}, V_{\text{anchor}}$) are captured from the first four cross-attention modules encountered, a deliberate trade-off that locks the primary semantic blocks without hooking the entire network. For every subsequent panel:
+Semantic drift — hair color, clothing, facial structure shifting across panels — is addressed by intervening in the UNet's cross-attention (attn2) blocks. During the anchor's reverse-diffusion pass, a forward hook captures the finished output activation $O_{anchor}$ — the tensor each block produces after its own internal softmax-weighted value aggregation — from the first four cross-attention modules encountered, a deliberate trade-off that locks the primary semantic blocks without hooking the entire network. No key or value projection is extracted or cached separately; the intervention operates entirely on each block's already-computed output, not on its internal Q/K/V tensors. For every subsequent panel, each hooked block's own output is blended in place with its cached anchor counterpart:
 
-$$\text{output} = (1-\beta_{\text{adaptive}})\cdot\text{Softmax}\!\left(\frac{Q_{\text{cur}}K_{\text{cur}}^T}{\sqrt{d}}\right)V_{\text{cur}} + \beta_{\text{adaptive}}\cdot\text{Softmax}\!\left(\frac{Q_{\text{cur}}K_{\text{anchor}}^T}{\sqrt{d}}\right)V_{\text{anchor}} \tag{5}$$
+$$O_{hooked} = (1 - \beta) \cdot O_{curr} + \beta \cdot O_{anchor}, \quad \beta = 0.15 \tag{5}$$
 
-where $\beta_{\text{adaptive}}$ is a spatially adaptive blend ratio. When a region mask $M \in [0,1]$ is available, $\beta_{\text{adaptive}} = \text{clamp}(\beta \cdot (1 + 0.5 \cdot M), 0.0, 0.4)$; otherwise, it defaults to the global baseline $\beta=0.15$.
+where $O_{curr}$ is the block's ordinary output for the current panel (already the result of that block's own internal $\text{Softmax}(Q_{curr} K_{curr}^\top / \sqrt{d})V_{curr}$ computation) and $O_{anchor}$ is the fixed, cached output produced once during the anchor's own pass. The blend is a simple linear interpolation of two finished activations, not a re-weighted attention computation over a shared key/value cache.
 
-**Memory scaling.** Because only the anchor's K/V is ever retained — never a growing history over all $N$ panels — consistency-module memory is $O(1)$ in sequence length, a structural property of *what* is cached, independent of any further optimization. This is distinct from, and does not depend on, the streaming mechanism below; a naive implementation that kept the anchor's K/V resident on GPU would still be $O(1)$ in $N$, just with a slightly larger constant-factor footprint.
+**Memory scaling.** Because only the anchor's four cached output activations are ever retained — never a growing history over all $N$ panels — consistency-module memory is $\mathcal{O}(1)$ in sequence length, a structural property of what is cached, independent of any further optimization. This is distinct from, and does not depend on, the streaming mechanism below; a naive implementation that kept these activations GPU-resident would still be $\mathcal{O}(1)$ in $N$, just with a slightly larger constant-factor footprint.
 
-**Host offload.** On top of the $O(1)$ property above, the cached tensors are moved to host memory between panels rather than kept GPU-resident, via PyTorch's pinned-memory API:
+**Host offload.** On top of the $\mathcal{O}(1)$ property above, the cached tensors are moved to host memory between panels rather than kept GPU-resident, via PyTorch's pinned-memory API:
 
 ```python
-# capture (anchor panel)
+# Capture anchor panel activations and pin to host memory
 self._cached_outputs[module] = output.detach().cpu().pin_memory()
-# apply (target panels) — asynchronous, non-blocking host-to-device copy
+
+# Apply to target panels via asynchronous, non-blocking transfer
 cached_device = cached.to(device=output.device, dtype=output.dtype, non_blocking=True)
 ```
 
 `.pin_memory()` allocates page-locked host memory (PyTorch's wrapper over `cudaHostAlloc`); `.to(..., non_blocking=True)` on a pinned tensor issues an asynchronous host-to-device copy (PyTorch's wrapper over `cudaMemcpyAsync`) that can overlap with the UNet's self-attention computation, which precedes cross-attention within a transformer block.
 
-**Bandwidth analysis.** For the four hooked cross-attention modules, with SDXL's dual-text-encoder context (2048 features) at 77 CLIP tokens, stored in the fp16 precision the backend actually runs in (Section 3.2.4), and accounting for the Classifier-Free Guidance (CFG) batch multiplier of 2 (conditioned and unconditioned forward passes batched together), the per-step payload is:
+**Bandwidth analysis.** The cached quantity is the hooked block's own output activation, whose size is set by that block's spatial feature-map resolution ($H_\ell \times W_\ell$) and hidden channel width ($C_\ell$) — not by the CLIP tokenizer's 77-token sequence length or the 2048-dimensional text-encoder context, which describe the K/V projections rather than the block's output. For a block operating at resolution $H_\ell \times W_\ell$ with $C_\ell$ channels, and accounting for the Classifier-Free Guidance (CFG) batch multiplier of 2, the per-layer payload is:
 
-$$\text{Payload} = 4 \times 2\,(K,V) \times 2\,(\text{CFG multiplier}) \times 77 \times 2048 \times 2\ \text{bytes} \approx 5.05\ \text{MB} \tag{6}$$
+$$\text{Payload}_\ell = 2\ (\text{CFG}) \times H_\ell \times W_\ell \times C_\ell \times 2\ \text{bytes (fp16)},\quad \text{summed over the 4 hooked layers} \tag{6}$$
 
-Transfer duration $T = \text{Payload}/\text{Bandwidth}$ across PCIe generations:
-
-| Interface | Bandwidth | $T_{\text{transfer}}$ |
-|---|---|---|
-| PCIe Gen3 x8 | 7.88 GB/s | 0.64 ms |
-| PCIe Gen4 x16 | 31.5 GB/s | 0.16 ms |
-| PCIe Gen5 x16 | 63.0 GB/s | 0.08 ms |
-
-Since one UNet denoising step takes roughly 120–250 ms on commodity GPUs, this transfer is completed one to two orders of magnitude faster than the surrounding computation, so it is masked by overlap regardless of PCIe generation. (This calculation accounts for the standard FP16 tensor representation and CFG batching, demonstrating that the Host-to-Device transfer latency is negligible.)
+Which four attn2 modules are hooked first is determined by the traversal order of `model.named_modules()` rather than a fixed architectural choice, so $H_\ell$, $W_\ell$, $C_\ell$ vary by deployment and should be measured empirically — e.g., logging `output.element_size() * output.nelement()` inside the capture hook — rather than assumed from the text-conditioning shape. As an illustrative bound rather than a measured figure: even a payload an order of magnitude larger than the original 5.05 MB text-K/V estimate (tens of MB, plausible for early, higher-resolution SDXL cross-attention blocks) transfers in low single-digit milliseconds at PCIe Gen3 x8 bandwidth (7.88 GB/s), which remains comfortably inside the surrounding 120–250 ms UNet step budget. The qualitative "masked by overlap" conclusion is therefore expected to hold, but the specific 5.05 MB figure should not be cited as the actual cached payload, since it was derived from the wrong tensor.
 
 #### 3.1.4 $\mathcal{T}_3$ — Spatiotemporal Channel Statistics Alignment
 
@@ -158,39 +148,30 @@ This guarantees MDCP cannot cause latent divergence; it does **not** establish t
 
 ```
 Algorithm 1: MDCP Denoising Step Update
-Input:  timestep t, latent z_t, anchor cache (K_anchor, V_anchor), anchor stats (μ_a, σ_a)
-Output: consistency-aligned latent z'_t
+Input:  Timestep t, latent z_t, anchor output cache {O_anchor^(1..4)} (one per hooked attn2 layer),
+        anchor stats (μ_a, σ_a)
+Output: Consistency-aligned latent z'_t
 
-1:  /* T1 — active only for t/T ∈ [0.20, 0.80] */
-2:  if 0.20 ≤ t/T ≤ 0.80 then
-3:      α_eff ← α · (t/T − 0.20) / (0.80 − 0.20)
-4:      z_t ← z_t + α_eff · (GaussianBlur(z_t, σ=size/3) − z_t)
-5:  end if
-6:
-7:  /* T2 — hooked at the first 4 cross-attention modules */
-8:  (K_t, V_t) ← UNet.get_cross_attention_projections(z_t)
-9:  K_dev, V_dev ← AsyncPrefetch(K_anchor, V_anchor)      # pinned-memory, non_blocking=True
-10: attn_cur  ← Softmax(Q_t K_t^T / √d) V_t
-11: attn_anch ← Softmax(Q_t K_dev^T / √d) V_dev
-12: if region_mask M is available then
-13:     β_eff ← clamp(β · (1 + 0.5 · M), 0.0, 0.4)
-14: else
-15:     β_eff ← β
-16: end if
-17: z_attn ← (1 − β_eff) · attn_cur + β_eff · attn_anch
-18:
-19: /* T3 — active only for t/T ∈ [0.30, 0.60], two-stage blend */
-20: if 0.30 ≤ t/T ≤ 0.60 then
-21:     μ_c, σ_c ← ComputeChannelStats(z_attn)
-22:     std_ratio ← clamp(σ_a / σ_c, 0.80, 1.20)
-23:     z_corr ← z_attn · std_ratio + γ · (μ_a − μ_c)       # γ = 0.08
-24:     blend_w ← γ · (t/T − 0.30) / (0.60 − 0.30)
-25:     z'_t ← (1 − blend_w) · z_attn + blend_w · z_corr
-26: else
-27:     z'_t ← z_attn
-28: end if
-29:
-30: return z'_t
+1.  if 0.20 ≤ t/T ≤ 0.80 then
+2.      α_eff ← α · (t/T - 0.20) / (0.80 - 0.20)
+3.      z_t ← z_t + α_eff · (GaussianBlur(z_t, σ=size/3) - z_t)
+4.  end if
+5.  for each of the 4 hooked attn2 layers ℓ, during the UNet's forward pass over z_t:
+6.      O_curr^(ℓ) ← layer ℓ's ordinary forward output (already Softmax(Q Kᵀ/√d)V internally)
+7.      O_dev^(ℓ)  ← AsyncPrefetch(O_anchor^(ℓ))           # pinned host → device, non-blocking
+8.      layer ℓ's output ← (1 - β) · O_curr^(ℓ) + β · O_dev^(ℓ)   # replaces layer output in-place
+9.  end for
+10. z_attn ← the latent produced once the UNet forward pass completes with the four blended layer outputs
+11. if 0.30 ≤ t/T ≤ 0.60 then
+12.     μ_c, σ_c ← ComputeChannelStats(z_attn)
+13.     std_ratio ← clamp(σ_a / σ_c, 0.80, 1.20)
+14.     z_corr ← z_attn · std_ratio + γ · (μ_a - μ_c)
+15.     blend_w ← γ · (t/T - 0.30) / (0.60 - 0.30)
+16.     z'_t ← (1 - blend_w) · z_attn + blend_w · z_corr
+17. else
+18.     z'_t ← z_attn
+19. end if
+20. return z'_t
 ```
 
 ### 3.2 MDCP Integration into Sequential Generation
