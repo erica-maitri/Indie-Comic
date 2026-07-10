@@ -122,6 +122,17 @@ class IntegratedComicPipeline:
     def __init__(self, model_override: Optional[str] = None, skip_backends: bool = False, dry_run: bool = False):
         self.dry_run = dry_run
         import torch
+        
+        # Enable PyTorch TF32 & Matmul Precision GPU Acceleration (additive optimization)
+        if torch.cuda.is_available():
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            try:
+                torch.set_float32_matmul_precision('high')
+                log.info("[Pipeline] Enabled TF32 matmul and cudnn acceleration with 'high' precision.")
+            except Exception as e:
+                log.warning(f"[Pipeline] Failed to set matmul precision: {e}")
+
         if not skip_backends and not self.dry_run and not torch.cuda.is_available():
             log.error("❌ CRITICAL ERROR: CUDA GPU is not available! The pipeline has been configured to run ONLY on GPU (dry-run and mock modes are disabled). Please enable GPU acceleration in your Kaggle/Colab notebook settings.")
             raise RuntimeError("❌ CRITICAL ERROR: CUDA GPU is not available!")
