@@ -3,6 +3,7 @@ import base64
 import sys
 import json
 import uuid
+import threading
 from io import BytesIO
 from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, render_template, request, jsonify, send_from_directory
@@ -45,14 +46,38 @@ def index():
 jobs = {}
 executor = ThreadPoolExecutor(max_workers=1)
 
+# Thread-safe persistent pipeline instantiation
+_pipeline_instance = None
+_pipeline_init_lock = threading.Lock()
+
+def get_pipeline_instance():
+    """
+    Retrieves the global, persistent instance of the IntegratedComicPipeline.
+    Uses lazy-loading thread-safe lock to prevent multiple model loads.
+    """
+    global _pipeline_instance
+    if _pipeline_instance is not None:
+        return _pipeline_instance
+        
+    with _pipeline_init_lock:
+        if _pipeline_instance is None:
+            if PIPELINE_AVAILABLE and IntegratedComicPipeline is not None:
+                # Enable dry_run if CUDA is not available
+                dry_run = False
+                if HAS_TORCH:
+                    import torch
+                    dry_run = not torch.cuda.is_available()
+                
+                print(f"[app.py] Initializing persistent IntegratedComicPipeline (dry_run={dry_run})...")
+                _pipeline_instance = IntegratedComicPipeline(dry_run=dry_run)
+                print("[app.py] Persistent pipeline initialized and cached in memory.")
+    return _pipeline_instance
+
 def run_generation_task(task_id, prompt, style, character, world):
     """Background task to run the generation pipeline."""
     try:
-        if PIPELINE_AVAILABLE and IntegratedComicPipeline is not None:
-            # Enable dry_run if CUDA is not available or if CPU-only mode is forced
-            dry_run = False
-            
-            pipeline = IntegratedComicPipeline(dry_run=dry_run)
+        pipeline = get_pipeline_instance()
+        if pipeline is not None:
             result = pipeline.run(
                 prompt=prompt,
                 character_name=character,
