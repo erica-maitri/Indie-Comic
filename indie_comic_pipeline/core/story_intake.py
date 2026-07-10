@@ -1119,10 +1119,15 @@ def compile_unified_references(csv_dir: Optional[str] = None, output_path: str =
         log.error(f"Error writing unified references: {e}")
 
 
+_UNIFIED_RECORDS_CACHE = None
+
+
 def select_franchise_from_unified_csv(emotion: str, user_prompt: str, csv_path: str = "outputs/unified_references.csv") -> dict:
     import csv
     import os
     import re
+    
+    global _UNIFIED_RECORDS_CACHE
     
     # Force recompile if missing or doesn't have popularity_score in headers
     recompile_needed = False
@@ -1139,6 +1144,8 @@ def select_franchise_from_unified_csv(emotion: str, user_prompt: str, csv_path: 
             
     if recompile_needed:
         compile_unified_references(output_path=csv_path)
+        # Invalidate cache if recompiled
+        _UNIFIED_RECORDS_CACHE = None
         
     genre_mapping = {
         "sadness": ["Drama", "Psychological", "Romance", "Slice of Life"],
@@ -1164,35 +1171,81 @@ def select_franchise_from_unified_csv(emotion: str, user_prompt: str, csv_path: 
     if not prompt_words:
         prompt_words = tokenize(emotion)
         
+    # Populate cache if empty
+    if _UNIFIED_RECORDS_CACHE is None:
+        _UNIFIED_RECORDS_CACHE = []
+        if os.path.exists(csv_path):
+            try:
+                log.info(f"[Mood Weaver] Caching unified references from '{csv_path}' for fast franchise lookups...")
+                with open(csv_path, mode="r", encoding="utf-8") as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        genres_str = row.get("genre", "").lower()
+                        # Pre-split and cache the genres list
+                        row["_cached_genres"] = [g.strip() for g in genres_str.split(",")]
+                        
+                        # Pre-tokenize title and combined text for O(1) matching speed
+                        title = row.get("title", "") or ""
+                        desc = row.get("description", "") or ""
+                        row["_cached_title_words"] = set(re.findall(r'\w+', title.lower()))
+                        row["_cached_row_words"] = set(re.findall(r'\w+', f"{title} {desc}".lower()))
+                        
+                        _UNIFIED_RECORDS_CACHE.append(row)
+                log.info(f"[Mood Weaver] Cached and pre-tokenized {len(_UNIFIED_RECORDS_CACHE)} reference titles in memory.")
+            except Exception as e:
+                log.warning(f"Error caching unified references: {e}")
+                _UNIFIED_RECORDS_CACHE = None
+
     ranked_candidates = []
     
-    if os.path.exists(csv_path):
-        try:
-            with open(csv_path, mode="r", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    genres_str = row.get("genre", "").lower()
-                    row_genres = [g.strip() for g in genres_str.split(",")]
-                    # Check if matching categories
-                    if any(tg in row_genres for tg in target_genres):
-                        title = row.get("title", "")
-                        desc = row.get("description", "")
-                        combined_text = f"{title} {desc}".lower()
-                        row_words = tokenize(combined_text)
-                        
-                        # Match overlap score
-                        overlap_score = len(prompt_words.intersection(row_words))
-                        title_words = tokenize(title)
-                        title_score = len(prompt_words.intersection(title_words)) * 5
-                        total_match = overlap_score + title_score
-                        
-                        pop_score = float(row.get("popularity_score") or 50.0)
-                        
-                        # Final rank score prioritizing overlap matches first, then popularity
-                        rank_score = (total_match * 1000) + pop_score
-                        ranked_candidates.append((rank_score, row))
-        except Exception as e:
-            log.warning(f"Error ranking references: {e}")
+    if _UNIFIED_RECORDS_CACHE is not None:
+        # Fast Path: search memory cache directly with pre-tokenized sets
+        for row in _UNIFIED_RECORDS_CACHE:
+            row_genres = row.get("_cached_genres", [])
+            # Check if matching categories
+            if any(tg in row_genres for tg in target_genres):
+                row_words = row["_cached_row_words"]
+                title_words = row["_cached_title_words"]
+                
+                # Match overlap score (very fast set intersections)
+                overlap_score = len(prompt_words.intersection(row_words))
+                title_score = len(prompt_words.intersection(title_words)) * 5
+                total_match = overlap_score + title_score
+                
+                pop_score = float(row.get("popularity_score") or 50.0)
+                
+                # Final rank score prioritizing overlap matches first, then popularity
+                rank_score = (total_match * 1000) + pop_score
+                ranked_candidates.append((rank_score, row))
+    else:
+        # Fallback: read directly from file if caching is unavailable/failed
+        if os.path.exists(csv_path):
+            try:
+                with open(csv_path, mode="r", encoding="utf-8") as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        genres_str = row.get("genre", "").lower()
+                        row_genres = [g.strip() for g in genres_str.split(",")]
+                        # Check if matching categories
+                        if any(tg in row_genres for tg in target_genres):
+                            title = row.get("title", "")
+                            desc = row.get("description", "")
+                            combined_text = f"{title} {desc}".lower()
+                            row_words = tokenize(combined_text)
+                            
+                            # Match overlap score
+                            overlap_score = len(prompt_words.intersection(row_words))
+                            title_words = tokenize(title)
+                            title_score = len(prompt_words.intersection(title_words)) * 5
+                            total_match = overlap_score + title_score
+                            
+                            pop_score = float(row.get("popularity_score") or 50.0)
+                            
+                            # Final rank score prioritizing overlap matches first, then popularity
+                            rank_score = (total_match * 1000) + pop_score
+                            ranked_candidates.append((rank_score, row))
+            except Exception as e:
+                log.warning(f"Error ranking references: {e}")
             
     if ranked_candidates:
         # Sort by rank_score descending

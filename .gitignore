@@ -38,3 +38,4 @@ env/
 .ipynb_checkpoints/
 Thumbs.db
 .DS_Store
+.kilo/
