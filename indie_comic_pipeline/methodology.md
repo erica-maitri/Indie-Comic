@@ -40,58 +40,94 @@ flowchart TD
         subgraph Swarm ["Swarm Agents (Blackboard Pattern)"]
             DirStory["StoryDirector\nRegisters characters & sequences"]:::process
             DirAction["ActionDirector\nExaggeration Map & Action Intensity Scores"]:::process
-            WriterDialogue["DialogueWriter\nDialogue texts, tones, bubble category"]:::process
-            DirPose["PoseDirector\nBody posture mapping"]:::process
-            DirEmotion["EmotionDirector\nGranular facial expressions"]:::process
-            DirCamera["CameraDirector\nFraming & camera angles"]:::process
+            subgraph ParallelPool ["Parallel Pool"]
+                WriterDialogue["DialogueWriter\nDialogue texts, tones, bubble category"]:::process
+                DirPose["PoseDirector\nBody posture mapping"]:::process
+                DirEmotion["EmotionDirector\nGranular facial expressions"]:::process
+                DirCamera["CameraDirector\nFraming & camera angles"]:::process
+            end
         end
         Blackboard["StorySectionMemory Blackboard"]:::output
     end
 
     StoryConfig --> Coord
-    Coord --> Swarm
-    Swarm --> Blackboard
+    Coord --> DirStory
+    DirStory --> DirAction
+    DirAction --> ParallelPool
+    ParallelPool --> Blackboard
 
-    subgraph Phase2 ["Phase 2: Self-Referential Visual Anchoring (anchoring.py)"]
-        AnchorGen["Generate Panel 1 (Anchor) from text"]:::process
-        AnchorImg["Panel 1 Raw Image"]:::output
-        Extractor["IdentityEmbeddingExtractor"]:::process
-        Sig["Identity Signature Tokens:\n- RGB Color Histogram\n- Canny Edge Density\n- Gram-Matrix Feature Map"]:::output
+    subgraph Phase2 ["Phase 2: Reference-Free Identity Anchoring (anchoring.py)"]
+        AnchorGen["Anchor Panel Generation"]:::process
+        AnchorSDXL["SDXL Reverse Diffusion"]:::process
+        AnchorImg["Anchor Panel"]:::output
+        CrossHook["Cross-Attention Hook"]:::process
+        AnchorCache["Anchor Output Cache"]:::process
+        Extractor["Reference-Free Identity Signature Extractor"]:::process
+        Sig["Identity Signature Tokens:\n- HSV Color Histogram\n- Canny Edge Density\n- Gram-Matrix Feature Map\n- Aesthetic Baseline"]:::output
+        ChanStats["Anchor Latent Statistics\nμ_anchor, σ_anchor"]:::process
     end
 
     Blackboard --> AnchorGen
-    AnchorGen --> AnchorImg
+    AnchorGen --> AnchorSDXL
+    AnchorSDXL --> AnchorImg
+    AnchorSDXL --> CrossHook
+    CrossHook --> AnchorCache
     AnchorImg --> Extractor
+    AnchorImg --> ChanStats
     Extractor --> Sig
     Sig -->|"Cache signature"| Blackboard
+    ChanStats --> T3
 
-    subgraph Phase3_4 ["Phase 3 & 4: Composable Control & Generation (panel_engine.py)"]
+    subgraph Phase3_4 ["Phase 3 & 4: Unified Panel Generation Loop (panel_engine.py)"]
         ParallelLoop{"Parallel Panel Loop\n(Panels 2..N)"}:::decision
-        Compositor["CharComCompositor\nBlends LoRA scale, steps, and guidance per panel"]:::process
-        subgraph MDCP ["MDCP Prior Stack (advanced_attention.py)"]
-            T1["L1 Physics Latent Smoothing\nGaussian blur subtraction\nto suppress high-frequency noise"]:::process
-            T2["L2 Cross-Attention Cache\nAsynchronously streams cached K/V anchor\nattention maps to lock identity"]:::process
-            T3["L3 Spatiotemporal Alignment\nAligns mean/variance statistics\ntoward anchor layout signature"]:::process
+        Compositor["CharCom Parameter Composer\n(CFG • Steps • LoRA)"]:::process
+        subgraph SDXL ["SDXL Reverse Diffusion\n(25 denoising steps)"]
+            subgraph MDCP ["MDCP Prior Stack (advanced_attention.py)"]
+                MDCP_Eq["Multi-Level Diffusion\nConsistency Prior (MDCP)\n𝒯MDCP = 𝒯3 ○ 𝒯2 ○ 𝒯1"]:::process
+                SeqPipe["Sequential Operator Pipeline"]:::process
+                LoopLabel["Repeat for each denoising step"]:::process
+                T1["T1: Physics Latent Smoothing\nGaussian blur subtraction\nto suppress high-frequency noise"]:::process
+                CPUPin["CPU Pinned Memory"]:::process
+                T2["T2: Attention Output Cache\nCaches anchor cross-attention output activations\nPinned-memory streaming\nO(1) GPU VRAM"]:::process
+                T3["T3: Spatiotemporal Channel Statistics Alignment\nAligns mean/variance statistics\ntoward anchor layout signature"]:::process
+                
+                MDCP_Eq --> SeqPipe
+                SeqPipe --> LoopLabel
+                LoopLabel --> T1
+                T1 --> T2
+                CPUPin -.->|"Async DMA"| T2
+                T2 --> T3
+                T3 -->|"updated latent"| LoopLabel
+            end
         end
-        RawPanel["Raw Generated Panel Image"]:::output
+        GenPanel["Generated Panel"]:::output
     end
 
     Blackboard --> ParallelLoop
     ParallelLoop --> Compositor
-    Compositor --> MDCP
-    MDCP --> RawPanel
+    Compositor --> SDXL
+    AnchorCache --> CPUPin
+    SDXL --> GenPanel
 
     subgraph Phase6 ["Phase 6: Quality Validation Gate (quality_critic.py)"]
         Critic["QualityCritic.evaluate()"]:::process
         EqScore["Evaluate visual consistency, aesthetics, narrative,\nemotional alignment, and readability"]:::process
         GateCheck{"Score ≥ Threshold?"}:::decision
         RetryCheck{"Retry Count ≤ Max Retries?"}:::decision
-        AdjustParams["Adjust parameters:\nIncrease guidance scale & step count"]:::process
+        AdjustParams["Adaptive Parameter Tuning\n- CFG\n- Steps\n- Positive Prompt\n- Negative Prompt"]:::process
         GateFail["Raise QualityGateFailure"]:::error
-        ApprovedPanel["Approved Raw Panel Image"]:::output
+        ApprovedPanel["Approved Generated Panel"]:::output
     end
 
-    RawPanel --> Critic
+    subgraph Phase5 ["Phase 5: Dialogue Placement"]
+        LLMLayout["LLM Dialogue Planner"]:::process
+        SpeechBubble["Speech Bubble Rendering"]:::process
+    end
+
+    GenPanel --> LLMLayout
+    LLMLayout --> SpeechBubble
+    SpeechBubble --> Critic
+
     Critic --> EqScore
     EqScore --> GateCheck
     GateCheck -- "No" --> RetryCheck
@@ -100,10 +136,10 @@ flowchart TD
     RetryCheck -- "No" --> GateFail
     GateCheck -- "Yes" --> ApprovedPanel
 
-    subgraph Phase7 ["Phase 7: MangaFlow Layout Page Assembly (layout_engine.py)"]
-        LayoutEng["MangaFlowLayoutEngine"]:::process
-        HeightCalc["Calculate panel heights proportional to action intensity"]:::process
-        PageAssembly["Arrange panels and draw gutters/borders"]:::process
+    subgraph Phase7 ["Phase 7: Cadence Layout Engine (layout_engine.py)"]
+        LayoutEng["Cadence Layout Engine"]:::process
+        HeightCalc["Action-weighted panel sizing"]:::process
+        PageAssembly["Adaptive Page Partitioning"]:::process
         CompletedPage["Assembled Comic Page Image"]:::output
     end
 
@@ -125,6 +161,10 @@ flowchart TD
     Ratings --> Tuner
     Tuner -->|"Update defaults"| A
 ```
+
+<div align="center">
+  <em>Figure 3. Overview of the proposed Indie-Comic framework. Phases 0–2 construct the narrative plan and reference-free anchor representation. During Phases 3–4, SDXL reverse diffusion is augmented with the proposed Multi-Level Diffusion Consistency Prior (MDCP), where 𝒯₁ (latent smoothing), 𝒯₂ (attention-output caching with pinned-memory streaming), and 𝒯₃ (channel-statistics alignment) are applied at every denoising iteration. The generated panels are then passed through dialogue placement, automated quality validation, cadence-aware page assembly, and multi-format export.</em>
+</div>
 
 ---
 
