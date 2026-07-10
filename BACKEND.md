@@ -193,3 +193,45 @@ To run the pipeline verification test suite:
 ```bash
 python indie_comic_pipeline/scratch/run_unit_tests.py
 ```
+
+---
+
+## 6. Performance Tuning & Benchmarking Suite
+
+The pipeline is equipped with an automated hyperparameter tuning and benchmarking harness to find the optimal generation settings matching your hardware's capabilities.
+
+### Key Performance Optimizations
+
+1. **Persistent Pipeline Cache:** The Flask web interface caches the loaded pipeline in GPU memory after the first run. Subsequent runs bypass the 20-30s model reloading overhead, initiating panel generation instantly.
+2. **Unified References Caching:** In-memory pre-tokenized caching of franchise reference databases speeds up intakes from **260ms down to 34ms (18x speedup)**.
+3. **GPU VRAM Defragmentation:** Automatic PyTorch CUDA cache clearing and garbage collection runs immediately after image generation, freeing memory and preventing Out-Of-Memory (OOM) errors during page assembly and exports.
+4. **TF32 & Matmul Precision:** Enabled hardware-level TensorFloat-32 and high matmul precision in PyTorch to speed up inference on Ampere (RTX 30xx/40xx) and newer GPUs.
+5. **Speech Bubble LLM Skip Flag:** Option to skip local Ollama planning calls and directly write fast heuristic layouts to disk, saving connection overhead.
+
+### Running Benchmarks
+To sweep parameters (inference steps, resolution, LoRA scales) and discover optimal settings:
+
+#### CPU Mock Mode (Offline validation):
+```bash
+.\.venv\Scripts\python.exe indie_comic_pipeline/run_benchmarks.py --mock
+```
+
+#### Real GPU Mode (CUDA evaluation):
+```bash
+.\.venv\Scripts\python.exe indie_comic_pipeline/run_benchmarks.py
+```
+
+#### Automatically Apply Tuning Recommendations:
+Pass the `--apply` flag to automatically write the recommended step count, resolution, and LoRA scales back to `settings.yaml`:
+```bash
+.\.venv\Scripts\python.exe indie_comic_pipeline/run_benchmarks.py --apply
+```
+
+### Visualizing Benchmark Results
+The benchmark suite outputs a standalone interactive HTML dashboard to `outputs/benchmarks/benchmark_report.html`. 
+
+You can view it directly by opening the file in your browser, or through the web dashboard by navigating to the `/benchmarks` route in the Flask app.
+The report features:
+- **Interactive Comparison Slider:** Compare generated panel quality side-by-side by sliding the divider.
+- **Performance Graphs:** Inline SVG graphs charting VRAM peak usage and latency across sweep runs.
+- **Tuning Leaderboard:** A sortable run table ranking configurations by SSIM, edge similarity, and speed.
