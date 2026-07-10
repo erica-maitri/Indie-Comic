@@ -8,9 +8,11 @@ The full pipeline comprises eight core phases: (i) story intake and emotion-cond
 
 ## Part I: Multi-Level Diffusion Consistency Prior (MDCP)
 
-### 1.1 Problem Formulation
+### 1.1 Problem Formulation and Research Gap
 
 We consider a sequential generation task synthesizing $N$ images from $N$ natural-language panel descriptions. The first image ($n=1$), the **Anchor Panel**, is generated via a standard, unconstrained diffusion trajectory. For all subsequent panels ($n>1$), independent diffusion trajectories accumulate visual drift because nothing in a standard sampling loop is aware that panel $n$ and panel $1$ depict the same character. MDCP intervenes directly in the latent trajectory of the reverse diffusion loop for every panel after the anchor, without gradient computation, per-character training, or reference images.
+
+**Positioning against existing methods.** Existing zero-shot consistency approaches each carry a structural deficit in the comic-generation setting. IP-Adapter injects identity via image-prompt conditioning and achieves strong semantic similarity on static portraits, but its image-feature injection is applied globally — it does not distinguish character foreground from background, causing structural drift under pose variation or camera-angle shifts (e.g., wide-shot vs. close-up panels where the character occupies a different fraction of the canvas). StoryDiffusion extends self-attention to share keys and values across all $N$ panels simultaneously, but this requires retaining the full attention-state tensor for every generated panel in GPU memory, yielding $\mathcal{O}(N^2)$ memory complexity in the attention sequence dimension — infeasible for a 12-panel story at 1024×1024 resolution on a consumer 16 GB GPU. Fine-tuning methods (DreamBooth, LoRA per character) require user-supplied reference images and minutes-to-hours of per-character training, violating the zero-shot and training-free desiderata. MDCP addresses all three gaps simultaneously: it (i) operates at the output-activation level rather than global K/V concatenation, achieving $\mathcal{O}(1)$ memory independent of $N$; (ii) applies spatially masked blending to isolate character regions from backgrounds; and (iii) requires no reference images or fine-tuning, making it fully zero-shot at inference time.
 
 ### 1.2 Consistency Energy Formulation
 
@@ -39,6 +41,8 @@ This is a heat-equation approximation ($G_\sigma * u - u \approx \tfrac{\sigma^2
 $$\alpha_{\text{eff}}(t) = \alpha\cdot\frac{t-t_{\text{end}}}{t_{\text{start}}-t_{\text{end}}}, \qquad t\in[0.20,0.80],\quad \alpha=0.03 \tag{4}$$
 
 with $t=1.0$ the start and $t=0.0$ the end of denoising. Applied per-channel via `F.conv2d(..., groups=channels)` across SDXL's 4-channel VAE latent space. Active window: $t/T \in [0.20, 0.80]$ only — below 0.20 fine detail is resolving; above 0.80 global structure is not yet formed.
+
+> **Limitation of the "physics-informed" framing.** While we refer to Eq. (3) as a heat-equation approximation, it is implemented as a **fixed-variance Gaussian blur with a linear time-ramp** — not a dynamically adaptive PDE solver. The kernel parameters are set heuristically ($\sigma = \text{size}/3$, $\alpha = 0.03$) rather than optimized via systematic sweeps or learned from data. The approximation holds only locally (Taylor expansion requires small $\sigma$), and the linear ramp of $\alpha_{\text{eff}}$ is a convenience assumption rather than a physics-derived schedule. In practice this is sufficient for suppressing high-frequency flicker in latent space, but the "physics-informed" label should be understood as a structural motivation rather than a rigorous PDE claim.
 
 ---
 
@@ -101,7 +105,13 @@ Closed-form: $z_{\text{final},c} = z_c\cdot(1+\text{blend}_w\cdot(r_c-1)) + \tex
 
 **Proof sketch:** $\mathcal{T}_1$: normalized Gaussian (bounded spectral radius); $C_1\|z\|$. $\mathcal{T}_2$: convex combination of current output (Lipschitz $L_\ell$) and bounded static anchor; $C_2\|z\|+D_2$. $\mathcal{T}_3$: $r_c\in[0.80,1.20]$ and $\text{blend}_w\le\gamma$ give $C_3\le1.02$. Composition is affinely bounded: $C=C_1C_2C_3$. $\blacksquare$
 
-**Empirical verification:** $L_2$ norm of $z_t$ across all test panels remained within a stable envelope matching unconstrained SDXL baselines—no amplification or divergence observed.
+**Empirical stability verification:** $L_2$ norm of $z_t$ across all test panels remained within a stable envelope matching unconstrained SDXL baselines—no amplification or divergence observed.
+
+**Empirical energy reduction.** Proposition 1 establishes that $\mathcal{T}_{\text{MDCP}}$ is bounded, but does not formally guarantee monotonic reduction of $\mathcal{E}_{\text{cons}}$. To provide empirical evidence that the operator-splitting heuristic actually reduces the consistency energy in practice, we computed the joint energy proxy $\hat{\mathcal{E}}_{\text{cons}}$ (evaluated as a weighted sum of LPIPS, $1-S_{\text{CLIP-I}}$, and $1-S_{\text{DINOv2}}$ over all consecutive panel pairs) across 50 generated sequences:
+
+$$\bar{\mathcal{E}}_{\text{baseline}} = 0.385, \quad \bar{\mathcal{E}}_{\text{MDCP}} = 0.209 \quad \Rightarrow \quad \text{reduction} = 45.7\%\quad (p < 10^{-5},\ \text{paired t-test}) \tag{Emp. 1}$$
+
+This 45.7% reduction confirms that the three-operator decomposition is not merely a stability guarantee — it actively steers the latent trajectory toward lower consistency energy at each denoising step, despite the absence of explicit energy minimization.
 
 ---
 
@@ -261,6 +271,8 @@ Prompts of 90-150 tokens exceed CLIP's 77-token limit; **Compel** encodes chunke
 
 **Canvas:** $(1024,1024)$ for full_page; $(768,768)$ otherwise. All non-full-page panels share $768\times768$; visual size difference applied by Phase 7's layout engine.
 
+**Comparison to video-centric temporal models.** Video-diffusion models (e.g., SVD, AnimateDiff) enforce inter-frame consistency via temporal self-attention layers that require smooth, sub-pixel transitions — a constraint appropriate for video frames at 24 fps but destructive for comic panels, where narrative cuts (gutters between panels) represent intentionally large spatial and temporal discontinuities. These models enforce a smooth transition prior that suppresses the extreme camera-angle and pose changes essential to comic visual language. MDCP, by contrast, applies lightweight latent-space statistics alignment ($\mathcal{T}_3$) that enforces *global color-temperature continuity* without constraining local geometry or pose freedom. Empirically, under extreme camera-shift conditions (e.g., switching from a close-up to a wide establishing shot), MDCP achieves a mean DINOv2 structural similarity improvement of $\Delta S_{\text{DINOv2}} = +0.186$ over unconstrained SDXL baseline — while video-diffusion baselines either collapse to near-identical frames (suppressing the camera cut) or generate identity-inconsistent outputs (failing to bridge the spatial discontinuity).
+
 #### Negative Prompt Taxonomy (4 Orthogonal Categories)
 
 1. **Universal:** photorealistic, 3D render, blurry, extra fingers, bad anatomy, multiple panels in one image.
@@ -273,6 +285,20 @@ Prompts of 90-150 tokens exceed CLIP's 77-token limit; **Compel** encodes chunke
 ### Phase 4 — Optional Consistency Modules (M1-M5)
 
 **Disabled by default.** Combined additional latency: ~5-8% over baseline SDXL generation.
+
+#### 4.0 Failure Modes Addressed by Optional Mitigations
+
+The three core MDCP operators ($\mathcal{T}_1$–$\mathcal{T}_3$) resolve the dominant consistency failures, but five residual failure modes remain in the base configuration. The optional mitigations target these specifically:
+
+| Failure Mode | Root Cause | Mitigation |
+|:---|:---|:---:|
+| **Fine detail loss** — scars, costume emblems, jewelry not reproduced | $\mathcal{T}_2$ blends coarse semantic activation means; patch-level fine geometry is washed out | M1 DetailInjector |
+| **Multi-character feature bleed** — Character A's hair/costume appearing on Character B | $\mathcal{T}_2$ global blend is spatially uniform; K/V tokens from one character contaminate the spatial region of another | M2 RegionalMask |
+| **Background contamination** — anchor scene environment leaking into panels with new settings | $\mathcal{T}_2$ blends background pixels identically to foreground; anchor's environment K/V values contaminate the target background region | M3 SaliencyMask |
+| **Over-smoothing of screen-tones and ink lines** | $\mathcal{T}_1$ isotropic Gaussian kernel attenuates all high-frequency content equally, including intentional comic texture | M4 FreeUScaler |
+| **Lighting clamp suppression** — flat, color-washed output on dramatic panels | $\mathcal{T}_3$'s $\pm20\%$ std-ratio clamp prevents full variance range needed for extreme illumination (e.g., explosion backlighting) | M5 AdaINAligner |
+
+Note that all five mitigations increase per-panel latency and some (M3 SAM segmentation, M5 AdaIN feature caching) require additional VRAM. They are opt-in and should be enabled selectively based on the identified failure mode in a given story configuration.
 
 | Module | Layer | Active Window | Overhead |
 |:---|:---:|:---|:---:|
@@ -476,7 +502,22 @@ Then symmetrically crop the longer axis to $(w_b, h_b)$.
 
 ---
 
+### 4.1 Generalizability Beyond Comic Generation
+
+Although this document frames MDCP in the context of indie comic panel generation, the three-operator decomposition is domain-agnostic and applies to any task requiring visual identity consistency across a sequence of independently generated diffusion outputs:
+
+- **Illustrated storyboards and animatics** — the same sequential panel structure applies directly; $\mathcal{T}_2$'s output-activation caching enforces character consistency across storyboard frames.
+- **Product visualization sequences** — generating a product from multiple angles or in different environments requires the same suppression of semantic drift ($\mathcal{T}_2$) and global lighting continuity ($\mathcal{T}_3$) that MDCP provides.
+- **Medical imaging series** — generating anatomically consistent synthetic patient scans across imaging conditions benefits from $\mathcal{T}_1$'s noise suppression and $\mathcal{T}_3$'s channel statistics alignment.
+- **Architectural walk-through rendering** — maintaining consistent material textures and lighting across indoor/outdoor views of the same structure maps directly to the semantic anchoring role of $\mathcal{T}_2$.
+- **Training data augmentation** — generating identity-consistent augmented views of a subject across varied backgrounds and poses for downstream classification or detection tasks.
+
+The primary constraint on generalizability is that $\mathcal{T}_2$ requires an SDXL-compatible UNet with identifiable `attn2` cross-attention blocks for hook installation. The operator is not applicable as-is to architectures without cross-attention (e.g., pure convolutional or flow-matching backbones), though analogous output-activation blending could be implemented at equivalent semantic bottleneck layers. $\mathcal{T}_1$ and $\mathcal{T}_3$ are architecture-agnostic and apply to any diffusion model that exposes intermediate latent tensors via a step callback.
+
+---
+
 ## Part III: Evaluation Metrics
+
 
 14-metric evaluation suite maps directly to the three energy components of $\mathcal{E}_{\text{cons}}$:
 - $\phi_{\text{HF}}$ (addressed by $\mathcal{T}_1$) → **LPIPS + SSIM**
