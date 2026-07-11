@@ -14,7 +14,6 @@ Dimensions:
 
 import logging
 from typing import Dict, Any, Optional, List, TYPE_CHECKING
-from bert_score import score as bert_score
 
 if TYPE_CHECKING:
     from core.memory import StorySectionMemory
@@ -277,7 +276,7 @@ class QualityCritic:
                     semantic = self._bert_cache[cache_key]
                 else:
                     try:
-                        
+                        from bert_score import score as bert_score
                         _, _, F1 = bert_score([current_prompt], [prev_prompt], lang="en", verbose=False, idf=False, batch_size=1)
                         semantic = max(0.0, min(1.0, float(F1.item())))
                         self._bert_cache[cache_key] = semantic
