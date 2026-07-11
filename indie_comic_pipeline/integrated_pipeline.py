@@ -233,6 +233,17 @@ class IntegratedComicPipeline:
         )
         
         self.exporter = ComicExporter(output_dir=self.output_dir)
+        self._preheat_thread = None
+
+    def wait_for_preheat(self):
+        """Wait for the background model preheating thread to complete if it is running."""
+        if getattr(self, "_preheat_thread", None) is not None:
+            if self._preheat_thread.is_alive():
+                log.info("[Pipeline] Waiting for background model preheating to complete...")
+                start_time = time.time()
+                self._preheat_thread.join()
+                log.info(f"[Pipeline] Background preheating completed. Waited {time.time() - start_time:.2f}s.")
+            self._preheat_thread = None
 
     def _generate_single_panel_with_retry(self, panel_id: int) -> Dict[str, Any]:
         """Generate a single panel, execute the reject-regenerate loop, and apply typesetting."""
@@ -346,6 +357,18 @@ class IntegratedComicPipeline:
             log.info("Starting Ultimate Indie Comic Generator Pipeline")
             log.info("=" * 80)
 
+            # Start background preheating thread if backends are registered
+            self._preheat_thread = None
+            if getattr(self.backend_selector, "_backends", {}):
+                import threading
+                log.info("[Pipeline] Starting background model preheating thread...")
+                self._preheat_thread = threading.Thread(
+                    target=self.backend_selector.select,
+                    args=({"layout": {"size_class": "medium", "camera_angle": "medium_shot"}},),
+                    daemon=True
+                )
+                self._preheat_thread.start()
+
             # ── Phase 0: Story Intake (skipped when a pre-built story is supplied) ──
             if _prebuilt_story is not None:
                 log.info("\n--- Phase 0: Story Intake [BYPASSED — using pre-built story] ---")
@@ -388,6 +411,7 @@ class IntegratedComicPipeline:
         
             # Panel 1 (Anchor) must run first to establish consistency priors
             log.info("\n--- Phase 2: Anchor Panel Generation (Sequential) ---")
+            self.wait_for_preheat()
             panel_1_result = self._generate_single_panel_with_retry(1)
             panels_completed.append(panel_1_result)
             self.agent_coordinator.notify_panel_generated(panel_1_result)
@@ -480,6 +504,7 @@ class IntegratedComicPipeline:
             }
 
         finally:
+            self.wait_for_preheat()
             log.info("Ensuring GPU resources are cleaned up (unload all backends)...")
             self.backend_selector.unload_all()
 
@@ -493,6 +518,18 @@ class IntegratedComicPipeline:
         log.info("=" * 80)
         log.info(f"Starting Batch Pipeline (Panels {start_panel} to {end_panel})")
         log.info("=" * 80)
+
+        # Start background preheating thread if backends are registered
+        self._preheat_thread = None
+        if getattr(self.backend_selector, "_backends", {}):
+            import threading
+            log.info("[Pipeline] Starting background model preheating thread (batch)...")
+            self._preheat_thread = threading.Thread(
+                target=self.backend_selector.select,
+                args=({"layout": {"size_class": "medium", "camera_angle": "medium_shot"}},),
+                daemon=True
+            )
+            self._preheat_thread.start()
 
         if load_checkpoint and os.path.exists(load_checkpoint):
             log.info(f"Loading memory checkpoint from {load_checkpoint}")
@@ -520,6 +557,7 @@ class IntegratedComicPipeline:
         # Panel 1 (Anchor) must run first if within range
         if start_panel == 1:
             log.info("\n--- Phase 2: Anchor Panel Generation (Sequential) ---")
+            self.wait_for_preheat()
             panel_1_result = self._generate_single_panel_with_retry(1)
             panels_completed.append(panel_1_result)
             self.agent_coordinator.notify_panel_generated(panel_1_result)
@@ -528,6 +566,7 @@ class IntegratedComicPipeline:
         # Generate remaining panels in parallel
         if actual_end >= start_idx:
             log.info(f"\n--- Generating Remaining Panels {start_idx} to {actual_end} in Parallel ---")
+            self.wait_for_preheat()
             import concurrent.futures
             
             def _gen_task(pid):
@@ -565,6 +604,7 @@ class IntegratedComicPipeline:
             self.memory.save_checkpoint(save_checkpoint)
             log.info(f"Memory state saved to {save_checkpoint}")
 
+        self.wait_for_preheat()
         self.backend_selector.unload_all()
         return {"pages": pages, "panels": panels_completed, "last_panel_generated": actual_end}
 

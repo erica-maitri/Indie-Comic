@@ -7,6 +7,7 @@ chain to ensure generation always succeeds.
 """
 
 import logging
+import threading
 from typing import Dict, Any, Optional
 
 from core.backends.base_backend import BaseBackend
@@ -53,6 +54,7 @@ class BackendSelector:
         self._backends: Dict[str, BaseBackend] = {}
         self._active_backend: Optional[str] = None
         self._model_config: Dict[str, Any] = {}
+        self._lock = threading.Lock()
 
         # User override: force a specific backend for all panels
         self._force_backend = self._config.get("force_backend", None)
@@ -64,21 +66,23 @@ class BackendSelector:
 
     def _ensure_backend_loaded(self, name: str, backend: BaseBackend):
         """Loads the weights for the specified backend lazily if not already loaded."""
-        if not backend.is_loaded():
-            log.info(f"Lazily loading model weights for backend: {name} ({backend.name})...")
-            model_config = self._model_config
-            sdxl_config = {
-                "model_name": model_config.get("sdxl", {}).get("name",
-                             "stabilityai/stable-diffusion-xl-base-1.0"),
-                "lora_name": model_config.get("lora", {}).get("name"),
-                "lora_scale": model_config.get("lora", {}).get("adapter_scale", 0.8),
-                "device": model_config.get("sdxl", {}).get("device", "cuda"),
-                "enable_cpu_offload": model_config.get("sdxl", {}).get("cpu_offload", True),
-                "enable_attention_slicing": True,
-                "enable_vae_slicing": True,
-                "safety_checker": False,
-            }
-            backend.load(sdxl_config)
+        with self._lock:
+            if not backend.is_loaded():
+                log.info(f"Lazily loading model weights for backend: {name} ({backend.name})...")
+                model_config = self._model_config
+                sdxl_config = {
+                    "model_name": model_config.get("sdxl", {}).get("name",
+                                 "stabilityai/stable-diffusion-xl-base-1.0"),
+                    "lora_name": model_config.get("lora", {}).get("name"),
+                    "lora_scale": model_config.get("lora", {}).get("adapter_scale", 0.8),
+                    "device": model_config.get("sdxl", {}).get("device", "cuda"),
+                    "enable_cpu_offload": model_config.get("sdxl", {}).get("cpu_offload", True),
+                    "enable_attention_slicing": True,
+                    "enable_vae_slicing": True,
+                    "safety_checker": False,
+                }
+                backend.load(sdxl_config)
+
 
     def select(self, context: Dict[str, Any]) -> BaseBackend:
         """
