@@ -234,6 +234,7 @@ class IntegratedComicPipeline:
         
         self.exporter = ComicExporter(output_dir=self.output_dir)
         self._preheat_thread = None
+        self._export_thread = None
 
     def wait_for_preheat(self):
         """Wait for the background model preheating thread to complete if it is running."""
@@ -244,6 +245,27 @@ class IntegratedComicPipeline:
                 self._preheat_thread.join()
                 log.info(f"[Pipeline] Background preheating completed. Waited {time.time() - start_time:.2f}s.")
             self._preheat_thread = None
+
+    def wait_for_export(self):
+        """Wait for the background export thread to complete if it is running."""
+        if getattr(self, "_export_thread", None) is not None:
+            if self._export_thread.is_alive():
+                log.info("[Pipeline] Waiting for background export to complete...")
+                start_time = time.time()
+                self._export_thread.join()
+                log.info(f"[Pipeline] Background export completed. Waited {time.time() - start_time:.2f}s.")
+            self._export_thread = None
+
+    def _run_phase8_export(self, pages: list, prompt: str):
+        """Runs Phase 8 export in a background thread."""
+        try:
+            log.info("\n--- Phase 8: Exporting Formats in Background ---")
+            self.exporter.export_cbz(pages, title=prompt[:30])
+            self.exporter.export_web_comic(pages, os.path.join(self.output_dir, "web_comic.html"))
+            self.exporter.export_pdf(pages, title=prompt[:30])
+            log.info("--- Phase 8: Background Exporting Complete ---")
+        except Exception as e:
+            log.error(f"Error in background Phase 8 export: {e}")
 
     def _generate_single_panel_with_retry(self, panel_id: int) -> Dict[str, Any]:
         """Generate a single panel, execute the reject-regenerate loop, and apply typesetting."""
@@ -487,13 +509,23 @@ class IntegratedComicPipeline:
                     "panels": page_panels
                 })
             
-            # ── Phase 8: Multi-Format Export ──
-            log.info("\n--- Phase 8: Exporting Formats ---")
-            cbz_path = self.exporter.export_cbz(pages, title=prompt[:30])
-            html_path = self.exporter.export_web_comic(pages, os.path.join(self.output_dir, "web_comic.html"))
-            pdf_path = self.exporter.export_pdf(pages, title=prompt[:30])
+            # ── Phase 8: Multi-Format Export (Asynchronous) ──
+            # Precompute paths to return immediately
+            title = prompt[:30]
+            safe_title = "".join([c for c in title if c.isalpha() or c.isdigit() or c==' ']).rstrip()
+            safe_title = safe_title.replace(" ", "_")
+            cbz_path = os.path.join(self.output_dir, f"{safe_title}.cbz")
+            pdf_path = os.path.join(self.output_dir, f"{safe_title}.pdf")
+            html_path = os.path.join(self.output_dir, "web_comic.html")
             
-            # Unload model selector backends to save GPU memory
+            # Start background thread to run Phase 8
+            import threading
+            self._export_thread = threading.Thread(
+                target=self._run_phase8_export,
+                args=(pages, prompt),
+                daemon=True
+            )
+            self._export_thread.start()
         
             return {
                 "pages": pages,
@@ -850,6 +882,7 @@ def main():
     print("=" * 70)
     
     pipeline.collect_interactive_feedback(results, no_feedback=args.no_feedback)
+    pipeline.wait_for_export()
 
 
 if __name__ == "__main__":

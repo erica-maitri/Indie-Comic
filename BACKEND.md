@@ -207,6 +207,9 @@ The pipeline is equipped with an automated hyperparameter tuning and benchmarkin
 3. **GPU VRAM Defragmentation:** Automatic PyTorch CUDA cache clearing and garbage collection runs immediately after image generation, freeing memory and preventing Out-Of-Memory (OOM) errors during page assembly and exports.
 4. **TF32 & Matmul Precision:** Enabled hardware-level TensorFloat-32 and high matmul precision in PyTorch to speed up inference on Ampere (RTX 30xx/40xx) and newer GPUs.
 5. **Speech Bubble LLM Skip Flag:** Option to skip local Ollama planning calls and directly write fast heuristic layouts to disk, saving connection overhead.
+6. **Asynchronous Model Preheating:** Preheats and loads model weights (SDXL/Flux) on a background daemon thread concurrently during Phase 0 Story Intake, hiding loading overhead. Utilizes thread-safe locks (`threading.Lock`) to prevent race conditions during concurrent checks.
+7. **Prompt Embedding Cache with LRU Eviction:** Implements an in-memory `OrderedDict` caching prompt and negative prompt embeddings up to a limit of 100 entries. Least Recently Used (LRU) items are automatically evicted, bypassing the 300ms–800ms text encoding latency for recurring prompts.
+8. **Asynchronous Multi-Format Exporter:** Offloads Phase 8 file compiling and disk writes (CBZ, PDF, and HTML scrollbook) to a background thread to return generated page frames and layouts instantly.
 
 ### Running Benchmarks
 To sweep parameters (inference steps, resolution, LoRA scales) and discover optimal settings:
