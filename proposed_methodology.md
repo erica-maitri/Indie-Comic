@@ -160,73 +160,181 @@ flowchart TD
   - `DialogueWriter`: Dictates narrative text and dialogues.
   - `PoseDirector` / `EmotionDirector` / `CameraDirector`: Enrich prompts with joint rotation constraints, expressions, facial geometry, framing, and camera positions.
 
-### Phase 2: Multi-Anchor Visual Anchoring
-- **File:** [anchoring.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/anchoring.py) (`ReferenceFreeAnchor`, `IdentityEmbeddingExtractor`)
-- **Mechanism:** Extends the original single-anchor design to a **character-aware multi-anchor caching system** that handles protagonists, secondary characters, antagonists, and cameos without cross-entity contamination. The pipeline first scans all panel prompts to build a `character_introduction_panel` map — the earliest panel index $k_c$ at which each named character $c$ first appears. It then iterates over distinct characters:
-  1. Generate panel $k_c$ with T2 disabled (no prior anchor contaminates the first appearance).
-  2. Run `IdentityEmbeddingExtractor` on that panel to obtain the visual identity signature using three non-learned classical descriptors:
-     - **RGB Color Histogram:** Channel-wise pixel colour distributions.
-     - **Canny Edge Density:** High-frequency geometric boundary contours.
-     - **Gram-Matrix Feature Maps:** $G_{i,j} = \sum_k F_{i,k}F_{j,k}$
-  3. Cache the cross-attention outputs $O_{\text{anchor}}^{(l)}(c)$ and channel statistics $(\mu_c, \sigma_c)$ in a `character_anchors` dictionary keyed by character name.
-- **Memory scaling:** Each per-character cache entry consists of CPU-pinned attention tensors and simple scalar pairs. Storing these anchors scales at $\mathcal{O}(1)$ with respect to total panels $N$.
-- **User-supplied references:** If the user provides a reference image for any character, it pre-populates the corresponding `character_anchors` entry, bypassing anchor generation for that character entirely.
+### Phase 2 — Multi-Anchor Visual Anchoring
+The pipeline extends the single-anchor design to a character-aware multi-anchor caching system. It scans all panel prompts to build a map $k_c$—the earliest panel index where character $c$ appears. For each distinct character, it generates panel $k_c$ with T2 disabled, then extracts cross-attention outputs $O_{\text{anchor}}^{(l)}(c)$ and channel statistics $(\mu_c, \sigma_c)$, storing them keyed by character name. If a user supplies a reference image, it pre-populates the corresponding entry. Memory overhead is $\mathcal{O}(1)$ because the number of distinct characters is bounded (5).
+
+#### Classical Regional Identity Signature (4 Descriptors)
+1. **Regional HSV Color Histogram** ($\mathbf{h}_{\text{color}}^c$):
+   $$\mathbf{h}_{\text{color}}^c = \text{calcHist}\big([I_{\text{HSV}}],\, [H, S],\, \text{mask}=M_c,\, \text{bins}=[8,8]\big) \in \mathbb{R}^{8\times8} \tag{13}$$
+   Value channel omitted (preserves character color palette across lighting changes). Similarity via Pearson correlation, clamped to $[0,1]$. Composite weight: **0.25**.
+2. **Silhouette Canny Edge Density** ($\rho_{\text{edge}}^c$):
+   $$\rho_{\text{edge}}^c = \frac{|\{(x,y):\text{Canny}(I_{\text{gray}},50,150)[x,y]>0 \text{ and } M_c[x,y] = 1\}|}{|M_c|}$$
+   $$S_{\text{edge}}^c = \max(0,\ 1 - 5\cdot|\rho_{\text{edge}}^{c,\text{anchor}} - \rho_{\text{edge}}^{c,\text{current}}|) \tag{14}$$
+   Multiplier 5: 0.20 density deviation maps to zero. Weight: **0.15**.
+3. **Masked Style Gram Matrix** ($G_{\text{style}}^c \in \mathbb{R}^{5\times5}$):
+   A 5-channel feature map $F \in \mathbb{R}^{(HW) \times 5}$ stacks RGB + Sobel gradients. Using the diagonalized mask $W_c = \text{diag}(M_c)$:
+   $$G_{\text{style}}^c = \frac{F^\top W_c F}{\sum(M_c)}, \quad S_{\text{style}}^c = \max(0,\ 1 - 10\cdot\text{MSE}(G_{\text{anchor}}^c, G_{\text{current}}^c)) \tag{15}$$
+   Within-style MSE $\approx[0.00,0.05]$; cross-style MSE $>0.10$. Weight: **0.20**.
+4. **Bounding Box Aesthetic Baseline** ($S_{\text{aesthetic}}^c$):
+   Evaluated on the cropped bounding box $I_{\text{crop}}^c = \text{crop}(I, M_c)$ to prevent environment details from influencing character-level quality assessments:
+   $$S_{\text{sharp}}^c = \min\left(1,\frac{\text{Var}(\nabla^2 I_{\text{gray},\text{crop}}^c)}{500}\right),\quad S_{\text{contrast}}^c = \min\left(1,\frac{\sigma(I_{\text{gray},\text{crop}}^c)}{75}\right),\quad S_{\text{color}}^c = \min\left(1,\frac{\sqrt{\sigma_{rg}^2+\sigma_{yb}^2}+0.3\sqrt{\mu_{rg}^2+\mu_{yb}^2}}{80}\right) \tag{16}$$
+   $$S_{\text{aesthetic}}^c = 0.4\,S_{\text{sharp}}^c + 0.3\,S_{\text{contrast}}^c + 0.3\,S_{\text{color}}^c \tag{17}$$
+   Aesthetic baseline is weighted at **0.40** in the composite score.
+
+---
 
 ### Phase 3 & 4: In-Generation Consistency & Composable Control (MDCP)
 - **Files:** [panel_engine.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/panel_engine.py), [compositor.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/compositor.py), [advanced_attention.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/advanced_attention.py)
+- **CharCom Compositor** blends base prompts with character-specific LoRA weights, guidance, seeds, and steps at runtime:
+  $$W_{\text{total}} = W_{\text{base}} + \sum_i (\alpha_i \cdot W_i)$$
+- **SDXL Generation Engine** ([sdxl_backend.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/backends/sdxl_backend.py)):
+  - Scheduler: `DPMSolverMultistepScheduler` with Karras sigmas (`sde-dpmsolver++`, order 2), 25-step inference.
+  - Compel Embedding Parser bypasses the 77-token SDXL text-encoder limit.
+  - Memory optimisations: CPU offloading, attention slicing, VAE slicing.
+  - FreeU enhancement: skip/backbone adjustments ($s_1=0.6$, $s_2=0.4$, $b_1=1.1$, $b_2=1.2$).
 
-**CharCom Compositor** blends base prompts with character-specific LoRA weights, guidance, seeds, and steps at runtime:
-$$W_{\text{total}} = W_{\text{base}} + \sum_i (\alpha_i \cdot W_i)$$
+---
 
-**SDXL Generation Engine** ([sdxl_backend.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/backends/sdxl_backend.py)):
-- Scheduler: `DPMSolverMultistepScheduler` with Karras sigmas (`sde-dpmsolver++`, order 2), 25-step inference.
-- Compel Embedding Parser bypasses the 77-token SDXL text-encoder limit.
-- Memory optimisations: CPU offloading, attention slicing, VAE slicing.
-- FreeU enhancement: skip/backbone adjustments ($s_1=0.6$, $s_2=0.4$, $b_1=1.1$, $b_2=1.2$).
+### Multi-Level Diffusion Consistency Prior
 
-**Multi-Level Diffusion Consistency Prior (MDCP):** An analytical, gradient-free inference-time optimizer minimising the latent consistency energy:
-$$\mathcal{E}_{\text{cons}}(z) = w_{\text{HF}}\cdot\phi_{\text{HF}}(z) + w_{\text{sem}}\cdot\phi_{\text{sem}}(z) + w_{\text{str}}\cdot\phi_{\text{str}}(z)$$
+#### Problem Formulation
+Given $N$ text prompts, generate images $I_1, \dots, I_N$ using a pre-trained latent diffusion model. $I_1$ (the anchor) is generated freely; for each subsequent panel, apply inference-time interventions to enforce consistency.
 
-This energy is minimised via sequential operator-splitting at each denoising step ($\mathcal{T}_{\text{MDCP}} = \mathcal{T}_3 \circ \mathcal{T}_2 \circ \mathcal{T}_1$):
+Let $z_t$ denote the latent at diffusion timestep $t$ ($t=1$ start, $t=0$ end). The standard reverse process updates $z_{t-1} = f(z_t, t)$. For subsequent panels, modify each step:
+$$z_{t-1} = \mathcal{T}_{\text{MDCP}}(z_t, t) = \mathcal{T}_3 \circ \mathcal{T}_2 \circ \mathcal{T}_1 (z_t, t)$$
 
-1. **Level 1 (L1) — Physics-Informed Latent Smoothing ($\mathcal{T}_1$):** Approximates the heat-equation Laplacian during denoising steps $t/T \in [0.20, 0.80]$ using a normalised 2D Gaussian kernel to suppress high-frequency noise accumulation:
-   $$u(t+1) = u(t) + \alpha_{\text{eff}}(t)\cdot\big(u * G_\sigma - u(t)\big)$$
-   $$\alpha_{\text{eff}}(t) = \alpha\cdot\frac{t-0.20}{0.80-0.20}, \quad \alpha = 0.03, \quad \sigma = \text{size}/3$$
+We conceptualise a joint consistency energy:
+$$\mathcal{E}_{\text{cons}}(z) = w_{\text{HF}}\,\phi_{\text{HF}}(z) + w_{\text{sem}}\,\phi_{\text{sem}}(z) + w_{\text{str}}\,\phi_{\text{str}}(z)$$
+with $\phi_{\text{HF}}$ (LPIPS), $\phi_{\text{sem}}$ (CLIP-I), and $\phi_{\text{str}}$ (DINOv2). The operators reduce each term without explicit optimisation.
 
-2. **Level 2 (L2) — Character-Aware Cross-Attention Caching ($\mathcal{T}_2$):** Binds semantic traits (face, hair, attire) per character by streaming character-specific cached Key/Value tensors into the relevant spatial region of each panel via `MultiAnchorCache`.
-   - *Single-character panel:*
-     $$\text{output} = (1-\beta)\cdot\text{Softmax}\!\left(\frac{Q_{\text{cur}}K_{\text{cur}}^T}{\sqrt{d}}\right)V_{\text{cur}} + \beta\cdot\text{Softmax}\!\left(\frac{Q_{\text{cur}}K_{\text{anchor}}^T}{\sqrt{d}}\right)V_{\text{anchor}}, \quad \beta = 0.15$$
-   - *Multi-character panel (M2 regional masking):*
-     $$O_{\text{blended}}[s] = \left(1 - \beta M_{c_j}[s]\right)O_{\text{curr}}[s] + \beta M_{c_j}[s]\,O_{\text{anchor}}^{(c_j)}[s]$$
-   - *New character (not in cache):* T2 disabled ($\beta=0$); generated panel is cached as the new anchor.
-   - *Pinned memory streaming:* Each cache entry resides in page-locked host memory, prefetched asynchronously to GPU.
+#### $\mathcal{T}_1$ — Physics-Informed Latent Smoothing
+- **Purpose:** Suppress high-frequency texture flicker.
+- **Formulation:** Apply a normalised 2-D Gaussian blur $G$ ($\sigma = \text{size}/3$) with time-dependent coefficient:
+$$z_t \leftarrow z_t + \alpha_{\text{eff}}(t)\,\big(G * z_t - z_t\big)$$
+where $\alpha_{\text{eff}}(t) = \alpha \cdot \frac{t/T - 0.20}{0.80 - 0.20}$, $\alpha = 0.03$, active for $t/T \in [0.20, 0.80]$. The update approximates a heat-equation step applied per-channel via grouped convolution.
 
-3. **Level 3 (L3) — Spatiotemporal Channel-Statistic Alignment ($\mathcal{T}_3$):** Aligns target latent statistics to the anchor distribution during $t/T \in [0.30, 0.60]$:
-   $$z_{\text{final},c} = z_c\cdot\big(1+\text{blend}_w\cdot(\text{std\_ratio}_c-1)\big) + \text{blend}_w\cdot\gamma\cdot(\mu_{\text{anchor},c}-\mu_{\text{current},c})$$
-   $$\text{std\_ratio}_c = \text{clamp}(\sigma_{\text{anchor},c}/\sigma_{\text{current},c},\,0.80,\,1.20), \quad \text{blend}_w(t) = \gamma\cdot\frac{t-0.30}{0.60-0.30}, \quad \gamma = 0.08$$
+#### $\mathcal{T}_2$ — Shared Attention-Output Caching
+- **Purpose:** Prevent semantic drift (hair, clothing, facial structure).
+- **Formulation:** During anchor generation, register a forward hook on the first four cross-attention (`attn2`) layers of the SDXL U-Net—closest to the bottleneck where semantic features are most abstract. Cache the finished output activation $O_{\text{anchor}}^{(l)}$ for each. For subsequent panels, replace the output:
+$$O_{\text{hooked}}^{(l)} = (1 - \beta)\,O_{\text{curr}}^{(l)} + \beta\,O_{\text{anchor}}^{(l)}, \quad \beta = 0.15$$
+Cached tensors are CPU-pinned and asynchronously streamed, achieving $\mathcal{O}(1)$ VRAM. When a spatial mask $M$ is available:
+$$O_{\text{blended}}[s] = (1 - \beta M[s])\,O_{\text{curr}}[s] + \beta M[s]\,O_{\text{anchor}}[s]$$
 
-### Phase 6: Automated Quality Validation Loop
-- **File:** [quality_critic.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/quality_critic.py) (`QualityCritic`)
-- **Composite score:**
-  $$\text{Score} = 0.30\,S_{\text{cons}} + 0.25\,S_{\text{aes}} + 0.20\,S_{\text{narr}} + 0.15\,S_{\text{emo}} + 0.10\,S_{\text{read}}$$
-  - **$S_{\text{cons}}$** — Visual consistency against the anchor (SSIM, edge correlation, colour statistics, Gram-matrix style).
-  - **$S_{\text{aes}}$** — Sharpness (Laplacian variance), contrast, and colorfulness.
-  - **$S_{\text{narr}}$** — Narrative coherence and prompt adherence (BERTScore semantic similarity).
-  - **$S_{\text{emo}}$** — Text-to-image emotion label alignment.
-  - **$S_{\text{read}}$** — Visual readability and margin validation.
-- **Reject & Regenerate:** If composite score < 0.55 (standard) or < 0.70 (strict), generation parameters are adjusted (guidance scale +0.5–1.0, steps +5) and a retry loop fires (max 2 retries).
-- **Panel-type awareness (§6.10):** For character-free panels (`panel_type ∈ {"scenery", "no_character"}`), $S_{\text{cons}}$ is excluded and remaining weights are re-normalised to 1.0.
+#### $\mathcal{T}_3$ — Spatiotemporal Channel Statistics Alignment
+- **Purpose:** Enforce global lighting, contrast, and structural layout.
+- **Formulation:** From anchor's final latent, compute channel-wise mean $\mu_{\text{anchor},c}$ and standard deviation $\sigma_{\text{anchor},c}$. During structural formation $t/T \in [0.30, 0.60]$:
+$$r_c = \text{clamp}\left(\frac{\sigma_{\text{anchor},c}}{\sigma_{\text{current},c}},\, 0.80,\, 1.20\right)$$
+$$z_{\text{corr},c} = z_c \cdot r_c + \gamma\,\big(\mu_{\text{anchor},c} - \mu_{\text{current},c}\big), \quad \gamma = 0.08$$
+Then blend with the original latent:
+$$\text{blend}_w = \frac{t/T - 0.30}{0.60 - 0.30}$$
+$$z_{\text{final},c} = (1 - \text{blend}_w)\,z_c + \text{blend}_w\,z_{\text{corr},c}$$
 
-### Phase 7: MangaFlow Layout Assembly Engine
-- **File:** [layout_engine.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/layout_engine.py) (`MangaFlowLayoutEngine`)
-- Panel heights are scaled proportionally to Action Intensity Scores computed in Phase 1:
-  $$h_i = H_{\text{page}}\cdot\frac{\mathcal{I}_i}{\sum_{j=1}^N \mathcal{I}_j}$$
-- Canvas: $1000 \times 1500$ px, 40 px margin, 12 px gutter, white background.
+#### Bounded Stability
+**Proposition 1.** *Assume bounded anchor statistics and $0 < \alpha < 1$, $0 < \beta < 1$. Then $\mathcal{T}_{\text{MDCP}}$ is affinely bounded: $\|\mathcal{T}_{\text{MDCP}}(z)\| \le C\|z\| + D$ for finite $C, D < \infty$.*
 
-### Phase 8: Multi-Format Export & Adaptive Parameter Tuning
-- **Files:** [comic_exporter.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/comic_exporter.py), [feedback.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/feedback.py), [feedback_tuner.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/feedback_tuner.py)
-- **Export formats:** CBZ (zip of sequential PNGs), PDF, HTML scrollbook.
-- **Telemetry loop:** Low-rated sequences cause `HeuristicFeedbackTuner` to mutate the master YAML configuration (guidance, steps, quality thresholds, prompt modifiers) for future iterations.
+**Result:** $\mathcal{T}_1$ is a normalised Gaussian blur (spectral radius 1), giving $C_1 = 1$. $\mathcal{T}_2$ is a convex combination of current output (Lipschitz $L$) and fixed anchor, giving $C_2 = 1 - L + \beta L$. $\mathcal{T}_3$ has clamped multiplicative factor $r_c \in [0.80, 1.20]$ and bounded additive offset; after blending, effective scaling $\le 1.02$ and additive term bounded. Composition yields affine bound. Full proof is in Appendix B.
+
+### Phase 5 — LLM-Planned Dialogue Placement
+Dialogue bubbles and placement are planned dynamically to ensure lettering integrates cleanly into the panel layout. The pipeline employs a three-tier fallback hierarchy:
+1. **JSON Cache:** Resolves from `outputs/panels/panel_{id:03d}_bubble_layout.json` with dialogue-text hash validation.
+2. **Direct Ollama HTTP POST:** Calls the local LLM (`llama3.2`, temp 0.1, 8 s timeout) requesting a strict JSON schema: `{speaker, dialogue_clean, bubble_shape, speaker_position, font_scale, x_ratio, y_ratio, text_align, tail_x_ratio, tail_y_ratio}`.
+3. **LangChain Fallback:** Standard LLM client fallback supporting OpenAI, Gemini, or Anthropic providers.
+
+When LLM-based placement is disabled or fails, the system executes a deterministic heuristic layout:
+$$x_{\text{ratio}} \in \{0.25,\, 0.50,\, 0.75\}: \quad \text{pos} = \text{options}\big[(\text{panel\_id} + \sum_c\text{ord}(c))\bmod3\big] \tag{23}$$
+$$y_{\text{ratio}} = 0.15 + \big((\text{panel\_id}\times7)\bmod3\big)\times0.08 \in \{0.15,\, 0.23,\, 0.31\} \tag{24}$$
+
+*   **Derivation of horizontal layout and mod 3 cycle:** To avoid visual clutter, dialogue bubbles are distributed horizontally across three discrete anchor points ($0.25, 0.50, 0.75$). Modulo-3 arithmetic cycles these anchor points across consecutive panels.
+*   **Derivation of vertical offset and prime multiplier 7:** The vertical positions cycle through $\{0.15, 0.23, 0.31\}$ (upper third of the panel to avoid covering characters). In a standard multi-panel page layout, rows typically stack 2 or 3 panels. A non-prime vertical seed multiplier would cause adjacent panels on successive rows to phase-align, placing speech bubbles at the same vertical height and creating a monotonous layout. The prime number 7 is coprime to the cycle length (3), guaranteeing that bubbles cycle through all three heights before repeating on aligned layouts, minimizing page-level horizontal collisions.
+
+#### Emotion-to-Bubble Style Mapping
+The emotion-beat associated with the panel determines the bubble's visual rendering preset:
+- **calm** (ellipse, fill alpha $\approx 90\%$, font scale $1.00\times$)
+- **intense** (jagged, fill alpha $240/255$, font scale $1.15\times$)
+- **thought** (cloud shape, fill alpha $200/255$, font scale $0.90\times$)
+- **whisper** (dashed ellipse, fill alpha $\approx 71\%$, font scale $0.85\times$)
+- **shout** (spiky starburst, fill alpha $245/255$, font scale $1.30\times$)
+
+*   **Derivation of fill opacities (Alphas):** Opacities are calibrated to the dramatic weight of the text category: `calm` bubbles use a dense $\approx 90\%$ fill to comfortably obscure the background for high legibility; `whisper` bubbles use a lower $\approx 71\%$ opacity to make the bubble semi-transparent, visually reinforcing a hushed tone by letting background details show through.
+*   **Derivation of font scales:** Base size $16$ pt is the minimum legible lettering size for standard $1000 \times 1500$ px pages viewed on mobile displays. Whisper/thought texts are scaled down to $0.85\times$ / $0.90\times$ to reflect low volume. Shout text is scaled up to $1.30\times$ to mimic shouting volume.
+
+For shout panels, the spiky starburst is rendered as a 24-vertex polygon with 12 outer spikes using a protrusion ratio $\gamma_s = 1.55$:
+$$\theta_k = \frac{2\pi k}{24}-\frac{\pi}{2},\quad p^k = \begin{cases}(c_x+r_x\cdot1.55\cos\theta_k,\ c_y+r_y\cdot1.55\sin\theta_k) & k\ \text{even (outer)}\\ (c_x+r_x\cos\theta_k,\ c_y+r_y\sin\theta_k) & k\ \text{odd (inner)}\end{cases} \tag{25}$$
+
+*   **Derivation of starburst spike configuration and protrusion ratio $\gamma_s=1.55$:** A 24-vertex polygon provides exactly 12 spikes ($n_{\text{spikes}} = n_{\text{points}}/2$), which is the optimal density to be recognized as a shout bubble at typical web resolutions without becoming a solid circle. The protrusion ratio $\gamma_s = 1.55$ dictates that outer vertices extend $55\%$ beyond the bounding box. Values $\ge 1.70$ cause spikes to clip adjacent panel borders, while values $\le 1.30$ look too rounded and lose visual distinctiveness.
+
+Speech bubbles are rendered on cropped and resized panel boxes (**post-crop typesetting**). Pre-annotating before cropping is strictly avoided to prevent aspect-ratio warping and margin-clipping. Max bubble width is capped at $45\%$ of the panel width to prevent visual occlusion of characters while maintaining comfortable text layout.
+
+---
+
+### Phase 6 — Automated Quality Gating
+The quality gate evaluates each raw generated panel across five metrics using a composite scoring function:
+$$Q = 0.30\,S_{\text{cons}} + 0.25\,S_{\text{aes}} + 0.20\,S_{\text{narr}} + 0.15\,S_{\text{emo}} + 0.10\,S_{\text{read}} \tag{26}$$
+
+*   **Derivation of composite weights:** Weights are distributed to align with the failure probability and severity hierarchy:
+    - Character consistency drift ($S_{\text{cons}}$, weight 0.30) is the dominant and unrecoverable failure mode in sequential generation, thus receiving the highest weight.
+    - Aesthetic collapse ($S_{\text{aes}}$, weight 0.25) represents standard generation failures (latent collapse, severe blur) and is weighted second.
+    - Narrative and emotional coherence ($S_{\text{narr}}, S_{\text{emo}}$, weights 0.20/0.15) are largely controlled upstream by the multi-agent storyboard planning, making the critic's role supplementary.
+    - Readability ($S_{\text{read}}$, weight 0.10) is a soft stylistic layout preference rather than a hard visual failure, justifying the lowest weight.
+
+The score yields a two-threshold verdict:
+$$\text{verdict} = \begin{cases} \text{"excellent"} & Q\ge0.70 \\ \text{"pass"} & 0.55\le Q<0.70 \\ \text{"fail"} & Q<0.55 \end{cases} \tag{27}$$
+
+*   **Derivation of threshold margins:** A failing threshold of $0.55$ represents a panel scoring marginally above random chance across all criteria. Raising this to $0.55$ ensures that any panel with a single catastrophic failure (e.g., $S_{\text{aes}} \approx 0$ or $S_{\text{cons}} \le 0.30$) fails the composite score and triggers regeneration. The excellent threshold of $0.70$ designates panels that exhibit high consistency and aesthetic scores simultaneously (where no single dimension falls below 0.60), shielding them from redundant regeneration.
+
+#### Metric Definitions
+- **Visual Consistency ($S_{\text{cons}}$):** Evaluates re-identification distance using SSIM, edge correlation, color statistics, and style Gram matrices.
+- **Aesthetic Quality ($S_{\text{aes}}$):** Combines resolution scale and pixel variance:
+  $$S_{\text{aes}} = 0.3\cdot\min\!\left(1,\frac{W\cdot H}{1024^2}\right) + 0.7\cdot\min\!\left(1,\frac{\sigma_{\text{arr}}}{128}\right) \tag{28}$$
+- **Narrative Coherence ($S_{\text{narr}}$):** Checks alignment of panel progress with story beat assignments:
+  $$S_{\text{narr}} = 0.65 + 0.25\cdot\left(1-\left|\frac{b_{\text{current}}}{B_{\text{total}}}-\frac{p_{\text{current}}}{P_{\text{total}}}\right|\right) \tag{29}$$
+- **Emotional Engagement ($S_{\text{emo}}$):** Evaluates mood-arc intensity:
+  $$S_{\text{emo}} = \begin{cases} 0.80 & \text{beat}\in\mathcal{H}_{\text{high}} \\ 0.65 & \text{other beats} \\ 0.60 & \text{no context} \end{cases} \tag{30}$$
+- **Readability ($S_{\text{read}}$):** Grayscale edge density $\rho_{\text{edge}}$ represents visual complexity:
+  $$\rho_{\text{edge}} = \frac{1}{2}\cdot\frac{\overline{|\nabla_x I|}+\overline{|\nabla_y I|}}{128},\quad S_{\text{read}} = \begin{cases} 0.8 & 0.05<\rho<0.30\ (\text{ideal}) \\ 0.6 & 0.02<\rho\le0.05\ \text{or}\ 0.30\le\rho<0.50 \\ 0.4 & \rho\le0.02\ \text{or}\ \rho\ge0.50 \end{cases} \tag{31}$$
+
+If a panel verdict is `"fail"`, it enters the retry loop (max 2 retries). The critic dynamically increments parameters: $\Delta\text{CFG} = +1.0$ for consistency failures, $\Delta\text{Steps} = +5$ for aesthetic failures, and appends quality keywords to positive or negative prompts.
+
+---
+
+### Phase 7 — Cadence Layout Engine
+Assembles cropped panels onto pages dynamically based on Action Intensity Scores ($\mathcal{I}_i$) computed in Phase 1. Canvas geometry: $W_{\text{page}}=1000$ px, $H_{\text{page}}=1500$ px ($2:3$ graphic novel ratio), margin $M=40$ px, gutter $G=12$ px.
+$$W_{\text{usable}}=920\text{ px},\quad H_{\text{usable}}=1420\text{ px} \tag{33}$$
+
+Panel height weight is calculated as $w_i = 0.7 + \mathcal{I}_i\cdot1.0 \in [0.7,\, 1.7]$.
+*   **Derivation of action weight scaling and floor 0.7:** Pacing-aware layout engines adjust panel sizing to reflect narrative intensity. If the size difference is too small, pacing variations are imperceptible. If the floor is too low, low-intensity panels are squashed below the minimum legible scale for character expressions. The mapping $w_i = 0.7 + \mathcal{I}_i \cdot 1.0$ sets a floor of $0.70$ (ensuring any panel retains at least $41\%$ of the largest panel's dimension) and a dynamic range multiplier of $1.0$, producing a maximum panel area ratio of $1.7/0.7 \approx 2.43\times$ which clearly signals pacing peaks without illegibility.
+
+#### Partition Scenarios
+- **N=1:** Full-page spread.
+- **N=2 (vertical stack):** $h_0 = \lfloor H_u\cdot w_0/(w_0+w_1)\rfloor - G/2$, $h_1 = H_u - h_0 - G$.
+- **N=3 (three-tier layout):** Split rows by tiers; bottom split proportionally.
+- **N=4 (dominant row vs 2×2 grid):** Triggered when $w_i > 1.4$.
+  *   *Derivation of dominance threshold $w_i > 1.4$:* A panel weight $w_i > 1.4$ corresponds to an action intensity score $\mathcal{I}_i > 0.7$ (Phase 1). This designates high-impact scenes. Using a dominance threshold of 1.4 isolates these narrative climaxes to trigger full-width row layouts, while standard panels ($w_i \le 1.4$) default to a balanced $2\times2$ grid.
+  *   *Derivation of dominant row height 55%:* Splitting the canvas $55/45$ gives the dominant panel $55\%$ of the height and the remaining three panels $15\%$ height each in the remaining row. This ensures the dominant panel is visually preeminent (occupying more area than the other three combined) while the secondary panels remain large enough to resolve their individual prompts.
+
+#### Focal Crop
+Panels are symmetrically cropped to fit the target bounding box. Let $a_I=W_I/H_I$ (image aspect ratio), $a_b=w_b/h_b$ (target box aspect ratio):
+$$(W',H') = \begin{cases} (h_b\cdot W_I/H_I,\ h_b) & a_I>a_b\ (\text{box narrower than image}) \\ (w_b,\ w_b\cdot H_I/W_I) & a_I\le a_b\ (\text{box wider}) \end{cases} \tag{34}$$
+
+---
+
+### Phase 8 — Multi-Format Export and Feedback-Driven Tuning
+The assembled panels are compiled into three standard formats:
+- **CBZ:** Zip archive containing compressed PNGs.
+- **PDF:** Document packaging page raster outputs.
+- **HTML5 Scrollbook:** Responsive scrollable layout featuring sticky glassmorphism header (`backdrop-filter: blur(10px)`).
+
+#### Heuristic Parameter Tuning
+Feedback loops mutate configuration parameters based on panel rating histories:
+- If average rating $\bar{r} < 3.0$: strictness increases ($\tau \leftarrow \tau + 0.05$), and text conditioning is boosted ($\text{CFG} \leftarrow \text{CFG} + 0.5$).
+- If average rating $\bar{r} > 4.5$: strictness decreases ($\tau \leftarrow \tau - 0.03$) to reduce reject-and-regenerate rates.
+- For character consistency failures, the LoRA scale is boosted: $\lambda_{\text{LoRA}} \leftarrow \lambda_{\text{LoRA}} + 0.05$.
+- Critic weights are adjusted: consistency failures shift weights $\tilde{w}_{\text{cons}} = w_{\text{cons}} + 0.05$ (with aesthetics and readability rescaled to maintain a sum of 1.0).
+- Visual style mutations are appended: append `["sharp focus", "detailed line art"]` for aesthetics and `["consistent character features", "same outfit"]` for consistency.
+
+Safe file locking (utilizing `msvcrt.locking` on Windows and `fcntl.flock` on POSIX) prevents configuration corruption during concurrent pipeline runs.
+
+---
 
 ---
 
