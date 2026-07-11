@@ -191,8 +191,8 @@ To evaluate MDCP under realistic long-range sequential generation conditions, we
                                            |
                                            v
 +---------------------------------------------------------------------------------------+
-|                    PHASE 2: SEQUENTIAL ANCHOR PANEL GENERATION (n=1)                  |
-|          - Extract Signature: Color Keys, Edge Density, Gram-Matrix Texture           |
+|                    PHASE 2: REFERENCE-FREE MULTI-CHARACTER ANCHORING                  |
+|      - Build Introduction Map; Segment & Extract Regional Signatures per Character    |
 +---------------------------------------------------------------------------------------+
                                            |
                                            +----------------------------+
@@ -226,7 +226,7 @@ To evaluate MDCP under realistic long-range sequential generation conditions, we
 +---------------------------------------------------------------------------------------+
 ```
 
-*Figure 1: The eight-phase pipeline. The anchor panel (Phase 2) must complete and cache its identity signature before any other panel begins generating; panels $2\ldots N$ then proceed as parallelizable, independent MDCP-consistent generations. The dashed path denotes Phase 6's reject-and-regenerate loop.*
+*Figure 1: The eight-phase pipeline. In Phase 2, reference-free visual anchors are established for each character on their first appearance panel; their regional identity signatures are cached before any subsequent panel depicting them is generated. Panels then proceed as parallelizable, independent MDCP-consistent generations. The dashed path denotes Phase 6's reject-and-regenerate loop.*
 
 ```
 Algorithm 2: Master Eight-Phase Pipeline Orchestration
@@ -239,22 +239,31 @@ Output: assembled pages (CBZ/PDF/HTML), feedback telemetry log
 4:  /* Phase 1 — Multi-Agent Enrichment (blackboard) */
 5:  storyboard ← AgentController.run_planning(story_config)
 6:
-7:  /* Phase 2 — Anchor Panel (must complete first, sequential) */
-8:  anchor_result ← generate_panel_with_retry(panel_id = 1)
-9:  identity_signature ← IdentityEmbeddingExtractor.extract(anchor_result.image)
-10:
-11: /* Phases 3–6 — remaining panels, MDCP-consistent, parallelizable */
-12: for panel_id in 2..N do parallel
-13:     panel_result ← generate_panel_with_retry(panel_id)   # Algorithm 1 runs inside this call
-14: end for
-15:
-16: /* Phase 7 — Cadence Layout */
-17: pages ← LayoutEngine.assemble(sorted_panels_by_page)
-18:
-19: /* Phase 8 — Export and Feedback Logging */
-20: Exporter.export(pages, formats = [CBZ, PDF, HTML])
-21: FeedbackTuner.log_telemetry()
-22: return pages
+7:  /* Phase 2 — Multi-Anchor Visual Anchoring (sequential steps for first appearances) */
+8:  character_intro_map ← build_character_introduction_panel_map(storyboard)
+9:  for each character c in character_intro_map.keys() do:
+10:     k_c ← character_intro_map[c] // earliest panel where character c appears
+11:     if k_c has not been generated yet:
+12:         panel_res ← generate_panel_with_retry(panel_id = k_c, t2_enabled_for_c = False)
+13:     end if
+14:     M_c ← segment_character_foreground(panel_res.image, c) // using SAM or BBox
+15:     character_anchors[c] ← IdentityEmbeddingExtractor.extract_masked(panel_res.image, M_c)
+16: end for
+17:
+18: /* Phases 3–6 — remaining panels, MDCP-consistent, parallelizable */
+19: for panel_id in 1..N do parallel
+20:     if panel_id is not in character_intro_map.values() then
+21:         panel_result ← generate_panel_with_retry(panel_id)   # Algorithm 1 runs inside this call
+22:     end if
+23: end for
+24:
+25: /* Phase 7 — Cadence Layout */
+26: pages ← LayoutEngine.assemble(sorted_panels_by_page)
+27:
+28: /* Phase 8 — Export and Feedback Logging */
+29: Exporter.export(pages, formats = [CBZ, PDF, HTML])
+30: FeedbackTuner.log_telemetry()
+31: return pages
 ```
 
 #### 3.2.0 Design Philosophy
@@ -382,134 +391,100 @@ After all six agents complete, the `StorySectionMemory` blackboard contains for 
 
 This fully-parameterized scene graph is the single interface contract between Phase 1 and all downstream phases. No downstream phase queries the raw LLM story config directly; all reads go through `StorySectionMemory.build_generation_context(panel_id)`, which assembles the Phase 1 outputs into the context dict passed to the panel engine.
 
-#### 3.2.3 Phase 2 — Reference-Free Identity Anchoring
+#### 3.2.3 Phase 2 — Multi-Anchor Reference-Free Identity Anchoring
 
-Phase 2 establishes the visual anchor that all subsequent MDCP operators ($\mathcal{T}_1$–$\mathcal{T}_3$) reference. Its defining constraint is **zero dependence on user-supplied reference images**: the anchor panel is synthesized entirely from the Phase 1 scene graph, and its identity signature is extracted from the generated pixel output. This property is what makes the system zero-shot — a user can describe a character in text and receive a consistent multi-panel comic without providing a character sheet, reference photograph, or pre-trained identity encoder for that specific character.
+Phase 2 establishes the character-aware visual anchors that downstream MDCP operators ($\mathcal{T}_1$–$\mathcal{T}_3$) reference per character. Its defining constraint is **zero dependence on user-supplied reference images**: the anchor panel for each character is synthesized entirely from the enriched storyboard, and their visual identity signature is extracted from the generated pixel output. This property makes the system zero-shot: a user can describe characters in text and receive a consistent multi-panel comic without providing character sheets, reference photographs, or pre-trained identity encoders.
 
-Phase 2 executes as a four-step sequential workflow (Steps 2.1–2.4, with optional Steps 2.5–2.6 if the advanced attention manager is active), fully coordinated in `anchoring.py::ReferenceFreeAnchor.establish_anchor()`.
+Phase 2 executes as a sequential workflow across character introduction panels. The enriched storyboard is parsed to build a `character_introduction_panel` map containing the earliest panel index $k_c$ where each character $c$ is introduced. The introduction panels are generated with T2 attention blending disabled for the respective character to establish a clean visual baseline. The character region is then isolated using binary spatial masks $M_c \in \{0, 1\}^{H \times W}$ computed via SAM (M3) or localized bounding boxes.
 
-##### 3.2.3.1 Step 2.1–2.2: Sequential Anchor Generation and Persistence
+##### 3.2.3.1 Step 2.1–2.2: Multi-Character Anchor Generation and Persistence
 
-Panel $n=1$ is generated through the same `StableDiffusionXLPipeline` call used for all other panels, but with one critical difference: **no MDCP operators are applied**. $\mathcal{T}_1$, $\mathcal{T}_2$, and $\mathcal{T}_3$ only intervene on panels $n > 1$. The anchor's reverse-diffusion trajectory is therefore an unconstrained standard SDXL pass — the model's full generative capacity is applied without any latent-space steering, allowing it to resolve the character's appearance from the prompt alone with maximum fidelity.
-
-Upon completion, the PIL Image object is saved to disk at a deterministic path:
+For each character $c$, panel $k_c$ is generated through the same `StableDiffusionXLPipeline` call used for all other panels, but with the cross-character attention blend disabled for that specific character's region. The reverse-diffusion trajectory establishes the visual baseline for character $c$. Upon completion, the PIL Image object is saved to disk at a deterministic path:
 
 ```
-outputs/anchors/anchor_panel_1.png
+outputs/anchors/anchor_panel_k_c.png
 ```
 
-The `outputs/anchors/` directory is created idempotently (`os.makedirs(..., exist_ok=True)`). Saving to disk — rather than retaining the PIL object in GPU or CPU memory — serves a dual purpose: (i) it provides a persistent filesystem record that survives process failure, enabling checkpoint-resume without regenerating the anchor; and (ii) it converts the image into a format that `ConsistencyChecker.extract_features()` can process via OpenCV's `cv2.imdecode()`, which requires a byte-array input path. The `cv2.imdecode(np.frombuffer(f.read(), dtype=np.uint8), cv2.IMREAD_COLOR)` idiom is used in preference to `cv2.imread(path)` specifically to handle Unicode file paths on Windows, where `cv2.imread` fails silently on non-ASCII characters.
+Saving to disk provides a persistent filesystem record enabling checkpoint-resume. It also converts the image into a format that the `IdentityEmbeddingExtractor` can process via OpenCV's `cv2.imdecode(np.frombuffer(f.read(), dtype=np.uint8), cv2.IMREAD_COLOR)` idiom, which handles Unicode file paths on Windows (where standard `cv2.imread` fails silently on non-ASCII characters).
 
-##### 3.2.3.2 Step 2.3: Classical Identity Signature Extraction
+##### 3.2.3.2 Step 2.3: Regional Identity Signature Extraction
 
-`IdentityEmbeddingExtractor.extract()` delegates to `ConsistencyChecker.extract_features()`, which computes four independent classical descriptors from the saved anchor image. These descriptors form the **identity signature** — a compact, serializable, device-agnostic representation of the anchor panel's visual identity that can be stored in the blackboard and compared against any subsequent panel without loading a neural model.
+The `IdentityEmbeddingExtractor` computes four independent classical descriptors from the saved anchor image within the character's segmented spatial mask $M_c$. These descriptors form the **identity signature** $\mathcal{S}_c$ — a compact, serializable representation of the character's visual identity stored on the blackboard.
 
-**Descriptor 1: HSV Color Histogram** ($\mathbf{h}_{\text{color}}$)
+**Descriptor 1: Regional HSV Color Histogram** ($\mathbf{h}_{\text{color}}^c$)
 
-The image is converted from BGR to HSV color space and a joint 2D histogram over the Hue ($H$) and Saturation ($S$) channels is computed:
+The image is converted to HSV color space, and a joint 2D histogram over the Hue ($H$) and Saturation ($S$) channels is computed within the character mask $M_c$:
 
-$$\mathbf{h}_{\text{color}} = \text{calcHist}\big([I_{\text{HSV}}],\ \text{channels}=[H, S],\ \text{bins}=[8, 8],\ \text{ranges}=[0,180]\times[0,256]\big) \in \mathbb{R}^{8 \times 8} \tag{10}$$
+$$\mathbf{h}_{\text{color}}^c = \text{calcHist}\big([I_{\text{HSV}}],\, \text{channels}=[H, S],\, \text{mask}=M_c,\, \text{bins}=[8, 8],\, \text{ranges}=[0,180]\times[0,256]\big) \in \mathbb{R}^{8 \times 8} \tag{10}$$
 
-normalized to $[0, 1]$ via `cv2.NORM_MINMAX`. The deliberate omission of the Value ($V$) channel from the histogram is a principled design choice: the Hue and Saturation dimensions encode a character's color identity (hair color, skin tone, clothing hue) independently of scene illumination. Including $V$ would make the histogram sensitive to lighting changes between panels — a flash-lit vs. sunset-lit panel of the same character would score as dissimilar purely due to brightness shift, not identity change. The $[8, 8]$ bin configuration produces a 64-element feature vector that captures the gross color distribution without overfitting to specific pixel values: two panels of the same character will share the same dominant hue/saturation bins even under moderate viewpoint and pose changes.
+normalized to $[0, 1]$ via `cv2.NORM_MINMAX`. Omitting the Value ($V$) channel ensures color identity preservation (e.g. hair, costume hue) independently of scene illumination changes. The $[8, 8]$ bins provide high robustness against minor pixel-level variations caused by changes in character pose or perspective.
 
-Downstream, the histogram is compared against target panels via `cv2.compareHist(..., cv2.HISTCMP_CORREL)`, which computes the Pearson correlation coefficient between two normalized histograms:
+Downstream, the regional histogram is compared against target panels via Pearson correlation:
 
-$$S_{\text{color}} = \frac{\sum_i \big(h_1(i) - \bar{h}_1\big)\big(h_2(i) - \bar{h}_2\big)}{\sqrt{\sum_i \big(h_1(i) - \bar{h}_1\big)^2 \cdot \sum_i \big(h_2(i) - \bar{h}_2\big)^2}} \in [-1, 1], \quad \text{clamped to } [0, 1] \tag{11}$$
+$$S_{\text{color}}^c = \frac{\sum_i \big(h_1(i) - \bar{h}_1\big)\big(h_2(i) - \bar{h}_2\big)}{\sqrt{\sum_i \big(h_1(i) - \bar{h}_1\big)^2 \cdot \sum_i \big(h_2(i) - \bar{h}_2\big)^2}} \in [-1, 1], \quad \text{clamped to } [0, 1] \tag{11}$$
 
-This metric is weighted at 0.25 in the `check_consistency()` composite score.
+This metric contributes weight 0.25 in the consistency composite score.
 
-**Descriptor 2: Canny Edge Density** ($\rho_{\text{edge}}$)
+**Descriptor 2: Silhouette Canny Edge Density** ($\rho_{\text{edge}}^c$)
 
-The grayscale image has its edges detected using the Canny algorithm with fixed thresholds $(T_{\text{low}}, T_{\text{high}}) = (50, 150)$ and the edge density is computed as the fraction of edge pixels:
+Grayscale edges are detected using the Canny algorithm with thresholds $(50, 150)$, and the edge density is computed within the character mask $M_c$:
 
-$$\rho_{\text{edge}} = \frac{\big|\{(x,y) : \text{Canny}(I_{\text{gray}},\, 50,\, 150)[x,y] > 0\}\big|}{H \cdot W} \in [0, 1] \tag{12}$$
+$$\rho_{\text{edge}}^c = \frac{\big|\{(x,y) : \text{Canny}(I_{\text{gray}},\, 50,\, 150)[x,y] > 0 \text{ and } M_c[x,y] = 1\}\big|}{|M_c|} \in [0, 1] \tag{12}$$
 
-The choice of thresholds $(50, 150)$ follows the standard 1:3 low-to-high ratio recommended in Canny (1986). The lower threshold retains weak edges that are true continuations of strong edges (gradient magnitude ≥ 50), while the upper threshold initializes hysteresis at unambiguous strong edges (gradient magnitude ≥ 150). In the context of comic panel generation, edge density is a style-level descriptor: line-art panels have high $\rho_{\text{edge}}$ (dense inked boundaries), while watercolor panels have low $\rho_{\text{edge}}$ (soft, diffuse edges). Anchoring this value at the first panel ensures that stylistically inconsistent panels — where the diffusion model drifts toward a different rendering convention — are penalized in the consistency score.
+This captures edge density as a local style-level descriptor. The downstream consistency comparison uses:
 
-The downstream consistency comparison uses a normalized absolute difference:
+$$S_{\text{edge}}^c = \max\!\big(0,\, 1 - 5 \cdot |\rho_{\text{edge}}^{c,\text{anchor}} - \rho_{\text{edge}}^{c,\text{current}}|\big) \in [0, 1] \tag{13}$$
 
-$$S_{\text{edge}} = \max\!\big(0,\, 1 - 5 \cdot |\rho_{\text{edge}}^{\text{anchor}} - \rho_{\text{edge}}^{\text{current}}|\big) \in [0, 1] \tag{13}$$
+where the multiplier 5 maps a $0.20$ deviation threshold to zero, tolerating minor contour changes while penalizing style shifts. This contributes weight 0.15.
 
-The multiplier of 5 is calibrated so that an edge density deviation of $0.20$ (20 percentage points) maps to a zero score. This threshold corresponds to a perceptible shift in rendering style — e.g., the shift from a sparse line-art panel ($\rho = 0.05$) to a dense cross-hatched panel ($\rho = 0.25$) — while tolerating minor variations from pose-driven contour changes. This metric contributes weight 0.15 in the composite score.
+**Descriptor 3: Masked Style Gram Matrix** ($G_{\text{style}}^c \in \mathbb{R}^{5 \times 5}$)
 
-**Descriptor 3: Style Gram Matrix** ($G_{\text{style}} \in \mathbb{R}^{5 \times 5}$)
+This Gram matrix captures the character's texture and rendering conventions. The image is resized to $256 \times 256$, and Sobel gradients $\nabla_x I, \nabla_y I$ are stacked with normalized RGB values to construct a 5-channel feature map $F \in \mathbb{R}^{(H \cdot W) \times 5}$. Using the diagonalized mask $W_c = \text{diag}(M_c)$:
 
-The Gram matrix descriptor captures the panel's **texture and style fingerprint** beyond color and edge distributions. The computation proceeds over a 5-channel feature representation:
+$$G_{\text{style}}^c = \frac{F^\top W_c F}{\sum(M_c)} \in \mathbb{R}^{5 \times 5} \tag{14}$$
 
-*Feature construction.* The image is resized to $H \times W = 256 \times 256$ pixels and normalized to $[0, 1]$. Sobel gradient responses in the $x$- and $y$-directions are computed on the grayscale image at kernel size $k=3$:
+The similarity score is:
 
-$$\nabla_x I = \text{Sobel}(I_{\text{gray}},\, \text{ddepth=CV\_64F},\, dx=1,\, dy=0,\, k=3), \quad \nabla_y I = \text{Sobel}(I_{\text{gray}},\, \text{ddepth=CV\_64F},\, dx=0,\, dy=1,\, k=3) \tag{14}$$
+$$S_{\text{style}}^c = \max\!\big(0,\, 1 - 10 \cdot \text{MSE}(G_{\text{anchor}}^c, G_{\text{current}}^c)\big) \tag{15}$$
 
-Both gradient maps are resized to $256 \times 256$ and normalized to $[0,1]$. The resulting **5-channel feature map** $F \in \mathbb{R}^{(H \cdot W) \times 5}$ stacks: R, G, B pixel values (columns 0–2), $\nabla_x I$ (column 3), and $\nabla_y I$ (column 4), where each row corresponds to one spatial location.
+where the multiplier 10 maps MSE $\ge 0.10$ to zero. This contributes weight 0.20.
 
-*Gram matrix.* The style Gram matrix is then:
+**Descriptor 4: Bounding Box Aesthetic Baseline Score** ($S_{\text{aesthetic}}^c$)
 
-$$G_{\text{style}} = \frac{F^\top F}{H \cdot W} \in \mathbb{R}^{5 \times 5}, \quad G_{i,j} = \frac{1}{H \cdot W}\sum_{k=1}^{H \cdot W} F_{k,i}\,F_{k,j} \tag{15}$$
+To prevent background environment details from influencing character quality assessments, the image crops are evaluated over the character bounding box region $I_{\text{crop}}^c = \text{crop}(I, M_c)$:
 
-This is the same formulation as Equation (10) in the original paper notation, here expanded to the 5-channel concrete implementation. $G_{\text{style}}$ encodes the **second-order statistics of the joint color-gradient feature space**: each entry $G_{i,j}$ measures the average co-activation of feature $i$ and feature $j$ across all spatial positions. When two panels share the same rendering style (e.g., both use heavy ink lines producing high correlated $\nabla_x$/$\nabla_y$ responses), their Gram matrices will be similar. When one panel is rendered in watercolor (low gradient responses) and another in ink (high gradient responses), the Gram matrices diverge substantially. Adding the gradient channels (columns 3–4) to the purely photometric RGB channels (0–2) is what distinguishes this from a simple color-covariance matrix: it encodes stylistic rendering properties rather than pure color information.
+$$S_{\text{sharp}}^c = \min\!\left(1,\, \frac{\text{Var}\!\left(\nabla^2 I_{\text{gray},\text{crop}}^c\right)}{500}\right), \quad S_{\text{contrast}}^c = \min\!\left(1,\, \frac{\sigma(I_{\text{gray},\text{crop}}^c)}{75}\right) \tag{16}$$
 
-The consistency score derived from the Gram descriptor is:
+$$S_{\text{color}}^c = \min\!\left(1,\, \frac{\sqrt{\sigma_{rg}^2 + \sigma_{yb}^2} + 0.3\sqrt{\mu_{rg}^2 + \mu_{yb}^2}}{80}\right) \tag{17}$$
 
-$$S_{\text{style}} = \max\!\big(0,\, 1 - 10 \cdot \text{MSE}(G_{\text{anchor}}, G_{\text{current}})\big), \quad \text{MSE}(A,B) = \frac{1}{25}\sum_{i,j}(A_{i,j} - B_{i,j})^2 \tag{16}$$
+$$S_{\text{aesthetic}}^c = 0.4\,S_{\text{sharp}}^c + 0.3\,S_{\text{contrast}}^c + 0.3\,S_{\text{color}}^c \tag{18}$$
 
-The multiplier of 10 is calibrated on the dynamic range of Gram MSE values observed across style-consistent vs. style-inconsistent panel pairs: within-style MSE typically falls in $[0.00, 0.05]$, while cross-style MSE (e.g., watercolor vs. line-art) exceeds 0.10. A multiplier of 10 maps 0.10 MSE to a zero score, correctly rejecting style-inconsistent panels. This descriptor contributes weight 0.20 in the composite score.
+The constants ($500, 75, 80$) and local weights ($[0.4, 0.3, 0.3]$) follow the single-character baseline. The aesthetic score is used to append descriptive prompt suffixes.
 
-**Descriptor 4: Aesthetic Baseline Score** ($S_{\text{aesthetic}}$)
+**Optional Descriptors 5–6: Deep Semantic Embeddings**
 
-A composite aesthetic quality score is computed using three classical image quality proxies:
+Deep semantic embeddings (CLIP, DINOv2) can optionally be enabled, loading `openai/clip-vit-base-patch32` and `facebook/dinov2-base` to extract features from the character crops. These models are offloaded to CPU immediately after inference to reclaim GPU memory.
 
-$$S_{\text{sharp}} = \min\!\left(1,\, \frac{\text{Var}\!\left(\nabla^2 I_{\text{gray}}\right)}{500}\right), \quad S_{\text{contrast}} = \min\!\left(1,\, \frac{\sigma(I_{\text{gray}})}{75}\right) \tag{17}$$
+##### 3.2.3.3 Step 2.4: Multi-Anchor Signature Registration
 
-$$S_{\text{color}} = \min\!\left(1,\, \frac{\sqrt{\sigma_{rg}^2 + \sigma_{yb}^2} + 0.3\sqrt{\mu_{rg}^2 + \mu_{yb}^2}}{80}\right) \tag{18}$$
+The extracted identity signatures are registered in `StorySectionMemory` blackboard through two targets:
 
-where $rg = |R - G|$, $yb = |0.5(R+G) - B|$ are opponent color channels (the Hasler–Suesstrunk colorfulness metric), $\sigma$ denotes standard deviation, and $\mu$ denotes mean. The composite score is:
+1. Cached in `MultiAnchorCache` keyed by character name, containing the cross-attention output cache $O_{\text{anchor}}^{(l)}(c)$ and latent channel statistics $(\mu_c, \sigma_c)$.
+2. Bound to the character's named state registry under `CharacterState.identity_tokens`.
 
-$$S_{\text{aesthetic}} = 0.4\,S_{\text{sharp}} + 0.3\,S_{\text{contrast}} + 0.3\,S_{\text{color}} \tag{19}$$
-
-The normalization constants in Equations (17)–(18) deserve explicit justification:
-- **500** for sharpness: empirically, a Laplacian variance below 100 is perceptibly blurry, while values above 500 represent sharp, well-focused images. Dividing by 500 and clamping to 1.0 maps the practical sharpness range to $[0, 1]$.
-- **75** for contrast: a standard deviation below 30 in a grayscale image indicates very low contrast (washed out or near-uniform image); values near 75 represent moderate-to-high contrast typical of high-quality comic artwork. Dividing by 75 maps the practical contrast range to $[0, 1]$.
-- **80** for colorfulness: the Hasler–Suesstrunk metric yields values near 0 for grayscale images and near 80–100 for highly saturated images. Dividing by 80 maps colorful comic panels close to 1.0.
-- **Weights $[0.4, 0.3, 0.3]$**: sharpness is weighted highest because blurriness is the most visually salient quality defect in comic artwork (where crisp line definition is stylistically essential); contrast and colorfulness are weighted equally as complementary aesthetic dimensions.
-
-The aesthetic score is stored as a scalar in the identity tokens and used by `get_consistency_guidance()` to adjust prompt suffix terms for subsequent panels: if $S_{\text{aesthetic}} > 0.6$, the suffix appends `"highly detailed, sharp lines"`; otherwise `"clean lines"`.
-
-**Optional Descriptors 5–6: Deep Semantic Embeddings (Disabled by Default)**
-
-When `enable_clip=True`, `ConsistencyChecker.compute_clip_image_similarity()` loads `openai/clip-vit-base-patch32` (globally cached via `_CLIP_MODEL`) and computes cosine similarity between the $\ell_2$-normalized image embeddings $\mathbf{e} \in \mathbb{R}^{512}$. When `enable_dinov2=True`, `compute_dinov2_similarity()` loads `facebook/dinov2-base` (globally cached via `_DINOV2_MODEL`) and computes cosine similarity between pooler outputs $\mathbf{f} \in \mathbb{R}^{768}$. Both models are offloaded from GPU to CPU immediately after each inference call (`model.to("cpu")` + `torch.cuda.empty_cache()`) to reclaim VRAM for the diffusion pipeline.
-
-These descriptors are **disabled by default** because: (i) loading CLIP adds approximately 600 MB and DINOv2 adds approximately 330 MB of VRAM when resident on GPU — a non-trivial overhead on 16 GB consumer hardware already occupied by SDXL; (ii) their weight contribution when active is only 0.05 each (the two lowest weights in the composite score), so their marginal effect on the overall consistency gate is small; and (iii) the classical descriptors (HSV histogram, edge density, Gram matrix) capture the primary sources of visual drift observable at the Phase 2 consistency-checking level (color shift, style shift, structural density shift) without requiring model loading. The deep embeddings are reserved for use cases requiring high-precision semantic identity discrimination (e.g., detecting face identity changes across panels), which the MDCP operators address more directly through $\mathcal{T}_2$'s attention caching.
-
-##### 3.2.3.3 Step 2.4: Identity Signature Injection into Blackboard
-
-The extracted identity tokens — a serializable Python dict containing `color_profile`, `edge_profile`, `style_profile`, `aesthetic_score`, `mean_brightness`, and `reference_path` — are written into the blackboard through two writes:
-
-1. `memory.set_anchor(panel_id, identity_tokens)` stores the tokens at `memory.anchor_features`, making them retrievable via `memory.get_anchor_features()` throughout the pipeline.
-2. `memory.inject_identity_tokens(character_name, identity_tokens)` writes the same tokens into the `CharacterState.identity_tokens` field of the main character's registry entry, binding the identity signature to the named character rather than to a panel index. This supports multi-character extensions where different characters may have different anchor signatures.
-
-The `mean_brightness` scalar (mean pixel luminance of the anchor, in $[0, 255]$) enables a downstream brightness-conditioned prompt suffix via `get_consistency_guidance()`:
-
-$$\text{brightness\_hint} = \begin{cases} \text{"dark atmospheric scene, low-key lighting"} & \text{if } \bar{L}_{\text{anchor}}/255 < 0.30 \\ \text{"bright scene, high-key lighting"} & \text{if } \bar{L}_{\text{anchor}}/255 > 0.70 \\ \text{"balanced lighting"} & \text{otherwise} \end{cases} \tag{20}$$
-
-The thresholds $0.30$ and $0.70$ partition the normalized brightness scale into three perceptually meaningful lighting registers: the lower third corresponds to night/shadow scenes, the upper third to daylight/studio-lit scenes, and the middle band to general indoor/overcast lighting. These brightness-conditioned suffix tokens are appended to every subsequent panel's positive prompt, providing a lightweight lighting-consistency nudge at the text-conditioning level, complementary to $\mathcal{T}_3$'s latent-level statistical alignment.
+For visual state changes (e.g. wearing armor, disguised), the `StateAwareAnchorCache` keys anchors on `(character_name, visual_state)`. When a visual transition panel is detected, T2 runs with a lower blend factor $\beta_{\text{transition}} = 0.05$ to allow the prompt to establish the new appearance before caching it as the anchor for the new state.
 
 ##### 3.2.3.4 Steps 2.5–2.6: Optional Advance Mitigations (M3 and M1)
 
-If an `AdvancedAttentionManager` instance is provided (i.e., optional mitigation modules are enabled), Phase 2 uses the anchor image to pre-compute two additional analysis artifacts before any subsequent panel begins generating:
+If an `AdvancedAttentionManager` is active, it pre-computes character-specific foreground saliency masks (M3 via SAM) and structural detail fingerprints (M1 via Canny edge maps of the character crops) at Phase 2 step-zero. These are cached and used to modulate attention blending spatially in subsequent target panels, preventing background elements from bleeding across panels.
 
-**Step 2.5 — M3: Foreground Saliency Mask.** `advanced_attention.compute_anchor_saliency(panel_image)` runs a SAM (Segment Anything Model) or GrabCut foreground segmentation on the anchor PIL image, producing a binary mask $M_{\text{fg}} \in \{0,1\}^{H \times W}$ that identifies character-occupied pixels. When the $\mathcal{T}_2$ attention blend is subsequently applied in subsequent panels, the blend weight $\beta = 0.15$ can be modulated by $M_{\text{fg}}$ so that anchor attention outputs are applied preferentially to character-region spatial tokens rather than background tokens, preventing anchor background elements from bleeding into a new panel's independently specified environment.
+##### 3.2.3.5 Progressive Sequential Dependencies
 
-**Step 2.6 — M1: Structural Detail Fingerprint.** `advanced_attention.compute_anchor_detail(anchor_path)` runs Canny edge detection on the saved anchor image and stores the resulting edge map as a structural fingerprint. When M1 (detail injection) is enabled, this edge map is used in subsequent panels as a ControlNet-style structural guide that preserves the anchor character's dominant silhouette geometry across panels, even under large pose changes.
-
-Both steps are wrapped in `try/except` blocks and logged at `DEBUG` level on failure — they are pre-computations for optional mitigations and their failure must never block the main generation pipeline. Their execution here, in Phase 2 before any target panel begins generating, is an optimization: computing the saliency mask and edge fingerprint once on the anchor amortizes that cost across all $N-1$ subsequent panels, rather than recomputing it at each panel's generation step.
-
-##### 3.2.3.5 Sequential Ordering Guarantee
-
-Phase 2 is the **only phase in the pipeline with a hard sequential dependency that prevents parallelism**. Algorithm 2 (Master Orchestration Loop) reflects this: the anchor generation (`anchor_result ← generate_panel_with_retry(panel_id=1)`) completes and returns before the parallel loop over panels $2 \ldots N$ begins. This is not a design limitation but a mathematical necessity: $\mathcal{T}_2$ requires `Oanchor` (the cached anchor attention outputs) and $\mathcal{T}_3$ requires `(μanchor, σanchor)` (the anchor latent statistics) as inputs for every target panel's denoising step. These quantities do not exist until the anchor's full reverse-diffusion pass has completed. Any attempt to generate target panels concurrently with the anchor would require placeholders for these values, which would degrade consistency quality to approximately the unconstrained SDXL baseline.
+In the multi-anchor system, sequential dependencies are localized to the first-appearance panel of each character. Instead of blocking the entire sequence on panel 1, generation is only sequential up to the first-appearance panel of each character $P_{\text{anchor}}(C_j)$. Once a character's anchor is generated, segmented, and its cross-attention tensors offloaded to CPU pinned memory, any target panels containing that character can proceed in parallel.
 
 #### 3.2.4 Phase 3–4 — Unified Panel Generation Loop
 
-Phase 3–4 is the core generative pass. For each panel $i \in \{1, \ldots, N\}$, the `PanelEngine` executes a deterministic 7-step pipeline: (1) assemble the positive prompt, (2) compute `CharComCompositor` weights, (3) select and configure the generation backend, (4) assemble the negative prompt and append consistency priors, (5) generate the image at the configured resolution and random seed, (6) trigger Phase 2 anchoring if $i = 1$, and (7) record the panel to the blackboard. All seven steps run inside a per-panel mutex (`threading.Lock`) so that concurrent Phase B agents from Phase 1 cannot corrupt the shared `StorySectionMemory` state during generation.
+Phase 3–4 is the core generative pass. For each panel $i \in \{1, \ldots, N\}$, the `PanelEngine` executes a deterministic 7-step pipeline: (1) assemble the positive prompt, (2) compute `CharComCompositor` weights, (3) select and configure the generation backend, (4) assemble the negative prompt and append consistency priors, (5) generate the image at the configured resolution and random seed, (6) trigger Phase 2 anchoring for newly introduced characters, and (7) record the panel to the blackboard. All seven steps run inside a per-panel mutex (`threading.Lock`) so that concurrent Phase B agents from Phase 1 cannot corrupt the shared `StorySectionMemory` state during generation.
 
 ##### 3.2.4.1 Model Backend: SDXL Configuration
 
@@ -1473,7 +1448,7 @@ To rigorously evaluate the stability of MDCP under varying intervention strength
 | $\gamma = 0.15$ | $0.765$ | $0.75$ | Contrast clamping; dramatic lighting prompts are fully suppressed. |
 | $\gamma = 0.25$ | $0.720$ | $0.60$ | Latent saturation blow-up; colors become burned/deep-fried. |
 
-The grid-search confirms that MDCP is highly robust within a $\pm 30\%$ envelope of the default coefficients. For instance, varying $\alpha \in [0.02, 0.04]$ keeps LPIPS stable within $[0.250, 0.258]$. However, the boundaries of stability are sharply defined: exceeding $\beta = 0.25$ triggers prompt-override (the model ignores new poses to clone the anchor), and exceeding $\gamma = 0.15$ artificially compresses the dynamic range, preventing the generation of dark/silhouette scenes. The default analytical coefficients ($\alpha = 0.03, \beta = 0.15, \gamma = 0.08$) sit comfortably at the optimal inflection points of these trade-off curves, providing a reliable operating envelope across diverse visual domains without requiring per-run tuning.
+The grid-search confirms that MDCP is highly robust within a $\pm 30\%$ envelope of the default coefficients. These sensitivity results are from preliminary validation runs; full experimental details are provided in the Experiments section. For instance, varying $\alpha \in [0.02, 0.04]$ keeps LPIPS stable within $[0.250, 0.258]$. However, the boundaries of stability are sharply defined: exceeding $\beta = 0.25$ triggers prompt-override (the model ignores new poses to clone the anchor), and exceeding $\gamma = 0.15$ artificially compresses the dynamic range, preventing the generation of dark/silhouette scenes. The default analytical coefficients ($\alpha = 0.03, \beta = 0.15, \gamma = 0.08$) sit comfortably at the optimal inflection points of these trade-off curves, providing a reliable operating envelope across diverse visual domains without requiring per-run tuning.
 
 #### 4.4.3 Step 3: Comparative Baseline Evaluation
 
