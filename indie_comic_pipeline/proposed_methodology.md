@@ -851,6 +851,107 @@ Output: assembled pages (CBZ/PDF/HTML), feedback telemetry log
 
 ---
 
+### Algorithm 3: Multi-Agent Blackboard Synchronization (Phase 1)
+
+```
+Input:  Parsed story_config with N panels, Character list C
+Output: Populated StorySectionMemory Blackboard (B)
+
+1.  Initialize B with N empty panel slots
+2.  /* Stage A: Sequential Execution */
+3.  StoryDirector.register_characters(C, B)
+4.  for each panel i in 1..N do
+5.      action_intensity[i] <- ActionDirector.evaluate(story_config[i])
+6.      B[i].action <- {verb, mechanics, impact, reaction, timing}
+7.  end for
+
+8.  /* Stage B: Concurrent Execution */
+9.  parallel pool (workers=4) do:
+10.     Thread 1: B.dialogue  <- DialogueWriter.generate(story_config)
+11.     Thread 2: B.pose      <- PoseDirector.map_postures(story_config, action_intensity)
+12.     Thread 3: B.emotion   <- EmotionDirector.assign_beats(story_config)
+13.     Thread 4: B.camera    <- CameraDirector.frame_shots(story_config, action_intensity)
+14. end pool
+
+15. /* Post-Sync Verification */
+16. B.validate_causality_constraints()
+17. return B
+```
+
+---
+
+### Algorithm 4: Reference-Free Identity Signature Extraction (Phase 2)
+
+```
+Input:  Anchor panel image I_anchor, Anchor VAE latent z_anchor
+Output: Signature S_anchor = {h_color, rho_edge, G_style, S_aes}, Channel stats (mu_a, sigma_a)
+
+1.  /* Descriptor 1: HSV Color Histogram */
+2.  I_hsv <- RGB2HSV(I_anchor)
+3.  h_color <- calcHist(I_hsv, channels=[H, S], bins=[8, 8])
+
+4.  /* Descriptor 2: Canny Edge Density */
+5.  I_gray <- RGB2GRAY(I_anchor)
+6.  rho_edge <- count_pixels(Canny(I_gray, 50, 150) > 0) / (H * W)
+
+7.  /* Descriptor 3: Style Gram Matrix */
+8.  F <- stack(R, G, B, Sobel_x(I_gray), Sobel_y(I_gray))
+9.  G_style <- (F^T * F) / (H * W)
+
+10. /* Descriptor 4: Aesthetic Baseline */
+11. S_sharp    <- min(1, Var(Laplacian(I_gray)) / 500)
+12. S_contrast <- min(1, Std(I_gray) / 75)
+13. S_color    <- min(1, Colorfulness(I_anchor) / 80)
+14. S_aes      <- 0.4*S_sharp + 0.3*S_contrast + 0.3*S_color
+
+15. /* Anchor Channel Statistics */
+16. for c in 1..4 do
+17.     mu_a[c]    <- Mean(z_anchor[c])
+18.     sigma_a[c] <- Std(z_anchor[c])
+19. end for
+
+20. return {h_color, rho_edge, G_style, S_aes}, (mu_a, sigma_a)
+```
+
+---
+
+### Algorithm 5: Quality Validation and Adaptive Regeneration Gate (Phase 6)
+
+```
+Input:  Target panel image I_curr, Signature S_anchor, max_retries = 2
+Output: Approved image I_curr, or throws QualityGateFailure
+
+1.  retries <- 0
+2.  while retries <= max_retries do
+3.      /* Evaluate Consistency vs Anchor */
+4.      sim_color <- Pearson(h_color_anchor, h_color_curr)
+5.      sim_edge  <- max(0, 1 - 5 * abs(rho_edge_anchor - rho_edge_curr))
+6.      sim_style <- max(0, 1 - 10 * MSE(G_style_anchor, G_style_curr))
+7.      sim_aes   <- compute_aesthetic_score(I_curr)
+        
+8.      S_total <- 0.25*sim_color + 0.15*sim_edge + 0.20*sim_style + 0.40*sim_aes
+        
+9.      if S_total >= threshold_tau then
+10.         return I_curr
+11.     end if
+        
+12.     /* Adaptive Regeneration */
+13.     retries <- retries + 1
+14.     if failure_is_aesthetic(sim_aes) then
+15.         prompt_pos <- prompt_pos + ", sharp focus, detailed line art"
+16.         prompt_neg <- prompt_neg + ", blurry, low quality"
+17.     else if failure_is_consistency(sim_color, sim_style) then
+18.         CFG_scale <- min(CFG_scale + 0.5, 12.0)
+19.     end if
+        
+20.     I_curr <- GeneratePanel(prompt_pos, prompt_neg, CFG_scale)
+21. end while
+
+22. raise QualityGateFailure
+```
+
+---
+
 ### Algorithm 6: Evaluation Suite and Performance Benchmarking
 
 ```
