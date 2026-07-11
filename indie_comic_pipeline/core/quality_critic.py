@@ -14,6 +14,7 @@ Dimensions:
 
 import logging
 from typing import Dict, Any, Optional, List, TYPE_CHECKING
+from bert_score import score as bert_score
 
 if TYPE_CHECKING:
     from core.memory import StorySectionMemory
@@ -69,14 +70,21 @@ class QualityCritic:
         Evaluate a generated panel across all 5 dimensions.
 
         Args:
-            panel_result: Result dict from PanelEngine.generate_panel()
-            memory: Story Section Memory blackboard
+            panel_result: Result dict from PanelEngine.generate_panel().
+                          May include a ``panel_type`` key (str) with one of:
+                          ``"character"`` (default), ``"scenery"`` (no characters
+                          present), or ``"no_character"``.  When ``panel_type``
+                          indicates a character-free panel, ``visual_consistency``
+                          is excluded from the composite score and the remaining
+                          weights are re-normalised to 1.0 (§6.10 of methodology).
+            memory: Story Section Memory blackboard.
 
         Returns:
             Evaluation dict with dimension scores, composite score,
-            pass/fail verdict, and adjustment recommendations
+            pass/fail verdict, panel_type, and adjustment recommendations.
         """
-        panel_id = panel_result.get("panel_id", 0)
+        panel_id   = panel_result.get("panel_id", 0)
+        panel_type = panel_result.get("panel_type", "character")
 
         scores = {
             "visual_consistency": self._eval_visual_consistency(panel_result, memory),
@@ -102,6 +110,21 @@ class QualityCritic:
             for k in self.weights:
                 current_weights[k] = self.weights[k] * scale
 
+        # ── Panel-type aware exclusion (§6.10) ───────────────────────────────
+        # For pure scenery / no-character panels, visual_consistency is not a
+        # meaningful metric (there is no anchor character to compare against).
+        # Exclude it and re-normalise so the gate remains fair.
+        _scenery_panel = panel_type in ("scenery", "no_character")
+        if _scenery_panel and "visual_consistency" in current_weights:
+            del current_weights["visual_consistency"]
+            total_w = sum(current_weights.values())
+            if total_w > 0:
+                current_weights = {k: v / total_w for k, v in current_weights.items()}
+            log.debug(
+                f"  Critic panel {panel_id}: panel_type='{panel_type}' — "
+                "visual_consistency excluded from composite score"
+            )
+
         # Compute weighted composite score; missing dimensions contribute zero
         composite = sum(
             scores.get(dim, 0.0) * current_weights.get(dim, 0.0)
@@ -123,6 +146,7 @@ class QualityCritic:
 
         evaluation = {
             "panel_id": panel_id,
+            "panel_type": panel_type,
             "scores": scores,
             "composite_score": round(composite, 4),
             "verdict": verdict,
@@ -130,7 +154,7 @@ class QualityCritic:
         }
 
         log_msg = (
-            f"  Critic evaluation panel {panel_id}: "
+            f"  Critic evaluation panel {panel_id} [{panel_type}]: "
             f"composite={composite:.3f} [{verdict}] "
             f"(vis={scores['visual_consistency']:.2f}, "
             f"emo={scores['emotional_engagement']:.2f}, "
@@ -253,7 +277,7 @@ class QualityCritic:
                     semantic = self._bert_cache[cache_key]
                 else:
                     try:
-                        from bert_score import score as bert_score
+                        
                         _, _, F1 = bert_score([current_prompt], [prev_prompt], lang="en", verbose=False, idf=False, batch_size=1)
                         semantic = max(0.0, min(1.0, float(F1.item())))
                         self._bert_cache[cache_key] = semantic

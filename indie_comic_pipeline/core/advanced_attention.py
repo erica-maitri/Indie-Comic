@@ -1039,14 +1039,685 @@ class LocalizedDetailInjector:
 
 # =============================================================================
 # ███████████████████████████████████████████████████████████████████████████
-#  UNIFIED MANAGER  (updated to wire all 5 mitigations)
+#  MULTI-CHARACTER EXTENSION  (Strategy A — per-character anchor caching)
+# ███████████████████████████████████████████████████████████████████████████
+# =============================================================================
+
+
+class MultiAnchorCache:
+    """
+    Character-Aware Multi-Anchor Caching (Strategy A).
+
+    Instead of maintaining a single anchor for the whole comic sequence,
+    this class maintains one ``SharedAttentionCache`` entry and one
+    ``SpatiotemporalConsistencyEnforcer`` entry *per distinct character*.
+    Entries are keyed by character name (str) and are created lazily the
+    first time a character's anchor panel is generated.
+
+    Typical lifecycle
+    -----------------
+    Phase 2 (anchor generation loop):
+        mac.register_anchor(char_name, attn_cache_dict, anchor_mean, anchor_std)
+
+    Phase 3-4 (generation loop, per panel):
+        anchor = mac.select_anchor(chars_in_panel)
+        if anchor is None:
+            # new character — disable T2 for this panel
+            ...
+        else:
+            attn_cache._cached_outputs = anchor["attn"]      # swap in per-char K/V
+            spatio_temp._anchor_mean   = anchor["mean"]
+            spatio_temp._anchor_std    = anchor["std"]
+
+    Memory overhead
+    ---------------
+    Each entry stores the same CPU-pinned attention tensors as the original
+    single-anchor design (~20-30 MB × 4 layers) plus a scalar mean/std pair.
+    For ≤ 5 characters the total is < 150 MB — O(1) with respect to N.
+    """
+
+    def __init__(self):
+        # {character_name: {"attn": cached_outputs_dict, "mean": Tensor, "std": Tensor}}
+        self._anchors: Dict[str, Dict[str, Any]] = {}
+
+    # ── Public API ──────────────────────────────────────────────────────────
+
+    def register_anchor(
+        self,
+        character_name: str,
+        attn_outputs: Dict[Any, Any],
+        anchor_mean: Any,
+        anchor_std: Any,
+    ):
+        """
+        Store the per-character anchor entry.
+
+        Args:
+            character_name: Canonical name string (as registered by StoryDirector).
+            attn_outputs:   Snapshot of ``SharedAttentionCache._cached_outputs``
+                            obtained immediately after anchor panel generation
+                            with T2 in *capture* mode.
+            anchor_mean:    Channel-wise latent mean tensor (CPU, float32).
+            anchor_std:     Channel-wise latent std  tensor (CPU, float32).
+        """
+        self._anchors[character_name] = {
+            "attn": {k: v for k, v in attn_outputs.items()},  # shallow copy
+            "mean": anchor_mean,
+            "std":  anchor_std,
+        }
+        log.info(f"  [MultiAnchor] Anchor registered for character: '{character_name}'")
+
+    def has_anchor(self, character_name: str) -> bool:
+        """Return True if an anchor has been cached for the given character."""
+        return character_name in self._anchors
+
+    def get_anchor(self, character_name: str) -> Optional[Dict[str, Any]]:
+        """Return the anchor dict for *character_name*, or None if absent."""
+        return self._anchors.get(character_name)
+
+    def select_anchor(
+        self,
+        characters_in_panel: List[str],
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Choose the most appropriate single anchor for a panel.
+
+        Decision rules (Strategy A, §3.1 of methodology):
+        - If *all* characters in the panel are known and there is exactly one,
+          return that character's anchor directly (single-character case).
+        - If *all* characters are known and there are multiple, return the
+          *first-introduced* known anchor (caller is expected to use M2
+          regional masking per character via ``select_anchor_per_region``).
+        - If *any* character is new (not in cache), return None so the caller
+          can disable T2 for this panel and cache the result as a new anchor.
+
+        Returns:
+            The anchor dict  ``{"attn": …, "mean": …, "std": …}``  or  None.
+        """
+        known   = [c for c in characters_in_panel if self.has_anchor(c)]
+        unknown = [c for c in characters_in_panel if not self.has_anchor(c)]
+
+        if unknown:
+            log.info(
+                f"  [MultiAnchor] New character(s) detected: {unknown}. "
+                "Returning None — T2 should be disabled for this panel."
+            )
+            return None
+
+        if not known:
+            return None
+
+        # Single known character — standard path
+        if len(known) == 1:
+            return self._anchors[known[0]]
+
+        # Multiple known characters — return the first-registered anchor;
+        # caller must apply per-region T2 via RegionalAttentionMask.
+        log.info(
+            f"  [MultiAnchor] Multi-character panel: {known}. "
+            "Use select_anchor_per_region() with M2 regional masks."
+        )
+        return self._anchors[known[0]]
+
+    def select_anchor_per_region(
+        self,
+        characters_in_panel: List[str],
+    ) -> List[Tuple[str, Optional[Dict[str, Any]]]]:
+        """
+        Return a list of (character_name, anchor_or_None) pairs for all
+        characters in the panel, in the order supplied.
+
+        Intended for multi-character panels where the caller applies a
+        separate M2 spatial mask per character.
+        """
+        return [
+            (c, self._anchors.get(c))
+            for c in characters_in_panel
+        ]
+
+    def known_characters(self) -> List[str]:
+        """Return the list of characters whose anchors are cached."""
+        return list(self._anchors.keys())
+
+    def clear(self):
+        """Remove all cached anchors (e.g. between comic sequences)."""
+        self._anchors.clear()
+        log.info("  [MultiAnchor] All character anchors cleared")
+
+
+# =============================================================================
+# ███████████████████████████████████████████████████████████████████████████
+#  STATE-AWARE ANCHOR EXTENSION  (Edge Case 1 — intentional appearance drift)
+# ███████████████████████████████████████████████████████████████████████████
+# =============================================================================
+
+
+class StateAwareAnchorCache:
+    """
+    Per-character, per-visual-state anchor caching (§6.1 of methodology).
+
+    Comics deliberately change a character's appearance: a hero dons armour,
+    a villain removes a disguise, a character ages.  Applying T2 from the
+    original "casual" anchor fights the prompt and produces a hybrid.
+
+    This class extends the ``MultiAnchorCache`` concept by keying anchors on
+    ``(character_name, visual_state)`` tuples instead of just name.  When a
+    transition panel is detected:
+
+    1. T2 is run with reduced β (``BETA_TRANSITION``) to let the prompt win.
+    2. The generated panel is cached as the anchor for the new state.
+    3. On subsequent panels with the same state, the per-state anchor is used.
+    4. If the state reverts, the original anchor is restored automatically.
+
+    Visual states are plain strings supplied by Phase 1's ``CharacterState``
+    (e.g. ``"casual"``, ``"battle_armour"``, ``"disguised"``, ``"injured"``).
+    The canonical first-appearance state is stored as ``DEFAULT_STATE``.
+    """
+
+    DEFAULT_STATE: str = "default"
+    #: β used on the *first* panel of a new visual state (transition panel).
+    BETA_TRANSITION: float = 0.05
+
+    def __init__(self):
+        # {(character_name, state): {"attn": …, "mean": …, "std": …}}
+        self._anchors: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        # {character_name: current_state_str}
+        self._current_state: Dict[str, str] = {}
+
+    # ── Public API ──────────────────────────────────────────────────────────
+
+    def register_anchor(
+        self,
+        character_name: str,
+        visual_state: str,
+        attn_outputs: Dict[Any, Any],
+        anchor_mean: Any,
+        anchor_std: Any,
+    ):
+        """
+        Cache a (character, state) anchor entry.
+
+        Call this immediately after generating the first panel in a new state
+        with ``blend_ratio = BETA_TRANSITION``.
+
+        Args:
+            character_name: Canonical character name string.
+            visual_state:   State identifier (e.g. ``"battle_armour"``).
+            attn_outputs:   Snapshot of ``SharedAttentionCache._cached_outputs``.
+            anchor_mean:    Channel-wise latent mean (CPU float32).
+            anchor_std:     Channel-wise latent std  (CPU float32).
+        """
+        key = (character_name, visual_state)
+        self._anchors[key] = {
+            "attn": {k: v for k, v in attn_outputs.items()},
+            "mean": anchor_mean,
+            "std":  anchor_std,
+        }
+        self._current_state[character_name] = visual_state
+        log.info(
+            f"  [StateAnchor] Anchor registered: "
+            f"character='{character_name}', state='{visual_state}'"
+        )
+
+    def get_anchor(
+        self,
+        character_name: str,
+        visual_state: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Return the anchor for ``(character_name, visual_state)`` or None.
+
+        Falls back to the ``DEFAULT_STATE`` anchor if the requested state is
+        not yet cached (e.g. the first transition panel has not been generated).
+        """
+        key = (character_name, visual_state)
+        if key in self._anchors:
+            return self._anchors[key]
+        default_key = (character_name, self.DEFAULT_STATE)
+        if default_key in self._anchors:
+            log.debug(
+                f"  [StateAnchor] State '{visual_state}' not cached; "
+                f"falling back to '{self.DEFAULT_STATE}' for '{character_name}'"
+            )
+            return self._anchors[default_key]
+        return None
+
+    def is_transition(
+        self,
+        character_name: str,
+        visual_state: str,
+    ) -> bool:
+        """
+        Return True if the visual state has changed since the last registered
+        anchor for this character, indicating a transition panel.
+        """
+        prev = self._current_state.get(character_name)
+        return prev is not None and prev != visual_state
+
+    def has_anchor(self, character_name: str, visual_state: str) -> bool:
+        """Return True if an anchor exists for the (character, state) pair."""
+        return (character_name, visual_state) in self._anchors
+
+    def known_states(self, character_name: str) -> List[str]:
+        """Return the list of cached visual states for a character."""
+        return [s for (c, s) in self._anchors if c == character_name]
+
+    def clear(self):
+        """Remove all cached state anchors."""
+        self._anchors.clear()
+        self._current_state.clear()
+        log.info("  [StateAnchor] All state anchors cleared")
+
+
+# =============================================================================
+# ███████████████████████████████████████████████████████████████████████████
+#  STYLE-CHANGE HANDLER  (Edge Case 5 — mid-story artistic style resets)
+# ███████████████████████████████████████████████████████████████████████████
+# =============================================================================
+
+
+class StyleChangeHandler:
+    """
+    Mid-story artistic style reset scheduling (§6.5 of methodology).
+
+    When the user requests a deliberate style change (e.g. watercolour →
+    ink line-art, cinematic 3D → anime), T1 (latent smoothing) and T3
+    (statistics alignment) actively fight the shift, producing a muted
+    hybrid rather than a clean transition.
+
+    This handler detects style token changes from Phase 1's ``STYLE_PRESETS``
+    field and — for the *transition panel only* — disables T1 and T3 and
+    reduces T2 to a near-zero β.  After the transition, it updates the new
+    style as the current reference.
+
+    After a style-change panel the caller should also replace the character
+    anchor with the new panel's cached outputs, so subsequent panels adopt
+    the new style's attention profile.
+
+    Parameter defaults
+    ------------------
+    ``BETA_STYLE_RESET``  : β applied on the transition panel (≈ 0.02).
+    ``T1_DISABLED_RANGE`` : heat-diffusion active window set to empty.
+    ``T3_DISABLED_RANGE`` : spatiotemporal window set to empty.
+    """
+
+    BETA_STYLE_RESET: float = 0.02
+
+    def __init__(self):
+        self._current_style: Optional[str] = None
+
+    # ── Public API ──────────────────────────────────────────────────────────
+
+    def detect(self, style_token: str) -> bool:
+        """
+        Notify the handler of the current panel's style token.
+
+        Returns True if a style change has occurred.  Updates tracking.
+
+        Args:
+            style_token: Style identifier string from Phase 1 STYLE_PRESETS
+                         (e.g. ``"watercolour"``, ``"ink_line_art"``).
+        """
+        prev = self._current_style
+        self._current_style = style_token
+        changed = prev is not None and prev != style_token
+        if changed:
+            log.info(
+                f"  [StyleChange] Style change detected: "
+                f"'{prev}' → '{style_token}'"
+            )
+        return changed
+
+    def configure(
+        self,
+        attn_cache:  "SharedAttentionCache",
+        heat_prior:  "HeatDiffusionPrior",
+        spatio_temp: "SpatiotemporalConsistencyEnforcer",
+        style_token: str,
+        beta_base:   float = 0.15,
+    ) -> Dict[str, Any]:
+        """
+        Apply the style-reset scheduling to the live MDCP objects for the
+        current panel.
+
+        No-op when no style change is detected.  On a transition panel:
+        - Sets ``attn_cache.blend_ratio = BETA_STYLE_RESET`` (nearly zero T2).
+        - Collapses the heat-diffusion active window to an empty range so T1
+          becomes a no-op (sets ``heat_prior.start_ratio = heat_prior.end_ratio``).
+        - Collapses the spatiotemporal window to an empty range so T3 becomes
+          a no-op (sets ``spatio_temp.active_low = spatio_temp.active_high``).
+
+        After calling this, the generation loop should treat the resulting
+        panel as the new anchor for the remainder of the sequence.
+
+        Args:
+            attn_cache:  Live ``SharedAttentionCache`` instance.
+            heat_prior:  Live ``HeatDiffusionPrior`` instance.
+            spatio_temp: Live ``SpatiotemporalConsistencyEnforcer`` instance.
+            style_token: Current panel's style identifier.
+            beta_base:   Nominal β to restore on non-transition panels.
+
+        Returns:
+            Status dict: ``{"style_changed": bool, "beta_used": float,
+            "t1_disabled": bool, "t3_disabled": bool}``.
+        """
+        changed = self.detect(style_token)
+
+        if not changed:
+            # Restore base blend ratio (may have been suppressed last panel)
+            attn_cache.blend_ratio = beta_base
+            return {
+                "style_changed": False,
+                "beta_used": beta_base,
+                "t1_disabled": False,
+                "t3_disabled": False,
+            }
+
+        # ── Transition panel: allow the prompt to dominate entirely ──────
+        attn_cache.blend_ratio = self.BETA_STYLE_RESET
+
+        # Collapse T1 active window → heat_prior becomes a no-op this panel
+        _orig_start = heat_prior.start_ratio
+        _orig_end   = heat_prior.end_ratio
+        heat_prior.start_ratio = 0.0
+        heat_prior.end_ratio   = 0.0
+
+        # Collapse T3 active window → spatio_temp becomes a no-op this panel
+        _orig_low  = spatio_temp.active_low
+        _orig_high = spatio_temp.active_high
+        spatio_temp.active_low  = 0.0
+        spatio_temp.active_high = 0.0
+
+        log.info(
+            f"  [StyleChange] Style reset applied "
+            f"(β={self.BETA_STYLE_RESET}, T1 disabled, T3 disabled)"
+        )
+
+        # Store originals so the manager can restore them after the panel
+        self._saved_t1 = (_orig_start, _orig_end)
+        self._saved_t3 = (_orig_low, _orig_high)
+
+        return {
+            "style_changed": True,
+            "beta_used": self.BETA_STYLE_RESET,
+            "t1_disabled": True,
+            "t3_disabled": True,
+        }
+
+    def restore_after_transition(
+        self,
+        heat_prior:  "HeatDiffusionPrior",
+        spatio_temp: "SpatiotemporalConsistencyEnforcer",
+    ):
+        """
+        Restore T1 and T3 windows to their pre-transition values.
+
+        Call this *after* the transition panel's generation completes so the
+        subsequent panels resume normal MDCP operation.  Safe to call even if
+        no style change was in progress (no-op in that case).
+        """
+        if hasattr(self, "_saved_t1"):
+            heat_prior.start_ratio, heat_prior.end_ratio = self._saved_t1
+            del self._saved_t1
+        if hasattr(self, "_saved_t3"):
+            spatio_temp.active_low, spatio_temp.active_high = self._saved_t3
+            del self._saved_t3
+
+    def current_style(self) -> Optional[str]:
+        """Return the style token of the most recently processed panel."""
+        return self._current_style
+
+    def reset(self):
+        """Reset style tracking state."""
+        self._current_style = None
+        if hasattr(self, "_saved_t1"):
+            del self._saved_t1
+        if hasattr(self, "_saved_t3"):
+            del self._saved_t3
+        log.debug("  [StyleChange] Style tracking reset")
+
+
+# =============================================================================
+# ███████████████████████████████████████████████████████████████████████████
+#  PLACE-CHANGE EXTENSION  (Strategies A/B/C — environment-aware scheduling)
+# ███████████████████████████████████████████████████████████████████████████
+# =============================================================================
+
+
+class PlaceChangeHandler:
+    """
+    Environment-aware parameter scheduling for place changes (§4 of methodology).
+
+    When the narrative moves to a new location, the raw MDCP operator chain
+    creates two artefacts:
+
+    * **Background contamination (T2):** K/V outputs from the anchor panel
+      carry the old environment's textures and colours into the new scene.
+    * **Lighting clamp (T3):** Channel-stat alignment pulls the new
+      environment's palette toward the anchor's global luminance.
+
+    This class implements all three mitigation strategies and exposes a single
+    ``configure()`` call that the generation loop invokes once per panel
+    *before* ``AdvancedAttentionManager.on_panel_start()``.
+
+    Strategy A — Foreground-Only Blending (Recommended, requires M3/M2)
+    -------------------------------------------------------------------
+    When a place change is detected and M3 is available, restrict the T2
+    blend to the character foreground mask only.  The background pixels
+    receive ``O_curr`` directly, so the new environment generates freely.
+    T3 strength is halved (``gamma_reduced = 0.5 * gamma_base``).
+
+    Strategy B — Location-Specific Anchors (scene_cache dict)
+    ----------------------------------------------------------
+    Treat each distinct location as its own anchor.  Populated externally
+    by the caller (same pattern as ``MultiAnchorCache``).  When the current
+    panel's location has a cached anchor, that anchor is swapped into the
+    attention cache before generation.
+
+    Strategy C — Adaptive Parameter Scheduling (no extra modules)
+    --------------------------------------------------------------
+    On the first panel of a new location, lower ``blend_ratio`` to
+    ``beta_reduced`` (default 0.05) and L3 ``strength`` to
+    ``gamma_reduced`` (default 0.03).  On subsequent panels in the *same*
+    location, restore the base values.
+
+    VRAM overhead: zero — all decisions are made before the denoising loop.
+    Latency overhead: one ``environment`` string comparison per panel.
+    """
+
+    #: Default reduced β for Strategy C (first panel of a new location).
+    BETA_REDUCED:  float = 0.05
+    #: Default reduced γ for Strategy C.
+    GAMMA_REDUCED: float = 0.03
+
+    def __init__(self,
+                 beta_base:  float = 0.15,
+                 gamma_base: float = 0.08):
+        """
+        Args:
+            beta_base:  Nominal ``SharedAttentionCache.blend_ratio``.
+            gamma_base: Nominal ``SpatiotemporalConsistencyEnforcer.strength``.
+        """
+        self.beta_base  = beta_base
+        self.gamma_base = gamma_base
+
+        # Location-specific anchor cache (Strategy B).
+        # {location_id: {"attn": …, "mean": …, "std": …}}
+        self._scene_cache: Dict[str, Dict[str, Any]] = {}
+
+        # Tracking
+        self._prev_location:    Optional[str] = None
+        self._current_location: Optional[str] = None
+
+    # ── Public API ──────────────────────────────────────────────────────────
+
+    def detect(self, location: str) -> bool:
+        """
+        Notify the handler of the current panel's location string.
+
+        Returns True if a place change has just occurred (i.e. the location
+        differs from the previous panel).  Also updates internal state.
+
+        Args:
+            location: Environment identifier string extracted from the panel
+                      prompt / Phase 1 storyboard (e.g. ``"dungeon"``,
+                      ``"sunny_meadow"``).
+        """
+        self._prev_location    = self._current_location
+        self._current_location = location
+        changed = (
+            self._prev_location is not None
+            and self._prev_location != self._current_location
+        )
+        if changed:
+            log.info(
+                f"  [PlaceChange] Location change detected: "
+                f"'{self._prev_location}' → '{self._current_location}'"
+            )
+        return changed
+
+    def configure(
+        self,
+        attn_cache:  "SharedAttentionCache",
+        spatio_temp: "SpatiotemporalConsistencyEnforcer",
+        location: str,
+        saliency_mask_tensor: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """
+        Apply the appropriate place-change strategy to the live MDCP objects.
+
+        Call *before* ``on_panel_start()`` on every non-anchor panel.  The
+        method is a no-op when no place change is detected, so it is safe to
+        call unconditionally.
+
+        Args:
+            attn_cache:           The live ``SharedAttentionCache`` instance.
+            spatio_temp:          The live ``SpatiotemporalConsistencyEnforcer``.
+            location:             Current panel's environment string.
+            saliency_mask_tensor: Optional foreground mask tensor
+                                  ``(1, 1, H, W)`` in [0, 1] from M3.
+                                  When provided, Strategy A is used;
+                                  otherwise Strategy C is the fallback.
+
+        Returns:
+            A status dict with keys:
+              ``strategy``    — "A", "B", "C", or "none"
+              ``beta_used``   — the blend_ratio that was applied
+              ``gamma_used``  — the spatio_temp.strength that was applied
+              ``place_changed`` — bool
+        """
+        changed = self.detect(location)
+
+        if not changed:
+            # Restore base values in case a previous panel used reduced params
+            attn_cache.blend_ratio   = self.beta_base
+            spatio_temp.strength     = self.gamma_base
+            return {"strategy": "none", "beta_used": self.beta_base,
+                    "gamma_used": self.gamma_base, "place_changed": False}
+
+        # ── Strategy B: location-specific anchor is cached ───────────────
+        if location in self._scene_cache:
+            scene_anchor = self._scene_cache[location]
+            attn_cache._cached_outputs = scene_anchor["attn"]
+            if scene_anchor.get("mean") is not None:
+                spatio_temp._anchor_mean = scene_anchor["mean"]
+            if scene_anchor.get("std") is not None:
+                spatio_temp._anchor_std  = scene_anchor["std"]
+            # Restore base blend params — the scene anchor is correct context
+            attn_cache.blend_ratio = self.beta_base
+            spatio_temp.strength   = self.gamma_base
+            log.info(
+                f"  [PlaceChange] Strategy B: loaded scene anchor "
+                f"for location '{location}'"
+            )
+            return {"strategy": "B", "beta_used": self.beta_base,
+                    "gamma_used": self.gamma_base, "place_changed": True}
+
+        # ── Strategy A: foreground-only blending via M3 mask ─────────────
+        if saliency_mask_tensor is not None:
+            attn_cache.set_region_mask(saliency_mask_tensor)
+            attn_cache.blend_ratio = self.beta_base      # full β inside mask
+            spatio_temp.strength   = self.gamma_base * 0.5  # half γ globally
+            log.info(
+                "  [PlaceChange] Strategy A: foreground-only T2 blend applied "
+                f"(β={self.beta_base}, γ'={spatio_temp.strength:.4f})"
+            )
+            return {"strategy": "A",
+                    "beta_used": self.beta_base,
+                    "gamma_used": spatio_temp.strength,
+                    "place_changed": True}
+
+        # ── Strategy C: adaptive parameter scheduling (fallback) ──────────
+        attn_cache.blend_ratio = self.BETA_REDUCED
+        spatio_temp.strength   = self.GAMMA_REDUCED
+        log.info(
+            f"  [PlaceChange] Strategy C: reduced params applied "
+            f"(β={self.BETA_REDUCED}, γ={self.GAMMA_REDUCED})"
+        )
+        return {"strategy": "C",
+                "beta_used": self.BETA_REDUCED,
+                "gamma_used": self.GAMMA_REDUCED,
+                "place_changed": True}
+
+    def register_scene_anchor(
+        self,
+        location_id: str,
+        attn_outputs: Dict[Any, Any],
+        anchor_mean: Any,
+        anchor_std: Any,
+    ):
+        """
+        Cache the first panel of a location as a scene-specific anchor
+        (Strategy B).
+
+        Args:
+            location_id:  Environment identifier string.
+            attn_outputs: Snapshot of ``SharedAttentionCache._cached_outputs``.
+            anchor_mean:  Channel-wise latent mean tensor (CPU, float32).
+            anchor_std:   Channel-wise latent std tensor (CPU, float32).
+        """
+        self._scene_cache[location_id] = {
+            "attn": {k: v for k, v in attn_outputs.items()},
+            "mean": anchor_mean,
+            "std":  anchor_std,
+        }
+        log.info(
+            f"  [PlaceChange] Scene anchor registered for location: "
+            f"'{location_id}'"
+        )
+
+    def has_scene_anchor(self, location_id: str) -> bool:
+        """Return True if a scene anchor exists for the given location."""
+        return location_id in self._scene_cache
+
+    def known_locations(self) -> List[str]:
+        """Return the list of locations with cached scene anchors."""
+        return list(self._scene_cache.keys())
+
+    def reset_tracking(self):
+        """Reset the prev/current location tracking (e.g. start of new sequence)."""
+        self._prev_location    = None
+        self._current_location = None
+        log.debug("  [PlaceChange] Location tracking reset")
+
+    def clear(self):
+        """Clear all cached scene anchors and reset tracking."""
+        self._scene_cache.clear()
+        self.reset_tracking()
+        log.info("  [PlaceChange] All scene anchors cleared")
+
+
+# =============================================================================
+# ███████████████████████████████████████████████████████████████████████████
+#  UNIFIED MANAGER  (updated: 5 mitigations + multi-anchor + place-change)
 # ███████████████████████████████████████████████████████████████████████████
 # =============================================================================
 
 class AdvancedAttentionManager:
     """
     Unified entry-point for all three core MDCP attention mechanisms *and*
-    all five optional failure-mode mitigations.
+    all five optional failure-mode mitigations, plus the multi-anchor
+    character extension (Strategy A) and the place-change handler.
 
     Core mechanisms (always enabled when GPU is available):
         L1 — HeatDiffusionPrior
@@ -1054,11 +1725,21 @@ class AdvancedAttentionManager:
         L3 — SpatiotemporalConsistencyEnforcer
 
     Optional mitigations (each defaults to True — enabled, non-breaking):
-        freeu_enabled          — FreeUSkipScaler          (Mode 4)
-        regional_masking_enabled — RegionalAttentionMask  (Mode 2)
-        saliency_enabled       — ForegroundSaliencyMask   (Mode 3)
-        adain_enabled          — AdaINStyleAligner         (Mode 5)
-        detail_injector_enabled — LocalizedDetailInjector  (Mode 1)
+        freeu_enabled            — FreeUSkipScaler          (Mode 4)
+        regional_masking_enabled — RegionalAttentionMask    (Mode 2)
+        saliency_enabled         — ForegroundSaliencyMask   (Mode 3)
+        adain_enabled            — AdaINStyleAligner         (Mode 5)
+        detail_injector_enabled  — LocalizedDetailInjector   (Mode 1)
+
+    Multi-character extension (Strategy A):
+        multi_anchor — MultiAnchorCache  (always instantiated; caller fills it
+                        during Phase 2 and queries it during Phase 3-4 via
+                        ``select_anchor_for_panel()``).
+
+    Place-change extension (Strategies A/B/C):
+        scene_change_handler — PlaceChangeHandler  (always instantiated;
+                        caller invokes ``configure_for_place_change()`` once
+                        per panel before ``on_panel_start()``).
 
     Lifecycle per panel:
         1. on_panel_start(panel_id, is_anchor, total_steps)
@@ -1096,6 +1777,21 @@ class AdvancedAttentionManager:
         self.attn_cache    = SharedAttentionCache(blend_ratio=attention_blend)
         self.spatio_temp   = SpatiotemporalConsistencyEnforcer(strength=spatial_strength)
 
+        # ── Multi-character extension (Strategy A) ────────────────────────────
+        self.multi_anchor  = MultiAnchorCache()
+
+        # ── State-aware anchor extension (§6.1 — appearance drift) ───────────────
+        self.state_anchor  = StateAwareAnchorCache()
+
+        # ── Style-change handler (§6.5 — mid-story style resets) ────────────────
+        self.style_handler = StyleChangeHandler()
+
+        # ── Place-change extension (Strategies A/B/C) ─────────────────────────
+        self.scene_change_handler = PlaceChangeHandler(
+            beta_base=attention_blend,
+            gamma_base=spatial_strength,
+        )
+
         # ── Mitigation flags ─────────────────────────────────────────────────
         self.freeu_enabled             = freeu_enabled and self.enabled
         self.regional_masking_enabled  = regional_masking_enabled and self.enabled
@@ -1122,6 +1818,7 @@ class AdvancedAttentionManager:
         if self.enabled:
             active = [
                 "L1-Heat", "L2-Attn", "L3-STE",
+                "MultiAnchor", "StateAnch", "StyleReset", "PlaceChange",
                 *([" M4-FreeU"]            if self.freeu_enabled            else []),
                 *([" M2-RegMask"]          if self.regional_masking_enabled  else []),
                 *([" M3-Saliency"]         if self.saliency_enabled          else []),
@@ -1132,6 +1829,8 @@ class AdvancedAttentionManager:
         else:
             log.info("AdvancedAttentionManager DISABLED (dry-run / CPU mode)")
 
+
+
     @property
     def mock_mode(self) -> bool:
         return not self.enabled
@@ -1140,7 +1839,174 @@ class AdvancedAttentionManager:
         """In mock mode, returns input unchanged."""
         return latents
 
+    # ── Public API: Multi-Anchor Selection (Strategy A) ───────────────────────
+
+    def select_anchor_for_panel(
+        self,
+        characters_in_panel: List[str],
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Query ``MultiAnchorCache`` to determine which anchor (if any) should
+        be activated for the current panel, then swap the anchor tensors into
+        the live ``SharedAttentionCache`` and ``SpatiotemporalConsistencyEnforcer``.
+
+        Call this *before* ``on_panel_start()`` so the correct cached tensors
+        are in place when hooks fire.
+
+        Decision rules (mirrors §3.1 of methodology):
+        - Single known character  → load that character's anchor.
+        - Multiple known chars    → load the first character's anchor; caller
+                                    should also call ``set_character_regions()``
+                                    with per-character bounding boxes so M2
+                                    gates each blend spatially.
+        - Any unknown character   → return None; caller should set T2 disabled
+                                    (``on_panel_start(..., is_anchor=True)`` or
+                                    ``attn_cache.stop()``) so the new character
+                                    generates freely.  After generation, register
+                                    the result via ``multi_anchor.register_anchor``.
+
+        Returns:
+            The anchor dict ``{"attn": …, "mean": …, "std": …}`` that was
+            loaded, or None if no anchor was available / T2 is bypassed.
+        """
+        anchor = self.multi_anchor.select_anchor(characters_in_panel)
+        if anchor is None:
+            log.info(
+                "  [AdvAttn] select_anchor_for_panel: no anchor available — "
+                "T2 will be bypassed for this panel."
+            )
+            return None
+
+        # Swap K/V tensors into the live attention cache
+        self.attn_cache._cached_outputs = anchor["attn"]
+
+        # Swap L3 channel statistics
+        if anchor.get("mean") is not None:
+            self.spatio_temp._anchor_mean = anchor["mean"]
+        if anchor.get("std") is not None:
+            self.spatio_temp._anchor_std  = anchor["std"]
+
+        log.info(
+            f"  [AdvAttn] select_anchor_for_panel: anchor loaded for "
+            f"{characters_in_panel[0]!r} "
+            f"({len(self.attn_cache._cached_outputs)} attention layers)"
+        )
+        return anchor
+
+    # ── Public API: Place-Change Handling (Strategies A/B/C) ─────────────────
+
+    def configure_for_place_change(
+        self,
+        location: str,
+        saliency_mask_tensor: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """
+        Apply the appropriate place-change strategy to the live MDCP objects.
+
+        This is a thin wrapper around ``PlaceChangeHandler.configure()`` that
+        also handles the M3 saliency mask computation when ``saliency_enabled``
+        is True and no mask tensor is supplied.
+
+        Decision cascade (§4 of methodology):
+        1. No place change detected  → restore base β/γ, no-op.
+        2. Place change + scene anchor cached (Strategy B)  → swap scene anchor.
+        3. Place change + M3 saliency mask available (Strategy A)  →
+           foreground-only T2 blend, γ halved.
+        4. Place change, no mask/scene anchor (Strategy C)  →
+           reduce β to 0.05, γ to 0.03.
+
+        Args:
+            location:             Current panel's environment identifier string
+                                  (from Phase 1 storyboard ``environment`` field).
+            saliency_mask_tensor: Pre-computed (1,1,H,W) foreground mask from
+                                  M3, or None to let the handler fall through to
+                                  Strategy C.
+
+        Returns:
+            Status dict from ``PlaceChangeHandler.configure()``.
+        """
+        if not self.enabled:
+            return {"strategy": "none", "place_changed": False}
+
+        # If no mask was passed in but M3 is enabled and a mask exists, reuse it
+        mask = saliency_mask_tensor
+        if mask is None and self.saliency_enabled:
+            mask = self.saliency_mask.mask_tensor
+
+        result = self.scene_change_handler.configure(
+            attn_cache=self.attn_cache,
+            spatio_temp=self.spatio_temp,
+            location=location,
+            saliency_mask_tensor=mask,
+        )
+
+        # When Strategy A is active, also update the attn_cache region mask
+        # so it takes effect inside the hook (mirrors set_character_regions)
+        if result["strategy"] == "A" and mask is not None:
+            self.attn_cache.set_region_mask(mask)
+
+        return result
+
+    # ── Public API: Style-Change Handling (§6.5) ──────────────────────────────
+
+    def configure_for_style_change(
+        self,
+        style_token: str,
+    ) -> Dict[str, Any]:
+        """
+        Apply the style-reset scheduling to the live MDCP objects.
+
+        This is a thin wrapper around ``StyleChangeHandler.configure()`` that
+        is called *before* ``on_panel_start()`` on every panel.  It is a no-op
+        when the style token is unchanged.
+
+        On a *transition* panel (style token differs from the previous panel):
+        - T2 ``blend_ratio`` is reduced to ``StyleChangeHandler.BETA_STYLE_RESET``
+          (0.02) so the prompt dominates appearance.
+        - T1 (``HeatDiffusionPrior``) active window is collapsed to zero,
+          effectively disabling the smoothing prior for this panel.
+        - T3 (``SpatiotemporalConsistencyEnforcer``) active window is collapsed
+          to zero, releasing the lighting/contrast constraint.
+
+        After the generation loop completes the transition panel, the caller
+        **must** call ``restore_after_style_change()`` to re-enable T1/T3 for
+        subsequent panels.
+
+        Args:
+            style_token: Style identifier from Phase 1 ``STYLE_PRESETS``
+                         (e.g. ``"watercolour"``, ``"ink_line_art"``).
+
+        Returns:
+            Status dict from ``StyleChangeHandler.configure()``.
+        """
+        if not self.enabled:
+            return {"style_changed": False}
+
+        return self.style_handler.configure(
+            attn_cache=self.attn_cache,
+            heat_prior=self.heat_prior,
+            spatio_temp=self.spatio_temp,
+            style_token=style_token,
+            beta_base=self.attn_cache.blend_ratio,
+        )
+
+    def restore_after_style_change(self):
+        """
+        Restore T1 and T3 active windows after a style-transition panel.
+
+        Call this immediately after the transition panel's denoising loop
+        completes (i.e. after ``on_panel_end()``).  Safe to call even when no
+        style change was in progress (no-op).
+        """
+        if not self.enabled:
+            return
+        self.style_handler.restore_after_transition(
+            heat_prior=self.heat_prior,
+            spatio_temp=self.spatio_temp,
+        )
+
     # ── Public API: Character Regions (Mode 2) ────────────────────────────────
+
 
     def set_character_regions(self, boxes: List[Tuple[float, float, float, float]]):
         """
@@ -1371,5 +2237,32 @@ class AdvancedAttentionManager:
                 "layers_cached": len(self.adain_aligner._anchor_stats),
                 "strength": self.adain_aligner.strength,
             },
+            # ── Multi-anchor extension status ────────────────────────────────
+            "multi_anchor": {
+                "characters_cached": len(self.multi_anchor._anchors),
+                "known_characters": self.multi_anchor.known_characters(),
+            },
+            # ── State-aware anchor status (§6.1) ──────────────────────────────
+            "state_aware_anchors": {
+                "entries_cached": len(self.state_anchor._anchors),
+                "characters_tracked": list(self.state_anchor._current_state.keys()),
+            },
+            # ── Style-change handler status (§6.5) ───────────────────────────
+            "style_change_handler": {
+                "current_style": self.style_handler.current_style(),
+                "beta_style_reset": StyleChangeHandler.BETA_STYLE_RESET,
+                "transition_pending": (
+                    hasattr(self.style_handler, "_saved_t1")
+                    or hasattr(self.style_handler, "_saved_t3")
+                ),
+            },
+            # ── Place-change extension status ────────────────────────────────
+            "place_change_handler": {
+                "current_location": self.scene_change_handler._current_location,
+                "prev_location":    self.scene_change_handler._prev_location,
+                "scene_anchors_cached": len(self.scene_change_handler._scene_cache),
+                "known_locations": self.scene_change_handler.known_locations(),
+                "beta_reduced":  PlaceChangeHandler.BETA_REDUCED,
+                "gamma_reduced": PlaceChangeHandler.GAMMA_REDUCED,
+            },
         }
-

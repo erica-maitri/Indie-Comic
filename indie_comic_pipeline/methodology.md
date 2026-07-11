@@ -4,7 +4,7 @@ This document outlines the detailed system architecture, processing pipeline pha
 
 ---
 
-## 1. Pipeline Execution Flow Diagram
+## Figure 3: Pipeline Execution Flow Diagram
 
 ```mermaid
 flowchart TD
