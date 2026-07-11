@@ -564,3 +564,266 @@ $$\beta_{\text{action}} = 0.08 \quad \text{for panels with } \mathcal{I}_i > 0.7
 | 8 | Non-human characters | — | No change required | — | None |
 | 9 | Panel count / variable length | — | Already handled by Phase 7 | — | None |
 | 10 | Quality gate for scenery panels | $S_{\text{cons}}$ on no-char panel | `panel_type` weight exclusion in `QualityCritic` | ✓ | Re-normalised weights |
+
+---
+
+## Appendix: Pipeline Algorithms
+
+### Algorithm 1: MDCP Denoising Step Update
+
+```
+Input:  Timestep t, latent z_t, anchor output cache {O_anchor^(l)} for l=1..4 (hooked attn2 layers),
+        anchor channel stats (mu_a, sigma_a)
+Output: Consistency-aligned latent z'_t
+
+/* T1: Heat Diffusion Smoothing */
+1.  if 0.20 <= t/T <= 0.80 then
+2.      alpha_eff <- alpha * (t/T - 0.20) / (0.80 - 0.20)      // alpha = 0.03, linear ramp
+3.      z_t <- z_t + alpha_eff * (GaussianBlur(z_t, sigma=size/3) - z_t)   // per-channel
+4.  end if
+
+/* T2: Shared Attention-Output Blending (executes as part of UNet forward pass) */
+5.  for each of the 4 hooked attn2 layers l, during UNet forward pass over z_t:
+6.      O_curr^(l) <- layer l's ordinary forward output (Softmax(Q_curr * K_curr^T / sqrt(d)) * V_curr)
+7.      O_dev^(l)  <- AsyncPrefetch(O_anchor^(l))     // pinned host -> device, non_blocking=True
+8.      layer l's output <- (1 - 0.15) * O_curr^(l) + 0.15 * O_dev^(l)    // in-place replacement
+9.  end for
+10. z_attn <- latent produced after UNet forward pass with four blended layer outputs
+
+/* T3: Spatiotemporal Statistics Alignment */
+11. if 0.30 <= t/T <= 0.60 then
+12.     mu_c, sigma_c <- ComputeChannelStats(z_attn)     // channel-wise mean and std
+13.     std_ratio <- clamp(sigma_a / sigma_c, 0.80, 1.20)
+14.     z_corr <- z_attn * std_ratio + 0.08 * (mu_a - mu_c)
+15.     blend_w <- 0.08 * (t/T - 0.30) / (0.60 - 0.30)
+16.     z'_t <- (1 - blend_w) * z_attn + blend_w * z_corr
+17. else
+18.     z'_t <- z_attn
+19. end if
+20. return z'_t
+```
+
+---
+
+### Algorithm 2: Master Eight-Phase Pipeline Orchestration
+
+```
+Input:  prompt P, character name C, panel count N, story_mode MODE
+Output: assembled pages (CBZ/PDF/HTML), feedback telemetry log
+
+1.  /* Phase 0 - Story Intake */
+2.  story_config <- StoryIntakeEngine.process_prompt(P, N, C, MODE)
+
+3.  /* Phase 1 - Multi-Agent Enrichment (blackboard) */
+4.  storyboard <- AgentController.run_planning(story_config)
+    // Stage A sequential:     StoryDirector -> ActionDirector
+    // Stage B concurrent (ThreadPoolExecutor(4)):
+    //     DialogueWriter || PoseDirector || EmotionDirector || CameraDirector
+
+5.  /* Phase 2 - Multi-Anchor Visual Anchoring */
+6.  character_intro_map <- build_character_introduction_panel_map(storyboard)
+7.  for each character c in character_intro_map.keys() do:
+8.      k_c <- character_intro_map[c] // earliest panel where character c appears
+9.      if k_c has not been generated yet:
+10.         panel_res <- generate_panel_with_retry(panel_id = k_c, t2_enabled_for_c = False)
+11.     end if
+12.     M_c <- segment_character_foreground(panel_res.image, c) // using SAM (M3) or BBox
+13.     identity_signatures[c] <- IdentityEmbeddingExtractor.extract_masked(panel_res.image, M_c)
+14.     //   Extracts: regional HSV histogram, silhouette Canny edge, masked Gram matrix, local aesthetic score
+15.     //   Pins O_anchor^(1..4)(c) to CPU pinned memory (pin_memory())
+16.     //   Captures character channel stats (mu_c, sigma_c)
+17.     character_anchors[c] <- {O_anchor_c, mu_c, sigma_c}
+18. end for
+
+8.  /* Phases 3-6 - remaining panels (PARALLELIZABLE) */
+9.  for panel_id in 2..N do parallel
+10.     panel_result <- generate_panel_with_retry(panel_id)
+        //  CharCom: derives g_final, S_final, lambda_final, seed (Equations 27-31)
+        //  _build_prompt(): assembles 10-layer prompt; Compel encodes overflow tokens
+        //  Algorithm 1 (MDCP): executes inside each of the S_final UNet denoising steps
+        //  QualityCritic: evaluates; reject-and-regenerate loop (max 2 retries)
+        //  TextImageIntegrator: places LLM-planned dialogue (post-crop order)
+11. end for
+
+12. /* Phase 7 - Cadence Layout */
+13. pages <- MangaFlowLayoutEngine.assemble(sorted_panels_by_page)
+    //  Intensity weights w_i = 0.7 + I_i; partition formulas for N=1..5+
+    //  Focal crop (Lanczos); post-crop bubble rendering; page numbering pill
+
+14. /* Phase 8 - Export and Feedback */
+15. ComicExporter.export(pages, formats=[CBZ, PDF, HTML])
+16. HeuristicFeedbackTuner.log_telemetry()
+17. if N_rated >= 3: HeuristicFeedbackTuner.tune()
+    //  Adjusts: g_scale, quality thresholds tau, lambda_LoRA, critic weights w_d
+18. return pages
+```
+
+---
+
+### Algorithm 3: Multi-Agent Blackboard Synchronization (Phase 1)
+
+```
+Input:  Parsed story_config with N panels, Character list C
+Output: Populated StorySectionMemory Blackboard (B)
+
+1.  Initialize B with N empty panel slots
+2.  /* Stage A: Sequential Execution */
+3.  StoryDirector.register_characters(C, B)
+4.  for each panel i in 1..N do
+5.      action_intensity[i] <- ActionDirector.evaluate(story_config[i])
+6.      B[i].action <- {verb, mechanics, impact, reaction, timing}
+7.  end for
+
+8.  /* Stage B: Concurrent Execution */
+9.  parallel pool (workers=4) do:
+10.     Thread 1: B.dialogue  <- DialogueWriter.generate(story_config)
+11.     Thread 2: B.pose      <- PoseDirector.map_postures(story_config, action_intensity)
+12.     Thread 3: B.emotion   <- EmotionDirector.assign_beats(story_config)
+13.     Thread 4: B.camera    <- CameraDirector.frame_shots(story_config, action_intensity)
+14. end pool
+
+15. /* Post-Sync Verification */
+16. B.validate_causality_constraints()
+17. return B
+```
+
+---
+
+### Algorithm 4: Reference-Free Multi-Character Identity Signature Extraction (Phase 2)
+
+```
+Input:  Anchor image I, Anchor VAE latent z, Character c, Character Mask M_c
+Output: Signature S_c = {h_color_c, rho_edge_c, G_style_c, S_aes_c}, Channel stats (mu_c, sigma_c)
+
+1.  /* Descriptor 1: Regional HSV Color Histogram */
+2.  I_hsv <- RGB2HSV(I)
+3.  h_color_c <- calcHist(I_hsv, channels=[H, S], mask=M_c, bins=[8, 8])
+
+4.  /* Descriptor 2: Silhouette Edge Density */
+5.  I_gray <- RGB2GRAY(I)
+6.  rho_edge_c <- count_pixels((Canny(I_gray, 50, 150) > 0) & (M_c == 1)) / count_pixels(M_c == 1)
+
+7.  /* Descriptor 3: Masked Style Gram Matrix */
+8.  F_c <- stack(R, G, B, Sobel_x(I_gray), Sobel_y(I_gray)) * M_c
+9.  G_style_c <- (F_c^T * F_c) / count_pixels(M_c == 1)
+
+10. /* Descriptor 4: BBox Aesthetic Baseline */
+11. I_crop   <- crop_to_bbox(I, M_c)
+12. S_sharp  <- min(1, Var(Laplacian(RGB2GRAY(I_crop))) / 500)
+13. S_contrast <- min(1, Std(RGB2GRAY(I_crop)) / 75)
+14. S_color  <- min(1, Colorfulness(I_crop) / 80)
+15. S_aes_c  <- 0.4*S_sharp + 0.3*S_contrast + 0.3*S_color
+
+16. /* Character Anchor Channel Statistics */
+17. M_latent <- resize_nearest_neighbor(M_c, size_of(z))
+18. for c_idx in 1..4 do
+19.     mu_c[c_idx]    <- Mean(z[c_idx] * M_latent)
+20.     sigma_c[c_idx] <- Std(z[c_idx] * M_latent)
+21. end for
+
+22. return {h_color_c, rho_edge_c, G_style_c, S_aes_c}, (mu_c, sigma_c)
+```
+
+---
+
+### Algorithm 5: Quality Validation and Adaptive Regeneration Gate (Phase 6)
+
+```
+Input:  Target panel image I_curr, Signature S_anchor, max_retries = 2
+Output: Approved image I_curr, or throws QualityGateFailure
+
+1.  retries <- 0
+2.  while retries <= max_retries do
+3.      /* Evaluate Consistency vs Anchor */
+4.      sim_color <- Pearson(h_color_anchor, h_color_curr)
+5.      sim_edge  <- max(0, 1 - 5 * abs(rho_edge_anchor - rho_edge_curr))
+6.      sim_style <- max(0, 1 - 10 * MSE(G_style_anchor, G_style_curr))
+7.      sim_aes   <- compute_aesthetic_score(I_curr)
+        
+8.      S_total <- 0.25*sim_color + 0.15*sim_edge + 0.20*sim_style + 0.40*sim_aes
+        
+9.      if S_total >= threshold_tau then
+10.         return I_curr
+11.     end if
+        
+12.     /* Adaptive Regeneration */
+13.     retries <- retries + 1
+14.     if failure_is_aesthetic(sim_aes) then
+15.         prompt_pos <- prompt_pos + ", sharp focus, detailed line art"
+16.         prompt_neg <- prompt_neg + ", blurry, low quality"
+17.     else if failure_is_consistency(sim_color, sim_style) then
+18.         CFG_scale <- min(CFG_scale + 0.5, 12.0)
+19.     end if
+        
+20.     I_curr <- GeneratePanel(prompt_pos, prompt_neg, CFG_scale)
+21. end while
+
+22. raise QualityGateFailure
+```
+
+---
+
+### Algorithm 6: Evaluation Suite and Performance Benchmarking
+
+```
+Input:  generated panels G={g_1..g_N}, reference panels R={r_1..r_N},
+        planned dialogue D={d_1..d_N}, bubble layout annotations B
+Output: evaluation_report (14-metric dict), performance_summary
+
+/* Image Quality and Realism */
+1.  S_aesthetic[i] <- 0.4*Sharp + 0.3*Contrast + 0.3*Colorfulness       // Equations 16-17
+2.  FID            <- FrechetInceptionDistance(G_set, R_set)              // Inception-v3 pool3
+3.  PSNR[i]        <- 10*log10(1.0^2 / MSE(g_i, r_i))
+4.  SSIM[i]        <- StructuralSimilarity(g_i, r_i, window=11)
+
+/* Semantic and Structural Consistency */
+5.  S_DINOv2[i]    <- CosineSim(DINOv2_base(g_i), DINOv2_base(r_i))     // f in R^768
+6.  S_DINOv3[i]    <- CosineSim(DINOv2_registers(g_i), DINOv2_registers(r_i))
+7.  S_CLIP_I[i]    <- CosineSim(CLIP_img(g_i), CLIP_img(r_i))            // e in R^512
+8.  S_SigLIP[i]    <- CosineSim(SigLIP(g_i), SigLIP(r_i))
+9.  LPIPS[i]       <- PerceptualDistance_VGG16(g_i, r_i)
+
+/* Text-Image Alignment */
+10. A_CLIP_T[i]    <- CosineSim(CLIP_img(g_i), CLIP_txt(prompt_i))
+11. BLEU[i]        <- SentenceBLEU(rendered_text(g_i), d_i, smoothing=Method4)
+
+/* Spatial Layout and Detection */
+12. IoU[i]         <- BoundingBoxIoU(detected_bubbles(g_i), B[i])
+13. (Prec, Rec, F1)[i] <- BubbleDetection(g_i, B[i], IoU_threshold=0.50)
+14. (MaskIoU, Dice)[i] <- CharacterSegmentation_SAM21(g_i, R_mask[i])
+
+/* Aggregate */
+15. for each metric m: mean[m], std[m] <- aggregate over i=1..N
+16. evaluation_report <- { all 14 metrics with means and stds }
+
+/* Performance Benchmarking (validates Proposition 1) */
+17. VRAM_delta  <- torch.cuda.max_memory_allocated() - baseline_allocated
+18. Wall_time   <- time(full_pipeline_run) / N                            // per-panel average
+19. PCIe_xfer   <- measure_pinned_transfer_latency(4_hooked_layers)
+20. Latent_norm <- [||z_t||_2 for t in all denoising steps]              // verify O(1) stability
+21. performance_summary <- { VRAM_delta, Wall_time, PCIe_xfer, Latent_norm_envelope }
+
+22. return evaluation_report, performance_summary
+```
+
+---
+
+### 7. Automated Hyperparameter Grid Sweep & Optimization Engine
+
+To validate the resource-performance trade-offs outlined in Algorithm 6 and Proposition 1, the framework implements an automated hyperparameter tuning and benchmarking suite. This engine performs a systematic grid search over key generation parameters to locate the Pareto-optimal configuration for any given hardware setup.
+
+#### 7.1 Parameter Grid Formulation
+The sweep space $\mathcal{S}$ is defined as the Cartesian product of the target resolution scale $\mathcal{R}$, denoising step count $\mathcal{T}$, and adapter LoRA scale $\mathcal{L}$:
+$$\mathcal{S} = \mathcal{R} \times \mathcal{T} \times \mathcal{L}$$
+Where:
+- $\mathcal{R} \in \{512 \times 512, 768 \times 768\}$
+- $\mathcal{T} \in [15, 40] \cap \mathbb{Z}$
+- $\mathcal{L} \in [0.5, 1.0]$
+
+#### 7.2 Objective Function and Recommendation Logic
+For each configuration $c = (r, t, l) \in \mathcal{S}$, the benchmark suite evaluates generation latency ($t_{\text{latency}}$), peak VRAM delta ($M_{\text{peak}}$), and quality similarity metrics relative to a high-quality baseline image generated at the maximum bounds ($c_{\text{max}} = (r_{\text{max}}, t_{\text{max}}, l_{\text{max}})$):
+$$S_{\text{quality}}(c) = w_1 \cdot \text{SSIM}(g_c, g_{\text{baseline}}) + w_2 \cdot S_{\text{edge}}(g_c, g_{\text{baseline}}) + w_3 \cdot S_{\text{color}}(g_c, g_{\text{baseline}})$$
+Where $w_1 = 0.5$, $w_2 = 0.2$, and $w_3 = 0.3$.
+
+The recommendation engine identifies the optimal configuration $c^*$ by maximizing the efficiency index (quality per unit of latency) while satisfying hard hardware VRAM constraints:
+$$c^* = \arg\max_{c \in \mathcal{S}} \frac{S_{\text{quality}}(c)}{\max(\epsilon, t_{\text{latency}}(c))} \quad \text{subject to} \quad M_{\text{peak}}(c) \le M_{\text{threshold}}$$
