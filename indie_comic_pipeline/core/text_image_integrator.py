@@ -139,6 +139,13 @@ class TextImageIntegrator:
         self._font_cache: Dict[Tuple[int, str], Any] = {}
         self._llm = None
         
+        # Load pipeline settings (additive addition)
+        try:
+            from utils.config_helper import load_settings
+            self.settings = load_settings() or {}
+        except Exception:
+            self.settings = {}
+            
         Path(self.output_dir).mkdir(parents=True, exist_ok=True)
         self._download_fonts_if_missing()
 
@@ -332,6 +339,21 @@ class TextImageIntegrator:
             "source": "heuristic_fallback"
         }
         
+        # Check if LLM planning should be skipped via environment variable or settings config
+        skip_llm = os.environ.get("SKIP_LLM_PLANNING", "").lower() == "true" or not self.settings.get("pipeline", {}).get("enable_llm", True)
+        if skip_llm:
+            plan["source"] = "heuristic_fastpath"
+            
+            # Save to local JSON file for future use and editing
+            try:
+                with open(json_path, "w", encoding="utf-8") as f:
+                    json.dump(plan, f, indent=2)
+                log.info(f"Saved heuristic layout plan to local JSON (skipped LLM): {json_path}")
+            except Exception as e:
+                log.warning(f"Failed to save local layout JSON {json_path}: {e}")
+                
+            return plan
+            
         # 3. Call local Ollama
         system_prompt = """You are a comic book lettering coordinator.
 Analyze the dialogue, emotion beat, and panel details, then output a JSON object planning the speech bubble layout.

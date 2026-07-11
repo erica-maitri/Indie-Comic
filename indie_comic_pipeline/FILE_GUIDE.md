@@ -186,6 +186,22 @@ Types: `model_comparison`, `arc_evaluation`, `parameter_sweep`, `consistency_ana
 
 ---
 
+### `run_benchmarks.py`
+**Launch script for the Hyperparameter Tuning & Benchmarking Suite.**
+
+```bash
+python run_benchmarks.py --mock
+python run_benchmarks.py --prompt "A warrior in rain" --apply
+```
+
+What it does:
+- Runs systematic parameter sweeps over step counts, resolutions, and LoRA scales
+- Performs visual quality analysis (SSIM, edge, color correlation) against baseline
+- Outputs interactive visual report dashboard to HTML
+- Recommends the optimal configuration and automatically updates `settings.yaml` via `--apply`
+
+---
+
 ### `install_all.py`
 Simple dependency installer. Equivalent to `pip install -r requirements.txt`.
 
@@ -582,6 +598,27 @@ Used by `run_evaluation.py` for batch post-generation quality reports.
 
 ---
 
+### `benchmark_suite.py`
+**Runs parameter sweeps, measures hardware resource usage, and suggests optimal tuning settings.**
+
+```python
+from core.benchmark_suite import BenchmarkSuite
+suite = BenchmarkSuite(settings_path="config/settings.yaml")
+
+# Run sweeps (mock mode on CPU)
+results = suite.run_sweeps(prompt="A futuristic street", mock=True)
+
+# Find optimal recommendation based on quality/speed efficiency
+best_run = suite.get_recommendation(results)
+
+# Apply settings back to settings.yaml
+suite.apply_configuration(best_run)
+```
+
+Used by `run_benchmarks.py` to run grid searches and optimize generation step counts and resolutions.
+
+---
+
 ## 4.1 `core/agents/`
 
 ### `base_agent.py`
@@ -813,6 +850,20 @@ enhanced_prompt, enhanced_negative = optimizer.optimize(
     prompt='Kage runs through rain', emotion_beat='momentum', negative_prompt='blurry'
 )
 ```
+
+---
+
+### `report_generator.py`
+**HTML Report compiler for the benchmarking sweeps.**
+
+```python
+from utils.report_generator import ReportGenerator
+
+# Generate interactive report dashboard
+ReportGenerator.generate_html_report(results, recommendation, report_path)
+```
+
+Generates responsive dark-mode HTML reports detailing parameter sweep execution latencies, peak memory (VRAM), and visual similarity charts.
 
 ---
 
