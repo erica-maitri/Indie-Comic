@@ -77,6 +77,10 @@ results = pipeline.run(
 | `panel_count` | int | Number of panels (1-10 recommended) |
 | `style` | str | Art style hint (`"manga"`, `"comic"`) |
 
+**Concurrency & Synchronization Methods:**
+*   **`wait_for_preheat()`**: Joins the background preheat thread. Called automatically right before generating the first panel to ensure the backend selection models have finished loading into VRAM.
+*   **`wait_for_export()`**: Joins the background Phase 8 export thread. Call this to block execution and ensure that PDF, CBZ, and HTML files are fully written to disk before exiting or downloading.
+
 ---
 
 ### `colab_setup.py`
@@ -772,7 +776,9 @@ backend.unload()  # frees ~6.5 GB VRAM
 
 **`load()` sequence:** device -> SDXL fp16 -> DPMSolver++ -> CPU offload -> attn slicing -> VAE slicing -> safety checker removal -> LoRA
 
-**`generate()` sequence:** gen_kwargs -> Compel encoding -> LoRA scale -> AdvAttn callback -> torch.inference_mode() -> VRAM clear
+**`generate()` sequence:** gen_kwargs -> Compel encoding (with `OrderedDict` LRU Cache lookup; hits skip encoding, misses cache up to 100 entries) -> LoRA scale -> AdvAttn callback -> torch.inference_mode() -> VRAM clear
+
+**Prompt Embedding Cache:** Keeps prompt and negative prompt embeddings in memory inside `self._embeds_cache` to bypass the 300ms–800ms Compel text encoding overhead for duplicate style/character prompts. Restricted to 100 entries via OrderedDict-based Least Recently Used (LRU) eviction. Cleared entirely on calling `unload()`.
 
 ---
 
@@ -1009,6 +1015,7 @@ User Input (prompt, character_name, story_world, panel_count)
    BERT emotion detection  -> detects arc type (angry/happy/sad...)
    Story-Weaver LLM        -> generates panel outlines with 5-layer actions:
                              verb, target, mechanics, impact, reaction, timing
+   *Preheat Thread*        -> spawns daemon thread `_preheat_thread` to load model weights (SDXL/Flux) into GPU
          |
          | story_config (panels[], arc_beats[], characters[])
          v
@@ -1058,8 +1065,9 @@ User Input (prompt, character_name, story_world, panel_count)
    Dynamic panel sizing by action_intensity + emotion beat
    Assemble into 1000x1500 pages with 12px gutters
          v
- [comic_exporter.py]                          Phase 8a
-   Export: PDF, CBZ, PNG sheet, JSON manifest
+ [comic_exporter.py]                          Phase 8a (Asynchronous Thread)
+   Export: PDF, CBZ, PNG sheet, JSON manifest (runs on background thread `self._export_thread`)
+   CLI execution calls `pipeline.wait_for_export()` to synchronize before exit.
 
  [feedback.py]                                Phase 8b
    Collect 1-5 star ratings per panel and page

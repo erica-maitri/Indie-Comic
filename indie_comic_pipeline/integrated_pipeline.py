@@ -233,6 +233,39 @@ class IntegratedComicPipeline:
         )
         
         self.exporter = ComicExporter(output_dir=self.output_dir)
+        self._preheat_thread = None
+        self._export_thread = None
+
+    def wait_for_preheat(self):
+        """Wait for the background model preheating thread to complete if it is running."""
+        if getattr(self, "_preheat_thread", None) is not None:
+            if self._preheat_thread.is_alive():
+                log.info("[Pipeline] Waiting for background model preheating to complete...")
+                start_time = time.time()
+                self._preheat_thread.join()
+                log.info(f"[Pipeline] Background preheating completed. Waited {time.time() - start_time:.2f}s.")
+            self._preheat_thread = None
+
+    def wait_for_export(self):
+        """Wait for the background export thread to complete if it is running."""
+        if getattr(self, "_export_thread", None) is not None:
+            if self._export_thread.is_alive():
+                log.info("[Pipeline] Waiting for background export to complete...")
+                start_time = time.time()
+                self._export_thread.join()
+                log.info(f"[Pipeline] Background export completed. Waited {time.time() - start_time:.2f}s.")
+            self._export_thread = None
+
+    def _run_phase8_export(self, pages: list, prompt: str):
+        """Runs Phase 8 export in a background thread."""
+        try:
+            log.info("\n--- Phase 8: Exporting Formats in Background ---")
+            self.exporter.export_cbz(pages, title=prompt[:30])
+            self.exporter.export_web_comic(pages, os.path.join(self.output_dir, "web_comic.html"))
+            self.exporter.export_pdf(pages, title=prompt[:30])
+            log.info("--- Phase 8: Background Exporting Complete ---")
+        except Exception as e:
+            log.error(f"Error in background Phase 8 export: {e}")
 
     def _generate_single_panel_with_retry(self, panel_id: int) -> Dict[str, Any]:
         """Generate a single panel, execute the reject-regenerate loop, and apply typesetting."""
@@ -346,6 +379,18 @@ class IntegratedComicPipeline:
             log.info("Starting Ultimate Indie Comic Generator Pipeline")
             log.info("=" * 80)
 
+            # Start background preheating thread if backends are registered
+            self._preheat_thread = None
+            if getattr(self.backend_selector, "_backends", {}):
+                import threading
+                log.info("[Pipeline] Starting background model preheating thread...")
+                self._preheat_thread = threading.Thread(
+                    target=self.backend_selector.select,
+                    args=({"layout": {"size_class": "medium", "camera_angle": "medium_shot"}},),
+                    daemon=True
+                )
+                self._preheat_thread.start()
+
             # ── Phase 0: Story Intake (skipped when a pre-built story is supplied) ──
             if _prebuilt_story is not None:
                 log.info("\n--- Phase 0: Story Intake [BYPASSED — using pre-built story] ---")
@@ -388,6 +433,7 @@ class IntegratedComicPipeline:
         
             # Panel 1 (Anchor) must run first to establish consistency priors
             log.info("\n--- Phase 2: Anchor Panel Generation (Sequential) ---")
+            self.wait_for_preheat()
             panel_1_result = self._generate_single_panel_with_retry(1)
             panels_completed.append(panel_1_result)
             self.agent_coordinator.notify_panel_generated(panel_1_result)
@@ -463,13 +509,23 @@ class IntegratedComicPipeline:
                     "panels": page_panels
                 })
             
-            # ── Phase 8: Multi-Format Export ──
-            log.info("\n--- Phase 8: Exporting Formats ---")
-            cbz_path = self.exporter.export_cbz(pages, title=prompt[:30])
-            html_path = self.exporter.export_web_comic(pages, os.path.join(self.output_dir, "web_comic.html"))
-            pdf_path = self.exporter.export_pdf(pages, title=prompt[:30])
+            # ── Phase 8: Multi-Format Export (Asynchronous) ──
+            # Precompute paths to return immediately
+            title = prompt[:30]
+            safe_title = "".join([c for c in title if c.isalpha() or c.isdigit() or c==' ']).rstrip()
+            safe_title = safe_title.replace(" ", "_")
+            cbz_path = os.path.join(self.output_dir, f"{safe_title}.cbz")
+            pdf_path = os.path.join(self.output_dir, f"{safe_title}.pdf")
+            html_path = os.path.join(self.output_dir, "web_comic.html")
             
-            # Unload model selector backends to save GPU memory
+            # Start background thread to run Phase 8
+            import threading
+            self._export_thread = threading.Thread(
+                target=self._run_phase8_export,
+                args=(pages, prompt),
+                daemon=True
+            )
+            self._export_thread.start()
         
             return {
                 "pages": pages,
@@ -480,6 +536,7 @@ class IntegratedComicPipeline:
             }
 
         finally:
+            self.wait_for_preheat()
             log.info("Ensuring GPU resources are cleaned up (unload all backends)...")
             self.backend_selector.unload_all()
 
@@ -493,6 +550,18 @@ class IntegratedComicPipeline:
         log.info("=" * 80)
         log.info(f"Starting Batch Pipeline (Panels {start_panel} to {end_panel})")
         log.info("=" * 80)
+
+        # Start background preheating thread if backends are registered
+        self._preheat_thread = None
+        if getattr(self.backend_selector, "_backends", {}):
+            import threading
+            log.info("[Pipeline] Starting background model preheating thread (batch)...")
+            self._preheat_thread = threading.Thread(
+                target=self.backend_selector.select,
+                args=({"layout": {"size_class": "medium", "camera_angle": "medium_shot"}},),
+                daemon=True
+            )
+            self._preheat_thread.start()
 
         if load_checkpoint and os.path.exists(load_checkpoint):
             log.info(f"Loading memory checkpoint from {load_checkpoint}")
@@ -520,6 +589,7 @@ class IntegratedComicPipeline:
         # Panel 1 (Anchor) must run first if within range
         if start_panel == 1:
             log.info("\n--- Phase 2: Anchor Panel Generation (Sequential) ---")
+            self.wait_for_preheat()
             panel_1_result = self._generate_single_panel_with_retry(1)
             panels_completed.append(panel_1_result)
             self.agent_coordinator.notify_panel_generated(panel_1_result)
@@ -528,6 +598,7 @@ class IntegratedComicPipeline:
         # Generate remaining panels in parallel
         if actual_end >= start_idx:
             log.info(f"\n--- Generating Remaining Panels {start_idx} to {actual_end} in Parallel ---")
+            self.wait_for_preheat()
             import concurrent.futures
             
             def _gen_task(pid):
@@ -565,6 +636,7 @@ class IntegratedComicPipeline:
             self.memory.save_checkpoint(save_checkpoint)
             log.info(f"Memory state saved to {save_checkpoint}")
 
+        self.wait_for_preheat()
         self.backend_selector.unload_all()
         return {"pages": pages, "panels": panels_completed, "last_panel_generated": actual_end}
 
@@ -810,6 +882,7 @@ def main():
     print("=" * 70)
     
     pipeline.collect_interactive_feedback(results, no_feedback=args.no_feedback)
+    pipeline.wait_for_export()
 
 
 if __name__ == "__main__":

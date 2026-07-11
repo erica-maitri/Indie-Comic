@@ -72,6 +72,7 @@ IntegratedComicPipeline  (integrated_pipeline.py)
 
 ### 1.1 Concurrency and Parallel Execution Potential
 
+#### Swarm Parallelization
 While the baseline orchestrator executes the six Director agents sequentially to build panel parameters on the blackboard, independent narrative directors do not depend on each other's outputs. 
 Specifically, the dependencies map as follows:
 * `StoryDirector` establishes characters and base panel sequence. (Dependent on Input)
@@ -79,6 +80,12 @@ Specifically, the dependencies map as follows:
 * `DialogueWriter`, `PoseDirector`, `EmotionDirector`, and `CameraDirector` can all run **in parallel** after the `ActionDirector` completes, since dialogue tone, physical posing, facial expressions, and camera angles are orthogonal dimensions of the panel scene graph and only require the action/character context.
 
 By parallelizing these 4 independent agents, the swarm planning step count is reduced from $6T$ steps to $3T$ steps (where $T$ represents average agent execution time), significantly cutting the overall latency of narrative generation.
+
+#### Asynchronous Model Preheating
+Model weights (SDXL or Flux) are loaded on a background daemon thread concurrently during the Phase 0 Story Intake planning phase, avoiding the 20-30s model loading latency. Thread-safe locks (`threading.Lock`) are implemented inside the `BackendSelector` to prevent race conditions or duplicate loading if multiple generation threads check backend loading status.
+
+#### Asynchronous Multi-Format Exporter
+Phase 8 page compiling and saving (CBZ, PDF, and HTML scrollbook formats) is offloaded to a background thread (`self._export_thread`), allowing the pipeline orchestrator to instantly return control and generated frame assets to the user or UI. CLI runs execute a clean thread block (`pipeline.wait_for_export()`) at termination to guarantee files are completely written to disk before exiting.
 
 ---
 
@@ -88,7 +95,7 @@ Each call to `IntegratedComicPipeline.run()` executes the following sequential p
 
 `
 Phase 0: Story Intake
-  Ollama LLM (or template fallback) -> story_config dict
+  Ollama LLM (or template fallback) -> story_config dict (Background model preheating thread started)
 
 Phase 1: Multi-Agent Planning
   6 Director agents -> StorySectionMemory (blackboard populated)
@@ -108,8 +115,8 @@ Phase 6: Quality Critic Loop
 Phase 7: MangaFlow Page Assembly
   Dynamic panel layout driven by action intensity per panel
 
-Phase 8: Export + Adaptive Configuration Optimization
-  CBZ / HTML / PDF export, user rating feedback collection, and iterative parameter tuning
+Phase 8: Asynchronous Export + Adaptive Configuration Optimization
+  CBZ / HTML / PDF export run on background thread; user rating feedback collection and iterative parameter tuning
 `
 
 ### Entry Point
@@ -608,6 +615,14 @@ image = backend.generate(prompt, negative_prompt, config)
 
 Internally delegates to SDXL when Flux is unavailable on hardware, providing seamless fallback. Used preferentially for `full_page` panels when enabled.
 
+### Prompt Embedding Cache (core/backends/sdxl_backend.py)
+
+To avoid compiling text and negative text prompts repeatedly, the `SDXLBackend` contains an in-memory prompt embedding cache:
+* **Structure:** Implemented via collections `OrderedDict` to preserve insertion order.
+* **Mechanism:** When a prompt/negative prompt pair is processed, the backend queries the cache. A hit retrieves the embedding instantly and moves the entry to the end of the `OrderedDict`. A miss invokes the Compel text encoder, caches the resulting tensor, and checks the limit.
+* **LRU Eviction:** The cache is restricted to a maximum size of `100` entries. If the limit is exceeded, the least recently used entry at the beginning of the dictionary is evicted via `popitem(last=False)`.
+* **VRAM Safety:** Calling `unload()` clears the cache via `self._embeds_cache.clear()`, releasing all references so PyTorch memory cleanup can reclaim memory.
+
 ### MockBackend (integrated_pipeline.py)
 
 Used in `--dry-run` mode. Renders a deterministic placeholder PIL image with prompt text overlay. Enables full 8-phase pipeline testing without any GPU.
@@ -900,6 +915,7 @@ To run high-resolution diffusion models (SDXL) on consumer hardware or free tier
 * **Attention Slicing**: Splits attention head computation into sequential blocks, sacrificing minor latency for significant memory reduction.
 * **VAE Tiling**: Processes the latents in overlapping tiles to prevent VRAM spikes during decoding.
 * **Precision**: Runs with native FP16 mixed-precision calculations.
+* **Prompt Caching Limits**: Enforces a strict LRU boundary (100 entries max) on encoded tensors to prevent system memory leaks over extended generation runs.
 
 ### 12.2 Cascading Failure Recovery Flow
 

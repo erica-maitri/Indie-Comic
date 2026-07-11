@@ -11,6 +11,7 @@ import gc
 import logging
 from typing import Dict, Any, Optional
 from PIL import Image
+from collections import OrderedDict
 
 from core.backends.base_backend import BaseBackend
 
@@ -33,6 +34,8 @@ class SDXLBackend(BaseBackend):
         self._config: Dict[str, Any] = {}
         self._lora_loaded = False
         self.device = "cuda"
+        self._embeds_cache = OrderedDict()
+        self._max_cache_size = 100
 
     @property
     def name(self) -> str:
@@ -206,7 +209,7 @@ class SDXLBackend(BaseBackend):
         if self._lora_loaded:
             gen_kwargs["cross_attention_kwargs"] = {"scale": lora_scale}
 
-        # --- COMPEL INTEGRATION FOR LONG PROMPTS (>77 tokens) ---
+        # --- COMPEL INTEGRATION FOR LONG PROMPTS (>77 tokens) WITH LRU CACHE ---
         try:
             from compel import Compel, ReturnedEmbeddingsType
             if getattr(self, "_compel", None) is None:
@@ -218,20 +221,40 @@ class SDXLBackend(BaseBackend):
                     device=self.device
                 )
             
+            # Helper to get/set cache with LRU eviction
+            def _get_encoded_embeds(text: str):
+                if text in self._embeds_cache:
+                    # Move to end (LRU hit)
+                    self._embeds_cache.move_to_end(text)
+                    log.info(f"  [SDXL] Retrieved prompt embeddings from cache for: '{text[:30]}...'")
+                    return self._embeds_cache[text]
+                
+                # Encode text
+                embeds = self._compel(text)
+                
+                # Save to cache
+                self._embeds_cache[text] = embeds
+                # Evict oldest if limit exceeded
+                if len(self._embeds_cache) > self._max_cache_size:
+                    oldest_text, _ = self._embeds_cache.popitem(last=False)
+                    log.debug(f"  [SDXL] Evicted oldest prompt embeddings from cache: '{oldest_text[:30]}...'")
+                
+                return embeds
+
             # Encode prompt
-            prompt_embeds, pooled_prompt_embeds = self._compel(prompt)
+            prompt_embeds, pooled_prompt_embeds = _get_encoded_embeds(prompt)
             gen_kwargs.pop("prompt")
             gen_kwargs["prompt_embeds"] = prompt_embeds
             gen_kwargs["pooled_prompt_embeds"] = pooled_prompt_embeds
             
             # Encode negative prompt
             if negative_prompt:
-                neg_prompt_embeds, neg_pooled_prompt_embeds = self._compel(negative_prompt)
+                neg_prompt_embeds, neg_pooled_prompt_embeds = _get_encoded_embeds(negative_prompt)
                 gen_kwargs.pop("negative_prompt")
                 gen_kwargs["negative_prompt_embeds"] = neg_prompt_embeds
                 gen_kwargs["negative_pooled_prompt_embeds"] = neg_pooled_prompt_embeds
                 
-            log.info("  [SDXL] Using Compel for prompt embeddings (bypassing 77 token limit)")
+            log.info("  [SDXL] Using Compel with LRU cache for prompt embeddings")
         except ImportError:
             log.warning("  [SDXL] 'compel' library not installed. Token truncation > 77 may occur.")
         # --------------------------------------------------------
@@ -264,6 +287,8 @@ class SDXLBackend(BaseBackend):
             del self._pipe
             self._pipe = None
             self._lora_loaded = False
+            self._compel = None
+            self._embeds_cache.clear()
             gc.collect()
             if hasattr(torch, 'cuda') and torch.cuda.is_available():
                 torch.cuda.empty_cache()
