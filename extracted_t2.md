@@ -3,18 +3,15 @@
 
 While T1 regularizes the latent diffusion trajectory, semantic identity is primarily encoded inside the intermediate attention representations of the diffusion UNet. During standard SDXL inference, each attention layer independently computes
 
-[
-O_i=\operatorname{Attention}(Q_i,K_i,V_i),
-\tag{14}
-]
+
+O_i=\operatorname{Attention}(Q_i,K_i,V_i), \tag{14}
+
 
 where (Q_i), (K_i), and (V_i) denote the projected query, key and value tensors of image (i).
 
 Since every image is processed independently,
 
-[
-O_i \perp O_j,\qquad i\neq j,
-]
+O_i \perp O_j,\qquad i\neq j,^\n
 
 there exists no explicit mechanism that allows semantic identity learned in one image to influence another image during inference.
 
@@ -30,43 +27,27 @@ StoryDiffusion introduces **Consistent Self-Attention** to establish interaction
 
 Instead of standard attention
 
-[
-O_i
-===
 
-\operatorname{Attention}
-(Q_i,K_i,V_i),
-\tag{15}
-]
+O_i = \operatorname{Attention}(Q_i,K_i,V_i), \tag{15}
+
 
 tokens from neighboring images are randomly sampled,
 
-[
-S_i
-===
 
-\operatorname{RandSample}
-(I_1,\ldots,I_{i-1},I_{i+1},\ldots,I_B),
-\tag{16}
-]
+S_i = \operatorname{RandSample}(I_1,\ldots,I_{i-1},I_{i+1},\ldots,I_B), \tag{16}
+
 
 and paired with the current image,
 
-[
-P_i=[I_i,S_i].
-\tag{17}
-]
+
+P_i=[I_i,S_i]. \tag{17}
+
 
 Attention is then computed as
 
-[
-O_i
-===
 
-\operatorname{Attention}
-(Q_i,K_{P_i},V_{P_i}).
-\tag{18}
-]
+O_i = \operatorname{Attention}(Q_i,K_{P_i},V_{P_i}). \tag{18}
+
 
 This demonstrates that exchanging attention information improves subject consistency across multiple images.
 
@@ -82,9 +63,7 @@ CharaConsist improves character consistency by maintaining correspondence betwee
 
 Let
 
-[
-F^{(l)}
-]
+F^{(l)}^\n
 
 denote the intermediate representation extracted from layer (l).
 
@@ -102,9 +81,7 @@ DiffSim demonstrates that intermediate diffusion representations provide reliabl
 
 Consequently,
 
-[
-d(O_i,O_j)
-]
+d(O_i,O_j)^\n
 
 acts as a meaningful semantic distance between attention representations.
 
@@ -112,9 +89,7 @@ Therefore,
 
 reducing
 
-[
-d(O_{\text{curr}},O_{\text{anchor}})
-]
+d(O_{\text{curr}},O_{\text{anchor}})^\n
 
 should improve semantic consistency.
 
@@ -126,7 +101,7 @@ AdaCache shows that intermediate diffusion activations can be cached and reused 
 
 Let
 
-[
+
 \mathcal C=
 {
 O_{\text{anchor}}^{(1)},
@@ -135,7 +110,7 @@ O_{\text{anchor}}^{(2)},
 O_{\text{anchor}}^{(L)}
 }
 \tag{19}
-]
+
 
 denote cached attention outputs extracted from the anchor image.
 
@@ -168,15 +143,11 @@ Therefore, instead of recomputing attention using modified key-value tensors (St
 
 Since both
 
-[
-O_{\text{curr}}
-]
+O_{\text{curr}}^\n
 
 and
 
-[
-O_{\text{anchor}}
-]
+O_{\text{anchor}}^\n
 
 belong to the same attention feature space, the propagation operator should satisfy three conditions:
 
@@ -194,25 +165,13 @@ The simplest operator satisfying these constraints is a convex combination.
 
 Accordingly, we define the propagated attention representation as
 
-[
-\boxed{
-O_{\text{prop}}
-===============
 
-(1-\beta)
-O_{\text{curr}}
-+
-\beta
-O_{\text{anchor}}
-}
-\tag{20}
-]
+\boxed{O_{\text{prop}} = (1-\beta) O_{\text{curr}} + \beta O_{\text{anchor}}} \tag{20}
+
 
 where
 
-[
-0\le\beta\le1.
-]
+0\le\beta\le1.^\n
 
 Unlike StoryDiffusion, which exchanges key-value tensors during attention computation, our formulation operates directly on the attention outputs.
 
@@ -224,81 +183,33 @@ Unlike FAM Diffusion, which interpolates attention across image resolutions, our
 
 Subtracting the anchor representation,
 
-[
-O_{\text{prop}}
----------------
 
-# O_{\text{anchor}}
+O_{\text{prop}} - O_{\text{anchor}} = (1-\beta) \left( O_{\text{curr}} - O_{\text{anchor}} \right). \tag{21}
 
-(1-\beta)
-\left(
-O_{\text{curr}}
----------------
-
-O_{\text{anchor}}
-\right).
-\tag{21}
-]
 
 Taking the Euclidean norm,
 
-[
-\left|
-O_{\text{prop}}
----------------
 
-O_{\text{anchor}}
-\right|_2
-=========
+\| O_{\text{prop}} - O_{\text{anchor}} \|_2 = (1-\beta) \| O_{\text{curr}} - O_{\text{anchor}} \|_2. \tag{22}
 
-(1-\beta)
-\left|
-O_{\text{curr}}
----------------
-
-O_{\text{anchor}}
-\right|_2.
-\tag{22}
-]
 
 Since
 
-[
-0\le\beta\le1,
-]
+0\le\beta\le1,^\n
 
 we obtain
 
-[
-\boxed{
-\left|
-O_{\text{prop}}
----------------
 
-O_{\text{anchor}}
-\right|*2
-\le
-\left|
-O*{\text{curr}}
----------------
+\boxed{ \| O_{\text{prop}} - O_{\text{anchor}} \|_2 \le \| O_{\text{curr}} - O_{\text{anchor}} \|_2 } \tag{23}
 
-O_{\text{anchor}}
-\right|_2
-}
-\tag{23}
-]
 
 with equality only when
 
-[
-\beta=0
-]
+\beta=0^\n
 
 or
 
-[
-O_{\text{curr}}=O_{\text{anchor}}.
-]
+O_{\text{curr}}=O_{\text{anchor}}.^\n
 
 Therefore, the propagation operator monotonically moves the attention representation toward the anchor in attention feature space while preserving the contribution of the current image.
 
@@ -308,13 +219,8 @@ Therefore, the propagation operator monotonically moves the attention representa
 
 The propagated attention replaces the original attention output before the subsequent UNet block,
 
-[
-O_{\text{curr}}
-\longrightarrow
-O_{\text{prop}}
-\longrightarrow
-\text{UNet}_{l+1},
-\tag{24}
-]
+
+O_{\text{curr}} \longrightarrow O_{\text{prop}} \longrightarrow \text{UNet}_{l+1}, \tag{24}
+
 
 thereby propagating semantic identity throughout the denoising process without modifying network parameters or requiring retraining.

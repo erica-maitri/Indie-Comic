@@ -3,41 +3,23 @@
 
 Our framework is built upon Latent Diffusion Models (LDMs), specifically Stable Diffusion XL (SDXL). Let (z_0) denote the latent representation of a clean image and (z_t) denote its noisy latent at diffusion timestep (t\in[0,T]). During inference, the reverse diffusion process progressively removes noise through the learned denoising network (\epsilon_\theta). The scheduler updates the latent according to
 
-[
-z_{t-1}
-=======
 
-S!\left(
-z_t,
-\epsilon_\theta(z_t,t,c)
-\right),
-\tag{1}
-]
+z_{t-1} = S\left(z_t, \epsilon_\theta(z_t,t,c)\right), \tag{1}
+
 
 where (c) denotes the text conditioning and (S(\cdot)) represents the scheduler transition operator.
 
 Most diffusion schedulers additionally estimate the clean latent from the current noisy sample. We denote this prediction as
 
-[
-\hat z_0
-========
 
-D_{\text{sched}}
-\left(
-z_t,
-\epsilon_\theta,
-t
-\right),
-\tag{2}
-]
+\hat{z}_0 = D_{\text{sched}}\left(z_t, \epsilon_\theta, t\right), \tag{2}
+
 
 where (D_{\text{sched}}) is the scheduler's predicted clean latent.
 
 The reference latent
 
-[
-z_{0,\mathrm{anchor}}
-]
+z_{0,\mathrm{anchor}}^\n
 
 is obtained by encoding a designated anchor image using the SDXL VAE encoder and remains fixed throughout inference.
 
@@ -57,50 +39,31 @@ Recent approaches address this problem from complementary perspectives.
 
 StoryDiffusion introduces **Consistent Self-Attention** to establish interactions among images within a generation batch. Given image features
 
-[
-I\in\mathbb R^{B\times N\times C},
-]
+I\in\mathbb R^{B\times N\times C},^\n
 
 the original self-attention for image (i) is
 
-[
-O_i
-===
 
-\operatorname{Attention}
-(Q_i,K_i,V_i),
-\tag{3}
-]
+O_i = \operatorname{Attention}(Q_i,K_i,V_i), \tag{3}
+
 
 where (Q_i,K_i,V_i) denote the query, key and value tensors.
 
 To promote consistency, StoryDiffusion randomly samples tokens from the remaining images,
 
-[
-S_i
-===
 
-\operatorname{RandSample}
-(I_1,\ldots,I_{i-1},I_{i+1},\ldots,I_B),
-\tag{4}
-]
+S_i = \operatorname{RandSample}(I_1,\ldots,I_{i-1},I_{i+1},\ldots,I_B), \tag{4}
+
 
 and concatenates them with the current image tokens,
 
-[
-P_i=[I_i,S_i].
-]
+P_i=[I_i,S_i].^\n
 
 The attention computation becomes
 
-[
-O_i
-===
 
-\operatorname{Attention}
-(Q_i,K_{P_i},V_{P_i}),
-\tag{5}
-]
+O_i = \operatorname{Attention}(Q_i,K_{P_i},V_{P_i}), \tag{5}
+
 
 thereby enabling cross-image information exchange without retraining the diffusion model.
 
@@ -114,23 +77,17 @@ ConsiStory improves subject consistency using dense correspondence between inter
 
 Let
 
-[
-F_t
-]
+F_t^\n
 
 denote intermediate features extracted from the current image and
 
-[
-F_{\mathrm{anchor}}
-]
+F_{\mathrm{anchor}}^\n
 
 those extracted from the reference image.
 
 A dense correspondence operator
 
-[
-\Psi(F_t,F_{\mathrm{anchor}})
-]
+\Psi(F_t,F_{\mathrm{anchor}})^\n
 
 aligns spatial structures between the two feature spaces.
 
@@ -144,12 +101,7 @@ Consistency Models demonstrate that different noisy states corresponding to the 
 
 Motivated by this observation, we compare predicted clean latents instead of directly comparing noisy latent variables. Specifically, we use the scheduler prediction
 
-[
-\hat z_0
-========
-
-D_{\mathrm{sched}}(z_t,\epsilon_\theta,t)
-]
+\hat z_0 = D_{\mathrm{sched}}(z_t,\epsilon_\theta,t)^\n
 
 as a clean latent estimate during inference.
 
@@ -173,17 +125,9 @@ Motivated by the above observations, we formulate identity preservation as an op
 
 At each diffusion timestep, we define the total consistency energy as
 
-[
-E_t
-===
 
-\lambda_1E_{\mathrm{id}}
-+
-\lambda_2E_{\mathrm{str}}
-+
-\lambda_3E_{\mathrm{traj}},
-\tag{6}
-]
+E_t = \lambda_1E_{\mathrm{id}} + \lambda_2E_{\mathrm{str}} + \lambda_3E_{\mathrm{traj}}, \tag{6}
+
 
 where
 
@@ -203,17 +147,9 @@ balance their relative contributions.
 
 Motivated by StoryDiffusion's attention-sharing mechanism, we introduce an explicit attention alignment objective,
 
-[
-E_{\mathrm{id}}
-===============
 
-\frac1N
-|
-A_t-
-A_{\mathrm{anchor}}
-|_F^2,
-\tag{7}
-]
+E_{\mathrm{id}} = \frac{1}{N} \|A_t - A_{\mathrm{anchor}}\|_F^2, \tag{7}
+
 
 where
 
@@ -230,16 +166,9 @@ Unlike StoryDiffusion, this loss is our own formulation and explicitly penalizes
 
 Motivated by ConsiStory, structural consistency is enforced by comparing the current feature maps with dense correspondence-aligned anchor features,
 
-[
-E_{\mathrm{str}}
-================
 
-|
-F_t-
-\Psi(F_t,F_{\mathrm{anchor}})
-|_2^2.
-\tag{8}
-]
+E_{\mathrm{str}} = \|F_t - \Psi(F_t,F_{\mathrm{anchor}})\|_2^2. \tag{8}
+
 
 Here,
 
@@ -253,16 +182,9 @@ is implemented using differentiable cosine-similarity-based feature corresponden
 
 To explicitly regularize the denoising trajectory, we compare the scheduler's predicted clean latent against the anchor latent,
 
-[
-E_{\mathrm{traj}}
-=================
 
-|
-\hat z_0-
-z_{0,\mathrm{anchor}}
-|_2^2.
-\tag{9}
-]
+E_{\mathrm{traj}} = \|\hat z_0 - z_{0,\mathrm{anchor}}\|_2^2. \tag{9}
+
 
 Unlike previous feature-level approaches, this objective directly constrains the latent diffusion trajectory while allowing scene-specific variations.
 
@@ -274,27 +196,17 @@ Since every energy component is differentiable with respect to the latent variab
 
 The correction direction is obtained through automatic differentiation,
 
-[
-R_t
-===
 
-\nabla_{z_t}E_t.
-\tag{10}
-]
+R_t = \nabla_{z_t}E_t. \tag{10}
+
 
 Because diffusion sampling already performs incremental latent updates, we formulate our correction as an additive perturbation applied before each scheduler step.
 
 To stabilize optimization across different noise levels, the update magnitude is scaled according to the scheduler variance,
 
-[
-\eta(t)
-=======
 
-\lambda
-\frac{\sigma_t}
-{\sigma_{\max}+\varepsilon},
-\tag{11}
-]
+\eta(t) = \lambda \frac{\sigma_t}{\sigma_{\max}+\varepsilon}, \tag{11}
+
 
 where
 
@@ -304,29 +216,19 @@ where
 
 The corrected latent becomes
 
-[
-\tilde z_t
-==========
 
+\tilde z_t = 
 ## z_t
 
 \eta(t)R_t.
 \tag{12}
-]
+
 
 The refined latent is then propagated through the standard SDXL scheduler,
 
-[
-z_{t-1}
-=======
 
-S
-\left(
-\tilde z_t,
-\epsilon_\theta(\tilde z_t,t,c)
-\right).
-\tag{13}
-]
+z_{t-1} = S\left(\tilde z_t, \epsilon_\theta(\tilde z_t,t,c)\right). \tag{13}
+
 
 This procedure directly regularizes the diffusion trajectory while leaving the pretrained diffusion network unchanged.
 
@@ -336,9 +238,7 @@ This procedure directly regularizes the diffusion trajectory while leaving the p
 
 The proposed framework requires extracting intermediate attention maps and feature representations through forward hooks together with one additional backward pass to compute
 
-[
-\nabla_{z_t}E_t.
-]
+\nabla_{z_t}E_t.^\n
 
 All diffusion model parameters remain frozen throughout optimization.
 
