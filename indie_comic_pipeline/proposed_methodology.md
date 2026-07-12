@@ -172,16 +172,16 @@ flowchart TD
 
 ## Part I: Multi-Level Diffusion Consistency Prior (MDCP) (Methodological Derivation)
 
-### 1.1 Latent Trajectory Optimization (T1)
-#### 1.1.1 Problem Formulation
+###  T1 Derivation
+#### 1 Problem Formulation
 
-Our framework is built upon Latent Diffusion Models (LDMs), specifically Stable Diffusion XL (SDXL). Let (z_0) denote the latent representation of a clean image and (z_t) denote its noisy latent at diffusion timestep (t\in[0,T]). During inference, the reverse diffusion process progressively removes noise through the learned denoising network (\epsilon_\theta). The scheduler updates the latent according to
+Our framework is built upon Latent Diffusion Models (LDMs), specifically Stable Diffusion XL (SDXL). Let $ denote the latent representation of a clean image and $ denote its noisy latent at diffusion timestep \in[0,T]$. During inference, the reverse diffusion process progressively removes noise through the learned denoising network $\epsilon_\theta$. The scheduler updates the latent according to
 
 
 z_{t-1} = S\left(z_t, \epsilon_\theta(z_t,t,c)\right), \tag{1}
 
 
-where (c) denotes the text conditioning and (S(\cdot)) represents the scheduler transition operator.
+where $ denotes the text conditioning and (\cdot)$ represents the scheduler transition operator.
 
 Most diffusion schedulers additionally estimate the clean latent from the current noisy sample. We denote this prediction as
 
@@ -189,7 +189,7 @@ Most diffusion schedulers additionally estimate the clean latent from the curren
 \hat{z}_0 = D_{\text{sched}}\left(z_t, \epsilon_\theta, t\right), \tag{2}
 
 
-where (D_{\text{sched}}) is the scheduler's predicted clean latent.
+where {\text{sched}}$ is the scheduler's predicted clean latent.
 
 The reference latent
 
@@ -197,11 +197,11 @@ z_{0,\mathrm{anchor}}^\n
 
 is obtained by encoding a designated anchor image using the SDXL VAE encoder and remains fixed throughout inference.
 
-Unlike existing methods that modify model architectures or require additional training, our objective is to optimize only the latent variable (z_t) during inference while keeping all model parameters frozen.
+Unlike existing methods that modify model architectures or require additional training, our objective is to optimize only the latent variable $ during inference while keeping all model parameters frozen.
 
 ---
 
-#### 1.1.2 Motivation
+### 2 Motivation
 
 Although SDXL produces high-quality images, each latent trajectory evolves independently. Consequently, multiple images conditioned on the same subject prompt may gradually diverge in facial identity, clothing appearance and fine structural details.
 
@@ -293,7 +293,7 @@ This allows stronger corrections during early noisy stages and progressively wea
 
 ---
 
-#### 1.1.3 Latent Consistency Energy
+### 3 Latent Consistency Energy
 
 Motivated by the above observations, we formulate identity preservation as an optimization problem over the latent variable itself.
 
@@ -364,9 +364,9 @@ Unlike previous feature-level approaches, this objective directly constrains the
 
 ---
 
-#### 1.1.4 Latent Trajectory Optimization
+### 4 Latent Trajectory Optimization
 
-Since every energy component is differentiable with respect to the latent variable (z_t), we optimize only the latent while keeping all diffusion model parameters fixed.
+Since every energy component is differentiable with respect to the latent variable $, we optimize only the latent while keeping all diffusion model parameters fixed.
 
 The correction direction is obtained through automatic differentiation,
 
@@ -391,7 +391,8 @@ where
 The corrected latent becomes
 
 
-\tilde z_t = z_t - \eta(t)R_t.
+\tilde z_t = 
+	ilde z_t = z_t - \eta(t)R_t.
 \tag{12}
 
 
@@ -405,7 +406,7 @@ This procedure directly regularizes the diffusion trajectory while leaving the p
 
 ---
 
-#### 1.1.5 Computational Complexity
+### 5 Computational Complexity
 
 This framework requires extracting intermediate attention maps and feature representations through forward hooks together with one additional backward pass to compute
 
@@ -417,10 +418,13 @@ Consequently, each denoising iteration consists of one standard forward pass and
 
 ---
 
+### 6 Algorithm
+
+```text
 ``
 
 ### 1.2 Attention Propagation Module (T2)
-#### 1.2.1 Problem Formulation
+#### 1 Problem Formulation
 
 While T1 regularizes the latent diffusion trajectory, semantic identity is primarily encoded inside the intermediate attention representations of the diffusion UNet. During standard SDXL inference, each attention layer independently computes
 
@@ -440,7 +444,7 @@ Consequently, although the latent trajectory may be corrected (Section 3), seman
 
 ---
 
-#### 1.2.2 Observations from Previous Work
+### 2 Observations from Previous Work
 
 ## Observation 1 (StoryDiffusion)
 
@@ -551,7 +555,7 @@ Semantic information can be propagated through continuous interpolation in atten
 
 ---
 
-#### 1.2.3 Design Principle
+### 3 Design Principle
 
 The previous observations establish four facts.
 
@@ -582,7 +586,7 @@ The simplest operator satisfying these constraints is a convex combination.
 
 ---
 
-#### 1.2.4 Attention Propagation Operator
+### 4 Attention Propagation Operator
 
 Accordingly, we define the propagated attention representation as
 
@@ -600,7 +604,7 @@ Unlike FAM Diffusion, which interpolates attention across image resolutions, our
 
 ---
 
-#### 1.2.5 Theoretical Analysis
+### 5 Theoretical Analysis
 
 Subtracting the anchor representation,
 
@@ -636,7 +640,7 @@ Therefore, the propagation operator monotonically moves the attention representa
 
 ---
 
-#### 1.2.6 Integration into Diffusion
+### 6 Integration into Diffusion
 
 The propagated attention replaces the original attention output before the subsequent UNet block,
 
@@ -647,7 +651,6 @@ O_{\text{curr}} \longrightarrow O_{\text{prop}} \longrightarrow \text{UNet}_{l+1
 thereby propagating semantic identity throughout the denoising process without modifying network parameters or requiring retraining.
 
 ### 1.3 Spatiotemporal Channel Statistics Alignment (T3)
-#### 1.3. Derivation of the Latent Statistical Alignment Module (T3)
 
 ---
 
