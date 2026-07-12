@@ -745,36 +745,45 @@ This loosens T2's identity pull, giving the prompt more influence over dynamic p
 
 ### Algorithm 1: MDCP Denoising Step Update
 
-```
-Input:  Timestep t, latent z_t, anchor output cache {O_anchor^(l)} for l=1..4 (hooked attn2 layers),
-        anchor channel stats (mu_a, sigma_a)
+The individual operators $\mathcal{T}_1$, $\mathcal{T}_2$, and $\mathcal{T}_3$ are composed into a unified inference-time intervention applied at each step of the reverse diffusion trajectory.
+
+`	ext
+Algorithm 1: MDCP Denoising Step Update
+
+Input: 
+    Timestep t, latent z_t, anchor latent z0_anchor, text conditioning c
+    Anchor cache: {O_anchor^(ℓ)} for ℓ=1..4 (hooked attn2 layers), anchor channel stats (μ_a, σ_a), anchor attention maps A_anchor, anchor feature maps F_anchor
+    Hyperparameters: λ1, λ2, λ3, λ, β, ω
 Output: Consistency-aligned latent z'_t
 
-/* T1: Heat Diffusion Smoothing */
-1.  if 0.20 <= t/T <= 0.80 then
-2.      alpha_eff <- alpha * (t/T - 0.20) / (0.80 - 0.20)      // alpha = 0.03, linear ramp
-3.      z_t <- z_t + alpha_eff * (GaussianBlur(z_t, sigma=size/3) - z_t)   // per-channel
-4.  end if
+/* T3: Spatiotemporal Channel Statistics Alignment */
+1.  For each channel c in z_t:
+2.      μ_c, σ_c ← ComputeChannelStats(z_t, c)
+3.      r_c ← clamp(σ_a / σ_c, 0.8, 1.2)
+4.      z_corr,c ← r_c(z_t,c - μ_c) + μ_a
+5.  End For
+6.  z_aligned ← (1 - ω)z_t + ω z_corr
 
-/* T2: Shared Attention-Output Blending (executes as part of UNet forward pass) */
-5.  for each of the 4 hooked attn2 layers l, during UNet forward pass over z_t:
-6.      O_curr^(l) <- layer l's ordinary forward output (Softmax(Q_curr * K_curr^T / sqrt(d)) * V_curr)
-7.      O_dev^(l)  <- AsyncPrefetch(O_anchor^(l))     // pinned host -> device, non_blocking=True
-8.      layer l's output <- (1 - 0.15) * O_curr^(l) + 0.15 * O_dev^(l)    // in-place replacement
-9.  end for
-10. z_attn <- latent produced after UNet forward pass with four blended layer outputs
+/* T1: Latent Trajectory Optimization */
+7.  Forward UNet on z_aligned to extract current attention maps A_t and feature maps F_t
+8.  z_hat_0 ← D_sched(z_aligned, ε_θ, t)
+9.  E_id ← (1/N)||A_t - A_anchor||_F^2
+10. E_str ← ||F_t - Ψ(F_t, F_anchor)||_2^2
+11. E_traj ← ||z_hat_0 - z0_anchor||_2^2
+12. E_t ← λ1 E_id + λ2 E_str + λ3 E_traj
+13. R_t ← ∇_{z_aligned} E_t
+14. η(t) ← λ * σ_t / (σ_max + ε)
+15. z_tilde ← z_aligned - η(t)R_t
 
-/* T3: Spatiotemporal Statistics Alignment */
-11. if 0.30 <= t/T <= 0.60 then
-12.     mu_c, sigma_c <- ComputeChannelStats(z_attn)     // channel-wise mean and std
-13.     std_ratio <- clamp(sigma_a / sigma_c, 0.80, 1.20)
-14.     z_corr <- z_attn * std_ratio + 0.08 * (mu_a - mu_c)
-15.     blend_w <- 0.08 * (t/T - 0.30) / (0.60 - 0.30)
-16.     z'_t <- (1 - blend_w) * z_attn + blend_w * z_corr
-17. else
-18.     z'_t <- z_attn
-19. end if
-20. return z'_t
+/* T2: Attention Propagation Module (Executes during UNet forward pass on z_tilde) */
+16. For each of the 4 hooked attn2 layers ℓ, during UNet forward pass on z_tilde:
+17.     O_curr^(ℓ) ← layer ℓ's ordinary forward output
+18.     O_prop^(ℓ) ← (1 - β) O_curr^(ℓ) + β O_anchor^(ℓ)
+19.     Replace layer ℓ's output with O_prop^(ℓ) in-place
+20. End For
+21. z'_t ← latent produced after the UNet forward pass completes with T2 propagation
+
+22. Return z'_t
 ```
 
 ---

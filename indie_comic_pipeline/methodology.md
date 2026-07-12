@@ -204,9 +204,9 @@ flowchart TD
   - **Memory & VRAM Optimizations:** Enables model CPU offloading, attention slicing, and VAE slicing to run inference within a 6.5 GB VRAM ceiling.
   - **FreeU Image Enhancement:** Applies FreeU skip-connection and backbone adjustments ($s_1=0.6$, $s_2=0.4$, $b_1=1.1$, $b_2=1.2$) to reduce texture over-smoothing.
   - **U-Net Feature Adapter:** Exposes U-Net cross-attention modules (`attn2` layers) to allow `AdvancedAttentionManager` to inject the L2 key/value caches at runtime.
-- **Multi-Level Diffusion Consistency Prior (MDCP):** An analytical, gradient-free inference-time optimizer that reduces latent consistency energy $\mathcal{E}_{\text{cons}}(z)$:
-  $$\mathcal{E}_{\text{cons}}(z) = w_{\text{HF}}\cdot\phi_{\text{HF}}(z) + w_{\text{sem}}\cdot\phi_{\text{sem}}(z) + w_{\text{str}}\cdot\phi_{\text{str}}(z)$$
-  This energy is minimized via a sequential operator-splitting composition at each denoising step ($\mathcal{T}_{\text{MDCP}} = \mathcal{T}_3 \circ \mathcal{T}_2 \circ \mathcal{T}_1$):
+- **Multi-Level Diffusion Consistency Prior (MDCP):** An inference-time latent trajectory optimizer. While the formal formulation solves the joint consistency energy minimization:
+  $$E_t = \lambda_1 E_{\mathrm{id}} + \lambda_2 E_{\mathrm{str}} + \lambda_3 E_{\mathrm{traj}} \tag{6}$$
+  via gradient descent $\tilde{z}_t = z_t - \eta(t)\nabla_{z_t}E_t$, the pipeline implements three analytical operators ($\mathcal{T}_1$, $\mathcal{T}_2$, $\mathcal{T}_3$) to heuristically approximate this minimization without costly backpropagation ($\mathcal{T}_{\text{MDCP}} = \mathcal{T}_3 \circ \mathcal{T}_2 \circ \mathcal{T}_1$):
   1. **Level 1 (L1) Physics-Informed Latent Smoothing ($\mathcal{T}_1$):** Approximates the heat-equation Laplacian during denoising steps $t/T \in [0.20, 0.80]$ using a normalized 2D Gaussian kernel ($G_\sigma, \sigma=\text{size}/3$) to suppress high-frequency noise accumulation:
      $$u(t+1) = u(t) + \alpha_{\text{eff}}(t)\cdot\big(u * G_\sigma - u(t)\big)$$
      $$\alpha_{\text{eff}}(t) = \alpha\cdot\frac{t-0.20}{0.80-0.20}, \quad \alpha = 0.03$$
