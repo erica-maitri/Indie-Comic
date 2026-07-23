@@ -1,5 +1,5 @@
 /* -------------------------------------------------------------
-   PANEL SCRAP - FRONTEND LOGIC & INTERACTIVE PROTOTYPE
+   PANEL SCRAP - FRONTEND LOGIC & PIPELINE INTEGRATION
    ------------------------------------------------------------- */
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -25,6 +25,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const panelCountVal = document.getElementById("panel-count-val");
     const modeQuick = document.getElementById("mode-quick");
     const modeGuided = document.getElementById("mode-guided");
+    const engineLlm = document.getElementById("engine-llm");
+    const engineTemplate = document.getElementById("engine-template");
     const styleCards = document.querySelectorAll(".style-card");
     const styleCustomBtn = document.getElementById("style-custom-btn");
     const generateOutlineBtn = document.getElementById("generate-outline-btn");
@@ -45,19 +47,63 @@ document.addEventListener("DOMContentLoaded", () => {
     const drawPanelsBtn = document.getElementById("draw-panels-btn");
     const regenerateOutlineBtn = document.getElementById("regenerate-outline-btn");
     const consoleLogsContainer = document.getElementById("console-logs-container");
+    const consoleStatus = document.getElementById("console-status");
     const emotionCanvas = document.getElementById("emotion-canvas");
+    const timelineContainer = document.getElementById("timeline-container");
+    const timelineEpisodeTitle = document.getElementById("timeline-episode-title");
     
     // Export & Publish Controls
+    const pagePreviewLabel = document.getElementById("page-preview-label");
+    const pagePreviewWrapper = document.getElementById("page-preview-wrapper");
     const exportActionBtns = document.querySelectorAll(".export-action-btn");
     const publishProjectBtn = document.getElementById("publish-project-btn");
     const successModal = document.getElementById("success-modal");
     const successCloseBtn = document.getElementById("success-close-btn");
 
+    // Global variables to store state
+    let activeStoryContext = null;
+    let generatedOutlinePanels = [];
+    let compiledFilePaths = {
+        pdf: "",
+        cbz: "",
+        html: ""
+    };
+    let graphPoints = [];
+    let selectedPointIndex = -1;
+
+    function getAdvancedPayload() {
+        const activeResBtn = document.querySelector(".toggle-group-sm button[id^='res-'].active");
+        const activeStepsBtn = document.querySelector(".toggle-group-sm button[id^='steps-'].active");
+        
+        return {
+            heat_alpha: parseFloat(document.getElementById("slider-heat-alpha").value),
+            attention_blend: parseFloat(document.getElementById("slider-attention-blend").value),
+            spatial_strength: parseFloat(document.getElementById("slider-spatial-strength").value),
+            critic_threshold: parseFloat(document.getElementById("slider-critic-threshold").value),
+            
+            width: activeResBtn ? parseInt(activeResBtn.getAttribute("data-val")) : 768,
+            height: activeResBtn ? parseInt(activeResBtn.getAttribute("data-val")) : 768,
+            inference_steps: activeStepsBtn ? parseInt(activeStepsBtn.getAttribute("data-val")) : 25,
+            lora_scale: parseFloat(document.getElementById("slider-lora-scale").value),
+            seed: parseInt(document.getElementById("generation-seed-input").value) || 42,
+            
+            enable_ipadapter: document.getElementById("check-ipadapter").checked,
+            enable_controlnet: document.getElementById("check-controlnet").checked,
+            enable_cpuoffload: document.getElementById("check-cpuoffload").checked,
+            
+            enable_ssim: document.getElementById("metric-ssim").checked,
+            enable_edge: document.getElementById("metric-edge").checked,
+            enable_color: document.getElementById("metric-color").checked,
+            enable_style: document.getElementById("metric-style").checked,
+            enable_clip: document.getElementById("metric-clip").checked,
+            enable_dinov2: document.getElementById("metric-dinov2").checked,
+        };
+    }
+
     // ---------------------------------------------------------
     // TAB NAVIGATION
     // ---------------------------------------------------------
     function switchTab(viewId) {
-        // Remove active class from all tabs & sections
         [tabWriter, tabStoryboard, tabExport].forEach(tab => tab.classList.remove("active"));
         [writerView, storyboardView, exportView].forEach(view => view.classList.remove("active"));
         
@@ -67,14 +113,12 @@ document.addEventListener("DOMContentLoaded", () => {
         } else if (viewId === "storyboard") {
             tabStoryboard.classList.add("active");
             storyboardView.classList.add("active");
-            // Draw/redraw the emotion arc when tab becomes visible
             setTimeout(initEmotionArc, 50);
         } else if (viewId === "export") {
             tabExport.classList.add("active");
             exportView.classList.add("active");
         }
         
-        // Scroll back to top of main scroll area
         document.querySelector(".app-content").scrollTop = 0;
     }
     
@@ -112,24 +156,207 @@ document.addEventListener("DOMContentLoaded", () => {
             modeQuick.classList.remove("active");
             modeGuided.classList.remove("active");
             btn.classList.add("active");
-            
             addConsoleLog(`[SYSTEM] Switched creation mode to: ${btn.textContent.trim()}`);
         });
     });
 
     // ---------------------------------------------------------
+    // STORY ENGINE SOURCE TOGGLE
+    // ---------------------------------------------------------
+    [engineLlm, engineTemplate].forEach(btn => {
+        btn.addEventListener("click", () => {
+            engineLlm.classList.remove("active");
+            engineTemplate.classList.remove("active");
+            btn.classList.add("active");
+            addConsoleLog(`[SYSTEM] Switched story engine to: ${btn.textContent.trim()}`);
+        });
+    });
+
+    // ---------------------------------------------------------
+    // CROSSOVER ENGINE TOGGLE
+    // ---------------------------------------------------------
+    const crossoverEnable = document.getElementById("crossover-enable");
+    const crossoverDisable = document.getElementById("crossover-disable");
+    [crossoverEnable, crossoverDisable].forEach(btn => {
+        btn.addEventListener("click", () => {
+            crossoverEnable.classList.remove("active");
+            crossoverDisable.classList.remove("active");
+            btn.classList.add("active");
+            addConsoleLog(`[SYSTEM] Switched crossover engine to: ${btn.textContent.trim()}`);
+        });
+    });
+
+    // ---------------------------------------------------------
+    // ADVANCED TUNING SETTINGS COLLAPSIBLE
+    // ---------------------------------------------------------
+    const advancedToggleBtn = document.getElementById("advanced-toggle-btn");
+    const advancedSettingsContent = document.getElementById("advanced-settings-content");
+    advancedToggleBtn.addEventListener("click", () => {
+        const isHidden = advancedSettingsContent.style.display === "none";
+        advancedSettingsContent.style.display = isHidden ? "block" : "none";
+        advancedToggleBtn.classList.toggle("open", isHidden);
+    });
+
+    // Update value badges for sliders
+    const sliderHeatAlpha = document.getElementById("slider-heat-alpha");
+    const heatAlphaVal = document.getElementById("heat-alpha-val");
+    sliderHeatAlpha.addEventListener("input", (e) => {
+        heatAlphaVal.textContent = e.target.value;
+    });
+
+    const sliderAttentionBlend = document.getElementById("slider-attention-blend");
+    const attentionBlendVal = document.getElementById("attention-blend-val");
+    sliderAttentionBlend.addEventListener("input", (e) => {
+        attentionBlendVal.textContent = e.target.value;
+    });
+
+    const sliderSpatialStrength = document.getElementById("slider-spatial-strength");
+    const spatialStrengthVal = document.getElementById("spatial-strength-val");
+    sliderSpatialStrength.addEventListener("input", (e) => {
+        spatialStrengthVal.textContent = e.target.value;
+    });
+
+    const sliderCriticThreshold = document.getElementById("slider-critic-threshold");
+    const criticThresholdVal = document.getElementById("critic-threshold-val");
+    sliderCriticThreshold.addEventListener("input", (e) => {
+        criticThresholdVal.textContent = e.target.value;
+    });
+
+    const sliderLoraScale = document.getElementById("slider-lora-scale");
+    const loraScaleVal = document.getElementById("lora-scale-val");
+    sliderLoraScale.addEventListener("input", (e) => {
+        loraScaleVal.textContent = e.target.value;
+    });
+
+    // Preset Toggles
+    const resBtns = [document.getElementById("res-draft"), document.getElementById("res-normal"), document.getElementById("res-high")];
+    resBtns.forEach(btn => {
+        btn.addEventListener("click", () => {
+            resBtns.forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            addConsoleLog(`[SYSTEM] Switched resolution preset to: ${btn.textContent.trim()}`);
+        });
+    });
+
+    const stepsBtns = [document.getElementById("steps-draft"), document.getElementById("steps-normal"), document.getElementById("steps-high")];
+    stepsBtns.forEach(btn => {
+        btn.addEventListener("click", () => {
+            stepsBtns.forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            addConsoleLog(`[SYSTEM] Switched inference steps preset to: ${btn.textContent.trim()}`);
+        });
+    });
+
+    // ---------------------------------------------------------
+    // SINGLE PANEL REGENERATION EVENT DELEGATION
+    // ---------------------------------------------------------
+    timelineContainer.addEventListener("click", async (e) => {
+        const regenBtn = e.target.closest(".regen-panel-btn");
+        if (!regenBtn) return;
+        
+        const panelId = parseInt(regenBtn.getAttribute("data-panel-id"));
+        
+        // Show loading state for this panel's image frame
+        const frame = document.getElementById(`panel-img-frame-${panelId}`);
+        frame.innerHTML = `
+            <div class="empty-frame-state pulse">
+                <span class="status-dot"></span>
+                <span>REGENERATING PANEL ${panelId}...</span>
+            </div>
+        `;
+        
+        regenBtn.disabled = true;
+        regenBtn.textContent = "REGENERATING...";
+        
+        try {
+            // Collect all panels current data
+            const panelCards = document.querySelectorAll(".panel-card");
+            const panelsPayload = [];
+            panelCards.forEach(card => {
+                const pid = parseInt(card.getAttribute("data-panel-id"));
+                const visualDescription = card.querySelector(".panel-desc-input").value.trim();
+                const emotion = card.querySelector(".emotion-select").value;
+                const dialogue = card.querySelector(".panel-dialogue-input").value.trim();
+                
+                panelsPayload.push({
+                    panel_id: pid,
+                    visual_description: visualDescription,
+                    emotion: emotion,
+                    dialogue: dialogue
+                });
+            });
+
+            const payload = {
+                panel_id: panelId,
+                premise: premiseInput.value.trim(),
+                panel_count: panelsPayload.length,
+                style: selectedStyle,
+                custom_style: customStylePromptText,
+                character_name: document.getElementById("character-name-input").value.trim() || (activeStoryContext ? activeStoryContext.character_name : "Wanderer"),
+                character_characteristics: document.getElementById("character-desc-input").value.trim() || null,
+                story_world: document.getElementById("story-world-input").value.trim() || (activeStoryContext ? activeStoryContext.story_world : "The Abstract"),
+                emotion: activeStoryContext ? activeStoryContext.emotion : "sadness",
+                panels: panelsPayload,
+                ...getAdvancedPayload()
+            };
+
+            const response = await fetch("/api/regenerate_panel", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.error || "Failed to regenerate panel.");
+            }
+
+            const data = await response.json();
+            
+            // Update the panel image
+            frame.innerHTML = `
+                <div class="sketch-generated-state">
+                    <img src="${data.image_path}?t=${Date.now()}" class="panel-result-image" alt="Panel ${panelId}">
+                    <div class="sketch-badge">RENDERED</div>
+                </div>
+            `;
+            
+            // Re-render layout preview on the Export page
+            renderPageReviewGrid(data.pages);
+            
+            addConsoleLog(`[SYSTEM] Panel ${panelId} successfully regenerated and page layouts updated!`);
+            
+        } catch (err) {
+            addConsoleLog(`[ERROR] Failed to regenerate panel ${panelId}: ${err.message}`);
+            alert(`Regeneration Error: ${err.message}`);
+            // Revert back
+            frame.innerHTML = `
+                <div class="empty-frame-state">
+                    <span>FAILED TO RENDER. RETRY.</span>
+                </div>
+            `;
+        } finally {
+            regenBtn.disabled = false;
+            regenBtn.textContent = "REGENERATE PANEL";
+        }
+    });
+
+    // ---------------------------------------------------------
     // ART STYLE SELECTION & MODAL
     // ---------------------------------------------------------
+    let selectedStyle = "noir";
+    let customStylePromptText = "";
+
     styleCards.forEach(card => {
         card.addEventListener("click", () => {
             if (card.id === "style-custom-btn") {
-                // Open Custom Style modal
                 styleModal.style.display = "flex";
                 return;
             }
             
             styleCards.forEach(c => c.classList.remove("selected"));
             card.classList.add("selected");
+            selectedStyle = card.getAttribute("data-style");
             
             const selectedStyleName = card.querySelector(".style-badge").textContent;
             addConsoleLog(`[SYSTEM] Style changed to: ${selectedStyleName}`);
@@ -145,15 +372,16 @@ document.addEventListener("DOMContentLoaded", () => {
     saveStyleBtn.addEventListener("click", () => {
         const promptText = customStylePrompt.value.trim();
         if (promptText) {
-            // Update custom card badge to show prompt excerpt
+            customStylePromptText = promptText;
+            selectedStyle = "custom";
+            
             const customBadge = styleCustomBtn.querySelector(".style-badge");
             customBadge.textContent = promptText.substring(0, 10).toUpperCase() + "...";
             
-            // Mark custom card as active
             styleCards.forEach(c => c.classList.remove("selected"));
             styleCustomBtn.classList.add("selected");
             
-            addConsoleLog(`[SYSTEM] Custom style set: "${promptText}"`);
+            addConsoleLog(`[SYSTEM] Custom style prompt set: "${promptText}"`);
         }
         styleModal.style.display = "none";
     });
@@ -172,94 +400,201 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     // ---------------------------------------------------------
-    // STORY OUTLINE GENERATION SIMULATION
+    // STORY OUTLINE GENERATION (BACKEND INTEGRATION)
     // ---------------------------------------------------------
-    let generationInterval = null;
-    generateOutlineBtn.addEventListener("click", () => {
-        // Disable outline button to prevent multiple triggers
+    generateOutlineBtn.addEventListener("click", async () => {
+        const premise = premiseInput.value.trim();
+        if (!premise) {
+            alert("Please enter a story premise first!");
+            return;
+        }
+
+        // Show loading state
         generateOutlineBtn.parentElement.style.display = "none";
         generationLoader.style.display = "block";
-        
-        let timeLeft = 15;
-        let progress = 0;
-        loaderTimeLeft.textContent = timeLeft;
         loaderProgress.style.width = "0%";
-        
-        const statusSteps = [
-            { threshold: 0, text: "Analyzing story premise..." },
-            { threshold: 25, text: "Mapping character emotional beats..." },
-            { threshold: 50, text: "Designing scene intensity graphs..." },
-            { threshold: 75, text: "Drafting layout panels..." },
-            { threshold: 90, text: "Assembling storyboard elements..." }
-        ];
+        loaderTimeLeft.textContent = "15";
+        loaderStatusText.textContent = "Analyzing premise...";
 
-        generationInterval = setInterval(() => {
-            progress += 100 / 150; // Progress matches 15 seconds subdivided by 100ms ticks
-            loaderProgress.style.width = `${Math.min(progress, 100)}%`;
-            
-            // Time remaining updates every 1s
-            if (Math.round(progress) % 7 === 0) {
-                const calculatedTime = Math.max(15 - Math.round((progress / 100) * 15), 0);
-                loaderTimeLeft.textContent = calculatedTime;
+        // Simple progress simulation while waiting for API response
+        let fakeProgress = 0;
+        const progressInterval = setInterval(() => {
+            if (fakeProgress < 90) {
+                fakeProgress += 5;
+                loaderProgress.style.width = `${fakeProgress}%`;
+                loaderTimeLeft.textContent = Math.max(1, Math.round((100 - fakeProgress) * 0.15)) + "s";
+                
+                if (fakeProgress > 70) {
+                    loaderStatusText.textContent = "Assembling story beats...";
+                } else if (fakeProgress > 40) {
+                    loaderStatusText.textContent = "Running emotion analyzer...";
+                }
+            }
+        }, 300);
+
+        try {
+            const payload = {
+                premise: premise,
+                panel_count: parseInt(panelSlider.value),
+                mode: modeQuick.classList.contains("active") ? "quick" : "guided",
+                engine: engineLlm.classList.contains("active") ? "llm" : "template",
+                style: selectedStyle,
+                custom_style: customStylePromptText,
+                character_name: document.getElementById("character-name-input").value.trim() || null,
+                character_characteristics: document.getElementById("character-desc-input").value.trim() || null,
+                story_world: document.getElementById("story-world-input").value.trim() || null,
+                weave_mood: crossoverEnable.classList.contains("active"),
+                ...getAdvancedPayload()
+            };
+
+            const response = await fetch("/api/generate_outline", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+
+            const data = await response.json();
+            clearInterval(progressInterval);
+
+            if (!response.ok) {
+                throw new Error(data.error || "Failed to generate outline.");
             }
 
-            // Status message updating based on thresholds
-            const currentStatus = statusSteps.reduce((acc, step) => {
-                if (progress >= step.threshold) return step.text;
-                return acc;
-            }, statusSteps[0].text);
-            loaderStatusText.textContent = currentStatus;
+            // Save story context and panels
+            activeStoryContext = data;
+            generatedOutlinePanels = data.panels;
+            
+            // Update UI components with backend results
+            timelineEpisodeTitle.textContent = `EPISODE: ${data.character_name.toUpperCase()} IN ${data.story_world.toUpperCase()}`;
+            
+            // Clear and render panel cards dynamically
+            renderTimelinePanels(data.panels);
+            
+            // Map graph control points based on returned intensities
+            graphPoints = data.intensity_points.map((pt, idx) => {
+                const totalPts = data.intensity_points.length;
+                const xVal = 30 + idx * (250 / (totalPts - 1));
+                return {
+                    x: xVal,
+                    y: pt.y,
+                    label: pt.label,
+                    draggable: (idx > 0 && idx < totalPts - 1)
+                };
+            });
 
-            if (progress >= 100) {
-                clearInterval(generationInterval);
-                
-                // Hide loader and show button back
+            // Finish loader
+            loaderProgress.style.width = "100%";
+            loaderTimeLeft.textContent = "0";
+            loaderStatusText.textContent = "Outline ready!";
+
+            setTimeout(() => {
                 generationLoader.style.display = "none";
                 generateOutlineBtn.parentElement.style.display = "block";
-                
-                // Route to Storyboard
                 switchTab("storyboard");
-                addConsoleLog(`[STORY] Successfully generated 6-panel outline matching Noir style!`);
-            }
-        }, 100);
+                addConsoleLog(`[STORY] Successfully generated ${data.panels.length}-panel outline matching routed emotion '${data.emotion.toUpperCase()}'!`);
+            }, 600);
+
+        } catch (err) {
+            clearInterval(progressInterval);
+            generationLoader.style.display = "none";
+            generateOutlineBtn.parentElement.style.display = "block";
+            alert(`Error generating story: ${err.message}`);
+            console.error(err);
+        }
     });
+
+    // Dynamically render timeline cards
+    function renderTimelinePanels(panels) {
+        // Clear previous children except the line itself
+        const timelineLine = timelineContainer.querySelector(".timeline-line");
+        timelineContainer.innerHTML = "";
+        timelineContainer.appendChild(timelineLine);
+
+        panels.forEach((p, idx) => {
+            const item = document.createElement("div");
+            item.className = "timeline-item";
+            item.innerHTML = `
+                <div class="timeline-badge">${p.panel_id}</div>
+                <div class="brutalist-card panel-card" data-panel-id="${p.panel_id}">
+                    <div class="panel-field-group">
+                        <div class="field-label">Visual Description</div>
+                        <textarea class="panel-desc-input">${p.visual_description}</textarea>
+                    </div>
+                    <div class="panel-field-group emotion-row">
+                        <div>
+                            <div class="field-label">Character Emotion</div>
+                            <div class="select-wrapper">
+                                <select class="emotion-select">
+                                    <option value="AWE" ${p.emotion === 'AWE' ? 'selected' : ''}>AWE</option>
+                                    <option value="DETERMINATION" ${p.emotion === 'DETERMINATION' ? 'selected' : ''}>DETERMINATION</option>
+                                    <option value="JOY" ${p.emotion === 'JOY' ? 'selected' : ''}>JOY</option>
+                                    <option value="SADNESS" ${p.emotion === 'SADNESS' ? 'selected' : ''}>SADNESS</option>
+                                    <option value="ANGER" ${p.emotion === 'ANGER' ? 'selected' : ''}>ANGER</option>
+                                    <option value="FEAR" ${p.emotion === 'FEAR' ? 'selected' : ''}>FEAR</option>
+                                    <option value="NEUTRAL" ${p.emotion === 'NEUTRAL' || !p.emotion ? 'selected' : ''}>NEUTRAL</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="regen-badge-slot">
+                            <span class="badge-gray">PANEL ${p.panel_id}</span>
+                        </div>
+                    </div>
+                    <div class="panel-field-group">
+                        <div class="field-label">Dialogue</div>
+                        <textarea class="panel-dialogue-input">${p.dialogue}</textarea>
+                    </div>
+                    <div class="panel-image-container">
+                        <div class="empty-frame-state" id="panel-img-frame-${p.panel_id}">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                                <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                                <polyline points="21 15 16 10 5 21"></polyline>
+                            </svg>
+                            <span>EMPTY FRAME</span>
+                        </div>
+                        <button class="brutalist-btn btn-yellow btn-sm regen-panel-btn" id="regen-panel-btn-${p.panel_id}" data-panel-id="${p.panel_id}" style="margin-top: 10px; font-size: 12px; padding: 6px 12px; display: none;">REGENERATE PANEL</button>
+                    </div>
+                </div>
+            `;
+            timelineContainer.appendChild(item);
+        });
+    }
 
     // ---------------------------------------------------------
     // STORYBOARD: INTERACTIVE EMOTION ARC GRAPH (HTML5 CANVAS)
     // ---------------------------------------------------------
-    let graphPoints = [
-        { x: 30, y: 100, label: "Start", draggable: false },
-        { x: 120, y: 70, label: "Build-up", draggable: true },
-        { x: 180, y: 40, label: "Climax", draggable: true },
-        { x: 230, y: 80, label: "Fall", draggable: true },
-        { x: 280, y: 20, label: "Ending", draggable: false }
-    ];
-    let selectedPointIndex = -1;
-
     function initEmotionArc() {
+        if (!emotionCanvas) return;
         const ctx = emotionCanvas.getContext("2d");
         
-        // Draw the current state
+        // If graphPoints is empty, define default fallback points
+        if (graphPoints.length === 0) {
+            graphPoints = [
+                { x: 30, y: 100, label: "Start", draggable: false },
+                { x: 120, y: 70, label: "Build-up", draggable: true },
+                { x: 180, y: 40, label: "Climax", draggable: true },
+                { x: 230, y: 80, label: "Fall", draggable: true },
+                { x: 280, y: 110, label: "Ending", draggable: false }
+            ];
+        }
+        
         drawChart();
         
-        // Handle Canvas mouse drag interactions
         emotionCanvas.onmousedown = (e) => {
             const rect = emotionCanvas.getBoundingClientRect();
-            // Calculate scale in case of styling scaling
             const scaleX = emotionCanvas.width / rect.width;
             const scaleY = emotionCanvas.height / rect.height;
             const mouseX = (e.clientX - rect.left) * scaleX;
             const mouseY = (e.clientY - rect.top) * scaleY;
             
-            // Check if clicked close to a draggable point
             selectedPointIndex = graphPoints.findIndex(pt => {
                 if (!pt.draggable) return false;
                 const dist = Math.sqrt(Math.pow(pt.x - mouseX, 2) + Math.pow(pt.y - mouseY, 2));
-                return dist < 12; // Click radius
+                return dist < 12;
             });
             
             if (selectedPointIndex !== -1) {
-                addConsoleLog(`[UI] Editing emotion intensity at: ${graphPoints[selectedPointIndex].label}`);
+                addConsoleLog(`[UI] Adjusting climax beat intensity at: ${graphPoints[selectedPointIndex].label}`);
             }
         };
 
@@ -269,7 +604,6 @@ document.addEventListener("DOMContentLoaded", () => {
             const scaleY = emotionCanvas.height / rect.height;
             const mouseY = (e.clientY - rect.top) * scaleY;
             
-            // Clamp Y inside canvas boundaries (keeping some margins)
             graphPoints[selectedPointIndex].y = Math.max(15, Math.min(mouseY, 115));
             drawChart();
         };
@@ -277,12 +611,12 @@ document.addEventListener("DOMContentLoaded", () => {
         emotionCanvas.onmouseup = () => {
             if (selectedPointIndex !== -1) {
                 const intensityVal = Math.round(((130 - graphPoints[selectedPointIndex].y) / 130) * 100);
-                addConsoleLog(`[SYSTEM] Graph point "${graphPoints[selectedPointIndex].label}" intensity set to ${intensityVal}%`);
+                addConsoleLog(`[SYSTEM] Adjusted beat "${graphPoints[selectedPointIndex].label}" climax intensity set to ${intensityVal}%`);
                 selectedPointIndex = -1;
             }
         };
         
-        // Touch events for mobile support
+        // Touch events for mobile compatibility
         emotionCanvas.ontouchstart = (e) => {
             if (e.touches.length > 0) {
                 const touch = e.touches[0];
@@ -333,7 +667,6 @@ document.addEventListener("DOMContentLoaded", () => {
             ctx.beginPath();
             ctx.moveTo(graphPoints[0].x, graphPoints[0].y);
             
-            // Quadratic/Bézier approximation of path spline
             for (let i = 0; i < graphPoints.length - 1; i++) {
                 const xc = (graphPoints[i].x + graphPoints[i+1].x) / 2;
                 const yc = (graphPoints[i].y + graphPoints[i+1].y) / 2;
@@ -345,85 +678,290 @@ document.addEventListener("DOMContentLoaded", () => {
             ctx.lineWidth = 4;
             ctx.stroke();
             
-            // Draw each control point dot
+            // Draw control point dots
             graphPoints.forEach(pt => {
                 ctx.beginPath();
                 ctx.arc(pt.x, pt.y, pt.draggable ? 6 : 4, 0, 2 * Math.PI);
-                ctx.fillStyle = pt.label === "Climax" ? "#7A2012" : "var(--color-border)";
+                ctx.fillStyle = pt.draggable ? "#7A2012" : "var(--color-border)";
                 ctx.fill();
                 
-                // Add a border if it's draggable
                 if (pt.draggable) {
                     ctx.strokeStyle = "var(--color-accent-yellow)";
                     ctx.lineWidth = 2.5;
                     ctx.stroke();
-                }
-                
-                // Label above Climax
-                if (pt.label === "Climax") {
-                    ctx.font = "bold 10px 'Space Grotesk', sans-serif";
-                    ctx.fillStyle = "var(--color-text-dark)";
-                    ctx.fillText("Climax", pt.x - 18, pt.y - 12);
                 }
             });
         }
     }
 
     // ---------------------------------------------------------
-    // STORYBOARD SIMULATION: DRAW COMIC PANELS
+    // STORYBOARD: DRAW COMIC PANELS (SSE LOG STREAMING)
     // ---------------------------------------------------------
-    drawPanelsBtn.addEventListener("click", () => {
-        addConsoleLog(`[SD-BACKEND] Initiating sketch generation sequence...`);
-        
-        // Scroll to terminal to see action
-        document.querySelector(".system-log-console").scrollIntoView({ behavior: 'smooth' });
-        
-        // Progressively trigger sketches loading
-        simulatePanelDrawProgress(1, 1000, () => {
-            simulatePanelDrawProgress(2, 2800, () => {
-                addConsoleLog(`[SYSTEM] Sketch render compilation success! Navigating to Export page...`);
-                // Auto switch to export view
-                setTimeout(() => {
-                    switchTab("export");
-                }, 1000);
+    drawPanelsBtn.addEventListener("click", async () => {
+        // Collect current panel inputs from HTML
+        const panelCards = document.querySelectorAll(".panel-card");
+        const panelsPayload = [];
+        panelCards.forEach(card => {
+            const pid = parseInt(card.getAttribute("data-panel-id"));
+            const visualDescription = card.querySelector(".panel-desc-input").value.trim();
+            const emotion = card.querySelector(".emotion-select").value;
+            const dialogue = card.querySelector(".panel-dialogue-input").value.trim();
+            
+            panelsPayload.push({
+                panel_id: pid,
+                visual_description: visualDescription,
+                emotion: emotion,
+                dialogue: dialogue
             });
+        });
+
+        if (panelsPayload.length === 0) {
+            alert("No panels found. Please generate a story outline first!");
+            return;
+        }
+
+        // Set loader states
+        consoleStatus.textContent = "RENDERING...";
+        consoleStatus.style.color = "var(--color-accent-red)";
+        drawPanelsBtn.disabled = true;
+        drawPanelsBtn.innerHTML = `RENDERING... <span class="status-dot"></span>`;
+        
+        // Clear log box
+        consoleLogsContainer.innerHTML = "";
+        addConsoleLog("[SYSTEM] Initiating backend execution pipeline...");
+        
+        // Scroll to terminal console view
+        document.querySelector(".system-log-console").scrollIntoView({ behavior: 'smooth' });
+
+        try {
+            const payload = {
+                premise: premiseInput.value.trim(),
+                panel_count: panelsPayload.length,
+                style: selectedStyle,
+                custom_style: customStylePromptText,
+                character_name: document.getElementById("character-name-input").value.trim() || (activeStoryContext ? activeStoryContext.character_name : "Wanderer"),
+                character_characteristics: document.getElementById("character-desc-input").value.trim() || null,
+                story_world: document.getElementById("story-world-input").value.trim() || (activeStoryContext ? activeStoryContext.story_world : "The Abstract"),
+                emotion: activeStoryContext ? activeStoryContext.emotion : "sadness",
+                weave_mood: crossoverEnable.classList.contains("active"),
+                panels: panelsPayload,
+                ...getAdvancedPayload()
+            };
+
+            const response = await fetch("/api/draw_panels", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                const data = await response.json();
+                throw new Error(data.error || "Failed to start pipeline.");
+            }
+
+            // Stream logs via SSE parser (Response Reader)
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder("utf-8");
+            let buffer = "";
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split("\n");
+                // The last element is a partial line, keep it in the buffer
+                buffer = lines.pop();
+
+                for (const line of lines) {
+                    if (line.startsWith("data: ")) {
+                        const jsonStr = line.substring(6).trim();
+                        if (!jsonStr) continue;
+
+                        try {
+                            const data = JSON.parse(jsonStr);
+                            
+                            if (data.log) {
+                                addConsoleLog(data.log);
+                            }
+                            
+                            if (data.status === "complete") {
+                                handleRenderingComplete(data);
+                            } else if (data.status === "error") {
+                                throw new Error(data.error);
+                            }
+                        } catch (e) {
+                            console.error("Error parsing log line", line, e);
+                        }
+                    }
+                }
+            }
+
+        } catch (err) {
+            consoleStatus.textContent = "ERROR";
+            consoleStatus.style.color = "var(--color-accent-red)";
+            addConsoleLog(`[ERROR] Pipeline crashed: ${err.message}`);
+            alert(`Pipeline Error: ${err.message}`);
+            drawPanelsBtn.disabled = false;
+            drawPanelsBtn.innerHTML = `
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <path d="M12 20h9"></path>
+                    <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                </svg>
+                DRAW COMIC PANELS
+            `;
+        }
+    });
+
+    // Handle completed pipeline drawing run
+    function handleRenderingComplete(data) {
+        consoleStatus.textContent = "READY";
+        consoleStatus.style.color = "var(--color-text-dark)";
+        drawPanelsBtn.disabled = false;
+        drawPanelsBtn.innerHTML = `
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <path d="M12 20h9"></path>
+                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+            </svg>
+            DRAW COMIC PANELS
+        `;
+
+        addConsoleLog(`[SYSTEM] Generation and layout assembly complete! Updating UI...`);
+
+        // 1. Update timeline panel images in storyboard view
+        data.panels.forEach(p => {
+            const frame = document.getElementById(`panel-img-frame-${p.panel_id}`);
+            if (frame) {
+                frame.innerHTML = `
+                    <div class="sketch-generated-state">
+                        <img src="${p.image_path}" class="panel-result-image" alt="Panel ${p.panel_id}">
+                        <div class="sketch-badge">RENDERED</div>
+                    </div>
+                `;
+            }
+        });
+
+        // Show all regenerate buttons
+        document.querySelectorAll(".regen-panel-btn").forEach(btn => {
+            btn.style.display = "block";
+        });
+
+        // 2. Cache output files
+        compiledFilePaths.pdf = data.pdf_path;
+        compiledFilePaths.cbz = data.cbz_path;
+        compiledFilePaths.html = data.html_path;
+
+        // 3. Render Export layout preview page
+        renderPageReviewGrid(data.pages);
+
+        // 4. Update stats values
+        document.querySelector(".stats-value:nth-child(2)").textContent = data.panels.length;
+        
+        // Auto-navigate to Export review tab
+        setTimeout(() => {
+            switchTab("export");
+        }, 1500);
+    }
+
+    // Render MangaFlow Page Layout Preview Grid
+    function renderPageReviewGrid(pages) {
+        pagePreviewWrapper.innerHTML = "";
+
+        if (pages.length === 0) {
+            pagePreviewWrapper.innerHTML = `
+                <div class="empty-layout-state">
+                    <span>Layout file not found. Render again.</span>
+                </div>
+            `;
+            return;
+        }
+
+        // Render page selector tabs if multiple pages are returned
+        const reviewCard = document.querySelector(".page-review-card");
+        let tabsContainer = document.getElementById("page-review-tabs");
+        
+        if (!tabsContainer) {
+            tabsContainer = document.createElement("div");
+            tabsContainer.id = "page-review-tabs";
+            tabsContainer.className = "page-review-tabs";
+            // Insert tabs container before the wrapper
+            reviewCard.insertBefore(tabsContainer, pagePreviewWrapper);
+        }
+        
+        tabsContainer.innerHTML = "";
+        
+        pages.forEach((page, index) => {
+            const btn = document.createElement("button");
+            btn.className = `page-tab-btn ${index === 0 ? 'active' : ''}`;
+            btn.textContent = `PAGE ${page.page_num}`;
+            btn.addEventListener("click", () => {
+                document.querySelectorAll(".page-tab-btn").forEach(b => b.classList.remove("active"));
+                btn.classList.add("active");
+                pagePreviewLabel.textContent = `PAGE ${page.page_num} LAYOUT`;
+                
+                // Switch image source
+                const previewImg = pagePreviewWrapper.querySelector("img");
+                if (previewImg) previewImg.src = page.image_path;
+            });
+            tabsContainer.appendChild(btn);
+        });
+
+        // Show the first page layout by default
+        pagePreviewLabel.textContent = `PAGE ${pages[0].page_num} LAYOUT`;
+        const img = document.createElement("img");
+        img.src = pages[0].image_path;
+        img.className = "assembled-layout-preview";
+        img.alt = `Page ${pages[0].page_num} Layout`;
+        pagePreviewWrapper.appendChild(img);
+    }
+
+    // ---------------------------------------------------------
+    // EXPORT DOWNLOADS & ACTIONS
+    // ---------------------------------------------------------
+    exportActionBtns.forEach(btn => {
+        btn.addEventListener("click", () => {
+            const format = btn.getAttribute("data-format").toLowerCase();
+            const filePath = compiledFilePaths[format];
+            
+            if (!filePath) {
+                alert(`No generated ${format.toUpperCase()} file found. Make sure to generate panels first!`);
+                return;
+            }
+
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = `DOWNLOADING... <span class="status-dot"></span>`;
+            
+            addConsoleLog(`[EXPORT] Requesting file download for format: ${format.toUpperCase()}`);
+            
+            // Redirect browser to secure download API route
+            window.location.href = `/api/download?path=${encodeURIComponent(filePath)}`;
+
+            setTimeout(() => {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+                addConsoleLog(`[EXPORT] Completed file download response!`);
+            }, 1000);
         });
     });
 
-    function simulatePanelDrawProgress(panelId, initialDelay, callback) {
-        setTimeout(() => {
-            addConsoleLog(`[SD-MODEL] Loading LORA weights for Style: Noir...`);
-            
-            setTimeout(() => {
-                addConsoleLog(`[SD-MODEL] Rendering scene panel ${panelId} matching descriptor...`);
-                
-                setTimeout(() => {
-                    const frame = document.getElementById(`panel-img-frame-${panelId}`);
-                    if (frame) {
-                        // Transform empty state to sketch state
-                        if (panelId === 1) {
-                            frame.innerHTML = `
-                                <div class="sketch-generated-state">
-                                    <div class="sketch-placeholder-img" style="background: linear-gradient(135deg, #222, #888);"></div>
-                                    <div class="sketch-badge">SKETCH GENERATED</div>
-                                </div>
-                            `;
-                        } else if (panelId === 2) {
-                            // Show already formatted sketch state
-                            frame.style.display = "block";
-                        }
-                    }
-                    addConsoleLog(`[STORYBOARD] Panel ${panelId} successfully compiled!`);
-                    if (callback) callback();
-                }, 1000);
-            }, 800);
-        }, initialDelay);
-    }
+    // ---------------------------------------------------------
+    // PUBLISH PROJECT OVERLAY
+    // ---------------------------------------------------------
+    publishProjectBtn.addEventListener("click", () => {
+        successModal.style.display = "flex";
+        addConsoleLog(`[SYSTEM] Comic project officially published successfully!`);
+        startConfetti();
+    });
 
-    // Regenerate Outline
+    successCloseBtn.addEventListener("click", () => {
+        successModal.style.display = "none";
+        stopConfetti();
+    });
+
+    // Regenerate beats outline simulation trigger
     regenerateOutlineBtn.addEventListener("click", () => {
-        addConsoleLog(`[SYSTEM] Recalculating outline beats...`);
-        // Simple visual jitter to show it recalculated
+        addConsoleLog(`[SYSTEM] Recalculating story beat structures...`);
         document.querySelectorAll(".panel-card textarea").forEach(area => {
             area.style.backgroundColor = "#FFF1DF";
             setTimeout(() => {
@@ -431,47 +969,8 @@ document.addEventListener("DOMContentLoaded", () => {
             }, 300);
         });
         setTimeout(() => {
-            addConsoleLog(`[SYSTEM] Outline beat structure optimized.`);
-        }, 600);
-    });
-
-    // ---------------------------------------------------------
-    // EXPORT DOWNLOAD SIMULATION
-    // ---------------------------------------------------------
-    exportActionBtns.forEach(btn => {
-        btn.addEventListener("click", () => {
-            const format = btn.getAttribute("data-format");
-            const originalText = btn.innerHTML;
-            
-            // Set mock loading state
-            btn.disabled = true;
-            btn.innerHTML = `COMPILING ${format}... <span class="status-dot"></span>`;
-            
-            addConsoleLog(`[EXPORT] Initiating bundle compilation for format: ${format}`);
-            
-            setTimeout(() => {
-                btn.disabled = false;
-                btn.innerHTML = originalText;
-                addConsoleLog(`[EXPORT] Completed download for: panel_scrap_comic.${format.toLowerCase()}`);
-                
-                // Show completion banner/alert
-                alert(`Successfully generated and downloaded panel_scrap_comic.${format.toLowerCase()}!`);
-            }, 1800);
-        });
-    });
-
-    // ---------------------------------------------------------
-    // PUBLISH PROJECT SUCCESS OVERLAY & CONFETTI
-    // ---------------------------------------------------------
-    publishProjectBtn.addEventListener("click", () => {
-        successModal.style.display = "flex";
-        addConsoleLog(`[SYSTEM] Comic project "Episode 01: The Awakening" officially published!`);
-        startConfetti();
-    });
-
-    successCloseBtn.addEventListener("click", () => {
-        successModal.style.display = "none";
-        stopConfetti();
+            addConsoleLog(`[SYSTEM] Story beat pacing optimized.`);
+        }, 500);
     });
 
     // ---------------------------------------------------------
@@ -484,13 +983,15 @@ document.addEventListener("DOMContentLoaded", () => {
         
         if (message.startsWith("[SYSTEM]")) {
             logLine.innerHTML = `<span class="text-gray">[${timestamp}]</span> <span class="text-yellow">${message}</span>`;
+        } else if (message.includes("[ERROR]")) {
+            logLine.innerHTML = `<span class="text-gray">[${timestamp}]</span> <span class="text-red">${message}</span>`;
         } else {
             logLine.innerHTML = `<span class="text-gray">[${timestamp}]</span> ${message}`;
         }
         
         consoleLogsContainer.appendChild(logLine);
         
-        // Auto scroll to bottom
+        // Auto scroll console to bottom
         consoleLogsContainer.scrollTop = consoleLogsContainer.scrollHeight;
     }
 
@@ -503,7 +1004,6 @@ document.addEventListener("DOMContentLoaded", () => {
     let confettiParticles = [];
 
     function startConfetti() {
-        // Create full screen background canvas for particles
         if (!canvasConfetti) {
             canvasConfetti = document.createElement("canvas");
             canvasConfetti.style.position = "absolute";
@@ -521,7 +1021,6 @@ document.addEventListener("DOMContentLoaded", () => {
         canvasConfetti.height = canvasConfetti.offsetHeight;
         confettiParticles = [];
         
-        // Generate particles
         for (let i = 0; i < 60; i++) {
             confettiParticles.push({
                 x: Math.random() * canvasConfetti.width,
@@ -559,7 +1058,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 ctxConfetti.lineWidth = 1.5;
                 ctxConfetti.strokeStyle = "var(--color-border)";
                 
-                // Draw square confetti with brutalist thick outline
                 ctxConfetti.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
                 ctxConfetti.strokeRect(-p.size / 2, -p.size / 2, p.size, p.size);
                 
