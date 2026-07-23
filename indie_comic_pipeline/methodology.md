@@ -86,10 +86,10 @@ flowchart TD
                 MDCP_Eq["Multi-Level Diffusion\nConsistency Prior (MDCP)\n𝒯MDCP = 𝒯3 ○ 𝒯2 ○ 𝒯1"]:::process
                 SeqPipe["Sequential Operator Pipeline"]:::process
                 LoopLabel["Repeat for each denoising step"]:::process
-                T1["T1: Physics Latent Smoothing\nGaussian blur subtraction\nto suppress high-frequency noise"]:::process
-                CPUPin["CPU Pinned Memory"]:::process
-                T2["T2: Attention Output Cache\nCaches anchor cross-attention output activations\nPinned-memory streaming\nO(1) GPU VRAM"]:::process
-                T3["T3: Spatiotemporal Channel Statistics Alignment\nAligns mean/variance statistics\ntoward anchor layout signature"]:::process
+                T1["T1: Latent Trajectory Optimization\nGradient-tracked optimization of clean latent\nE_cons via autograd and GradScaler"]:::process
+                CPUPin["CPU Pinned Memory & Disk pt Cache"]:::process
+                T2["T2: Attention Output Cache\nCaches anchor cross-attention output activations\nSpatial regional and saliency masking"]:::process
+                T3["T3: Spatiotemporal Channel Statistics Alignment\nAligns channel-wise mean/variance statistics\ntoward anchor channel statistics"]:::process
                 
                 MDCP_Eq --> SeqPipe
                 SeqPipe --> LoopLabel
@@ -186,6 +186,10 @@ flowchart TD
   - `PoseDirector` / `EmotionDirector` / `CameraDirector`: Enrich prompts with joint rotation constraints, expressions, facial geometry, framing, and camera positions.
 
 ### Phase 2: Self-Referential Visual Anchoring
+
+
+**MDCP Pipeline Update:** Phase 2 additionally performs a full UNet forward pass on the anchor panel to extract and cache the exact MDCP diffusion signatures ($A_{anchor}$, $F_{anchor}$, $\{O_{anchor}^{(\ell)}\}$, $\mu_a$, $\sigma_a$) for downstream operator use.
+
 - **File:** [anchoring.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/anchoring.py) (`IdentityEmbeddingExtractor`)
 - **Mechanism:** Isolates Panel 1 to act as the primary visual anchor. Instead of training custom model checkpoints or feeding reference image files, the anchor panel is synthesized directly from text. It extracts a visual identity signature using three non-learned classical descriptors:
   - **RGB Color Histogram**: Channel-wise pixel color distributions.
@@ -195,6 +199,10 @@ flowchart TD
 - **Extracted Tokens**: The signature parameters are cached into the blackboard [memory.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/memory.py) (`StorySectionMemory`) to guide subsequent generations.
 
 ### Phase 3 & 4: In-Generation Consistency & Composable Control (MDCP)
+
+
+**MDCP Pipeline Update:** The standard SDXL pipeline is replaced by a custom PyTorch denoising loop that natively executes the MDCP mathematical operator splitting ($\mathcal{T}_1$, $\mathcal{T}_2$, $\mathcal{T}_3$) exactly as derived.
+
 - **Files:** [panel_engine.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/panel_engine.py) (`PanelEngine`), [compositor.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/compositor.py) (`CharComCompositor`), and [advanced_attention.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/advanced_attention.py) (`AdvancedAttentionManager`)
 - **CharCom Compositor:** Blends base prompts with character-specific LoRA weights, guidance, seeds, and steps at runtime:
   $$W_{\text{total}} = W_{\text{base}} + \sum (\alpha_i \cdot W_i)$$
@@ -204,18 +212,21 @@ flowchart TD
   - **Memory & VRAM Optimizations:** Enables model CPU offloading, attention slicing, and VAE slicing to run inference within a 6.5 GB VRAM ceiling.
   - **FreeU Image Enhancement:** Applies FreeU skip-connection and backbone adjustments ($s_1=0.6$, $s_2=0.4$, $b_1=1.1$, $b_2=1.2$) to reduce texture over-smoothing.
   - **U-Net Feature Adapter:** Exposes U-Net cross-attention modules (`attn2` layers) to allow `AdvancedAttentionManager` to inject the L2 key/value caches at runtime.
-- **Multi-Level Diffusion Consistency Prior (MDCP):** An inference-time latent trajectory optimizer. While the formal formulation solves the joint consistency energy minimization:
+- **Multi-Level Diffusion Consistency Prior (MDCP):** An inference-time latent trajectory optimizer. It solves the joint consistency energy minimization:
   $$E_t = \lambda_1 E_{\mathrm{id}} + \lambda_2 E_{\mathrm{str}} + \lambda_3 E_{\mathrm{traj}} \tag{6}$$
-  via gradient descent $\tilde{z}_t = z_t - \eta(t)\nabla_{z_t}E_t$, the pipeline implements three analytical operators ($\mathcal{T}_1$, $\mathcal{T}_2$, $\mathcal{T}_3$) to heuristically approximate this minimization without costly backpropagation ($\mathcal{T}_{\text{MDCP}} = \mathcal{T}_3 \circ \mathcal{T}_2 \circ \mathcal{T}_1$):
-  1. **Level 1 (L1) Physics-Informed Latent Smoothing ($\mathcal{T}_1$):** Approximates the heat-equation Laplacian during denoising steps $t/T \in [0.20, 0.80]$ using a normalized 2D Gaussian kernel ($G_\sigma, \sigma=\text{size}/3$) to suppress high-frequency noise accumulation:
-     $$u(t+1) = u(t) + \alpha_{\text{eff}}(t)\cdot\big(u * G_\sigma - u(t)\big)$$
-     $$\alpha_{\text{eff}}(t) = \alpha\cdot\frac{t-0.20}{0.80-0.20}, \quad \alpha = 0.03$$
-  2. **Level 2 (L2) Shared Cross-Attention Key/Value Caching ($\mathcal{T}_2$):** Binds semantic traits (face, hair, attire) by caching projected Key and Value tensors from the anchor panel's primary four cross-attention blocks. 
-     $$\text{output} = (1-\beta)\cdot\text{Softmax}\left(\frac{Q_{\text{cur}}K_{\text{cur}}^T}{\sqrt{d}}\right)V_{\text{cur}} + \beta\cdot\text{Softmax}\left(\frac{Q_{\text{cur}}K_{\text{anchor}}^T}{\sqrt{d}}\right)V_{\text{anchor}}, \quad \beta = 0.15$$
-     - *Pinned Memory Streaming:* Caches are stored in page-locked host CPU memory and prefetched asynchronously to GPU CUDA device memory (`non_blocking=True`) concurrently with self-attention computation, maintaining a strict $O(1)$ memory complexity of ~150 MB VRAM overhead regardless of the panel sequence length $N$.
-  3. **Level 3 (L3) Spatiotemporal Channel-Statistic Alignment ($\mathcal{T}_3$):** Aligns target latent statistics to the anchor distribution during the structural formation window $t/T \in [0.30, 0.60]$ to stabilize contrast, lighting, and global layouts under camera cuts:
-     $$z_{\text{final},c} = z_c\cdot\big(1+\text{blend}_w\cdot(\text{std\_ratio}_c-1)\big) + \text{blend}_w\cdot\gamma\cdot(\mu_{\text{anchor},c}-\mu_{\text{current},c})$$
-     $$\text{std\_ratio}_c = \text{clamp}(\sigma_{\text{anchor},c}/\sigma_{\text{current},c},\,0.80,\,1.20), \quad \text{blend}_w(t) = \gamma\cdot\frac{t-0.30}{0.60-0.30}, \quad \gamma = 0.08$$
+  via gradient descent $\tilde{z}_t = z_t - \eta(t)\nabla_{z_t}E_t$. The pipeline implements the precise three-operator splitting defined in Algorithm 1 ($\mathcal{T}_{\text{MDCP}} = \mathcal{T}_2 \circ \mathcal{T}_1 \circ \mathcal{T}_3$):
+  1. **T3 — Spatiotemporal Channel-Statistic Alignment ($\mathcal{T}_3$):** Applied to the noisy latent $z_t$ using the anchor channel statistics $(\mu_a, \sigma_a)$ with clamped ratio $[0.8, 1.2]$ and blend weight $\omega$:
+     $$r_c = \text{clip}(\sigma_a / \sigma_c, 0.8, 1.2)$$
+     $$z_{\text{corr},c} = r_c \cdot (z_{t,c} - \mu_c) + \mu_a$$
+     $$z_{\text{aligned}} = (1 - \omega) \cdot z_t + \omega \cdot z_{\text{corr}}$$
+  2. **T1 — Latent Trajectory Optimization ($\mathcal{T}_1$):** A gradient-tracked optimization step. Runs a forward pass on the aligned latent $z_{\text{aligned}}$ to extract target cross-attention maps $A_t$ and intermediate features $F_t$. Predicts the clean latent $\hat{z}_0$ and computes the consistency energy:
+     $$E_{\text{cons}} = \lambda_1 E_{\text{id}} + \lambda_2 E_{\text{str}} + \lambda_3 E_{\text{traj}}$$
+     The gradient $\nabla_{z_{\text{aligned}}} E_{\text{cons}}$ is backpropagated to update the latent:
+     $$\tilde{z}_t = z_{\text{aligned}} - \eta(t) \nabla_{z_{\text{aligned}}} E_{\text{cons}}$$
+     - *Optimizations:* Triggers early stopping when $t_{\text{ratio}} \notin [0.30, 0.60]$ (saving 70% of T1 overhead), runs with FP16 Automatic Mixed Precision (AMP) using `GradScaler`, and uses gradient checkpointing on the U-Net.
+  3. **T2 — Attention Propagation Module ($\mathcal{T}_2$):** Performs a second U-Net forward pass on the updated latent $\tilde{z}_t$ with attention interception hooks registered on the four outermost cross-attention blocks to blend current output activations with anchor activations:
+     $$O_{\text{prop}} = (1 - \beta)O_{\text{curr}} + \beta O_{\text{anchor}}$$
+     - *Pinned Memory & Disk Serialization:* Tensors are pinned in CPU memory (`tensor.pin_memory()`) to hide PCIe transfer latency. Signatures are serialized as `.pt` files to disk for checkpoint recovery and to prevent memory serialization issues.
 
 ### Phase 6: Automated Quality Validation Loop
 - **File:** [quality_critic.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/quality_critic.py) (`QualityCritic`)
@@ -241,7 +252,7 @@ flowchart TD
   - **CBZ:** Zip archive containing sequential PNG assets.
   - **PDF:** Document packaging page raster outputs.
   - **HTML Scrollbook:** Responsive scrollable layout with dynamic web formatting.
-- **Telemetry Loop:** Gathers user interface feedback ratings. If a sequence receives low consistency ratings, `HeuristicFeedbackTuner` mutates the master settings YAML configuration (e.g. updates default guidance, steps, quality thresholds, or adds positive/negative style terms to prompts) to guide future iterations.
+- **Telemetry Loop:** Gathers user interface feedback ratings. If a sequence receives low consistency ratings or over-smoothing complaints, `HeuristicFeedbackTuner` mutates the master settings YAML configuration (e.g. updates default guidance, steps, quality thresholds, adds positive/negative style terms, or modulates MDCP parameters $\lambda_1, \lambda_3$ and attention blend $\beta$) to guide future iterations.
 
 ---
 

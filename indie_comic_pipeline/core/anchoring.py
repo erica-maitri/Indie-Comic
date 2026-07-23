@@ -185,6 +185,28 @@ class ReferenceFreeAnchor:
                 log.info("  [Step 2.6] Structural detail fingerprint computed (M1)")
             except Exception as e:
                 log.debug(f"  [Step 2.6] Detail fingerprint skipped: {e}")
+                
+            # MDCP Core: Cache diffusion signature for T1/T2/T3
+            try:
+                if hasattr(advanced_attention, '_anchor_mu') and advanced_attention._anchor_mu is not None:
+                    sig_dict = {
+                        "A_anchor": advanced_attention._anchor_A,
+                        "F_anchor": advanced_attention._anchor_F,
+                        "O_anchor": advanced_attention._anchor_O,
+                        "mu_a": advanced_attention._anchor_mu,
+                        "sigma_a": advanced_attention._anchor_sigma,
+                        "z0_anchor": advanced_attention._anchor_z0
+                    }
+                    pt_path = os.path.join(anchor_dir, f"mdcp_signature_{character_name}.pt")
+                    import torch
+                    torch.save(sig_dict, pt_path)
+                    
+                    # Store reference path in identity_tokens
+                    identity_tokens["mdcp_signature_path"] = pt_path
+                    identity_tokens["mdcp_signature"] = sig_dict
+                    log.info(f"  [Step 2.7] MDCP structural signature saved to {pt_path}")
+            except Exception as e:
+                log.debug(f"  [Step 2.7] MDCP signature caching failed: {e}")
         # ─────────────────────────────────────────────────────────────────────
 
         log.info("=" * 50)

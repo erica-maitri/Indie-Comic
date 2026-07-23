@@ -161,6 +161,10 @@ flowchart TD
   - `PoseDirector` / `EmotionDirector` / `CameraDirector`: Enrich prompts with joint rotation constraints, expressions, facial geometry, framing, and camera positions.
 
 ### Phase 2 — Multi-Anchor Visual Anchoring
+
+
+**MDCP Pipeline Update:** Phase 2 additionally performs a full UNet forward pass on the anchor panel to extract and cache the exact MDCP diffusion signatures ($A_{anchor}$, $F_{anchor}$, $\{O_{anchor}^{(\ell)}\}$, $\mu_a$, $\sigma_a$) for downstream operator use.
+
 The pipeline extends the single-anchor design to a character-aware multi-anchor caching system. It scans all panel prompts to build a map $k_c$—the earliest panel index where character $c$ appears. For each distinct character, it generates panel $k_c$ with T2 disabled, then extracts cross-attention outputs $O_{\text{anchor}}^{(l)}(c)$ and channel statistics $(\mu_c, \sigma_c)$, storing them keyed by character name. If a user supplies a reference image, it pre-populates the corresponding entry. Memory overhead is $\mathcal{O}(1)$ because the number of distinct characters is bounded (5).
 
 #### Classical Regional Identity Signature (4 Descriptors)
@@ -184,6 +188,10 @@ The pipeline extends the single-anchor design to a character-aware multi-anchor 
 ---
 
 ### Phase 3 & 4: In-Generation Consistency & Composable Control (MDCP)
+
+
+**MDCP Pipeline Update:** The standard SDXL pipeline is replaced by a custom PyTorch denoising loop that natively executes the MDCP mathematical operator splitting ($\mathcal{T}_1$, $\mathcal{T}_2$, $\mathcal{T}_3$) exactly as derived.
+
 - **Files:** [panel_engine.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/panel_engine.py), [compositor.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/compositor.py), [advanced_attention.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/advanced_attention.py)
 - **CharCom Compositor** blends base prompts with character-specific LoRA weights, guidance, seeds, and steps at runtime:
   $$W_{\text{total}} = W_{\text{base}} + \sum_i (\alpha_i \cdot W_i)$$
@@ -713,6 +721,8 @@ Feedback loops mutate configuration parameters based on panel rating histories:
 - If average rating $\bar{r} < 3.0$: strictness increases ($\tau \leftarrow \tau + 0.05$), and text conditioning is boosted ($\text{CFG} \leftarrow \text{CFG} + 0.5$).
 - If average rating $\bar{r} > 4.5$: strictness decreases ($\tau \leftarrow \tau - 0.03$) to reduce reject-and-regenerate rates.
 - For character consistency failures, the LoRA scale is boosted: $\lambda_{\text{LoRA}} \leftarrow \lambda_{\text{LoRA}} + 0.05$.
+- If consistency complaints dominate over over-smoothing: identity prior and blend are boosted ($\lambda_1 \leftarrow \lambda_1 + 0.10$, $\beta \leftarrow \beta + 0.02$).
+- If over-smoothing complaints dominate over consistency: trajectory prior is attenuated and identity prior boosted ($\lambda_3 \leftarrow \lambda_3 - 0.10$, $\lambda_1 \leftarrow \lambda_1 + 0.05$).
 - Critic weights are adjusted: consistency failures shift weights $\tilde{w}_{\text{cons}} = w_{\text{cons}} + 0.05$ (with aesthetics and readability rescaled to maintain a sum of 1.0).
 - Visual style mutations are appended: append `["sharp focus", "detailed line art"]` for aesthetics and `["consistent character features", "same outfit"]` for consistency.
 
@@ -1220,6 +1230,11 @@ Output: Signature S_c = {h_color_c, rho_edge_c, G_style_c, S_aes_c}, Channel sta
 18. for c_idx in 1..4 do
 19.     mu_c[c_idx]    <- Mean(z[c_idx] * M_latent)
 20.     sigma_c[c_idx] <- Std(z[c_idx] * M_latent)
+21. /* Character Anchor MDCP Signature Caching */
+22. A_anchor_c <- Extract_Attention_Maps(I)
+23. F_anchor_c <- Extract_Feature_Maps(I)
+24. O_anchor_c <- Extract_CrossAttn_Outputs(I)
+
 21. end for
 
 22. return {h_color_c, rho_edge_c, G_style_c, S_aes_c}, (mu_c, sigma_c)
@@ -1314,17 +1329,19 @@ Output: evaluation_report (14-metric dict), performance_summary
 To validate the resource-performance trade-offs outlined in Algorithm 6 and Proposition 1, the framework implements an automated hyperparameter tuning and benchmarking suite. This engine performs a systematic grid search over key generation parameters to locate the Pareto-optimal configuration for any given hardware setup.
 
 #### 7.1 Parameter Grid Formulation
-The sweep space $\mathcal{S}$ is defined as the Cartesian product of the target resolution scale $\mathcal{R}$, denoising step count $\mathcal{T}$, and adapter LoRA scale $\mathcal{L}$:
-$$\mathcal{S} = \mathcal{R} \times \mathcal{T} \times \mathcal{L}$$
+The sweep space $\mathcal{S}$ is defined as the Cartesian product of the MDCP hyperparameters:
+$$\mathcal{S} = \Lambda_1 \times \Lambda_2 \times \Lambda_3 \times \mathcal{B} \times \Omega$$
 Where:
-- $\mathcal{R} \in \{512 \times 512, 768 \times 768\}$
-- $\mathcal{T} \in [15, 40] \cap \mathbb{Z}$
-- $\mathcal{L} \in [0.5, 1.0]$
+- $\Lambda_1, \Lambda_2, \Lambda_3 \in \{0.5, 1.0, 1.5\}$ (prior weights)
+- $\mathcal{B} \in \{0.10, 0.15, 0.20\}$ (attention blend ratio)
+- $\Omega \in \{0.30, 0.50, 0.70\}$ (channel stats blend ratio)
 
 #### 7.2 Objective Function and Recommendation Logic
-For each configuration $c = (r, t, l) \in \mathcal{S}$, the benchmark suite evaluates generation latency ($t_{\text{latency}}$), peak VRAM delta ($M_{\text{peak}}$), and quality similarity metrics relative to a high-quality baseline image generated at the maximum bounds ($c_{\text{max}} = (r_{\text{max}}, t_{\text{max}}, l_{\text{max}})$):
-$$S_{\text{quality}}(c) = w_1 \cdot \text{SSIM}(g_c, g_{\text{baseline}}) + w_2 \cdot S_{\text{edge}}(g_c, g_{\text{baseline}}) + w_3 \cdot S_{\text{color}}(g_c, g_{\text{baseline}})$$
-Where $w_1 = 0.5$, $w_2 = 0.2$, and $w_3 = 0.3$.
-
-The recommendation engine identifies the optimal configuration $c^*$ by maximizing the efficiency index (quality per unit of latency) while satisfying hard hardware VRAM constraints:
-$$c^* = \arg\max_{c \in \mathcal{S}} \frac{S_{\text{quality}}(c)}{\max(\epsilon, t_{\text{latency}}(c))} \quad \text{subject to} \quad M_{\text{peak}}(c) \le M_{\text{threshold}}$$
+For each configuration $c = (\lambda_1, \lambda_2, \lambda_3, \beta, \omega) \in \mathcal{S}$, the benchmark suite evaluates concept consistency metrics over a validation set:
+- DINOv2 visual similarity ($S_{\text{DINO}}$)
+- CLIP-I semantic similarity ($S_{\text{CLIP}}$)
+- LPIPS distance ($D_{\text{LPIPS}}$)
+The overall consistency energy is computed as:
+$$E_{\text{cons}}(c) = 0.3 \cdot D_{\text{LPIPS}}(c) + 0.3 \cdot (1 - S_{\text{CLIP}}(c)) + 0.4 \cdot (1 - S_{\text{DINO}}(c))$$
+The sweep suite identifies the Pareto-optimal config $c^*$ that minimizes consistency energy:
+$$c^* = \arg\min_{c \in \mathcal{S}} E_{\text{cons}}(c)$$

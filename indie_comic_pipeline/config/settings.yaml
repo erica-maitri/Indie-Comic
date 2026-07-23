@@ -45,12 +45,21 @@ generation:
   seed: 42
   batch_size: 1  # Always 1 for T4
   safety_checker: false  # Disable safety checker to save VRAM
+  use_mdcp: true         # Enable mathematically exact MDCP T1/T2/T3 sampling loop
   
   # Performance optimizations
   enable_attention_slicing: true
   enable_vae_slicing: true
   enable_tiling: false  # Can cause issues on T4
   enable_model_cpu_offload: true  # Essential for T4
+
+# MDCP Priors Settings
+mdcp:
+  lambda_1: 1.0   # Identity consistency weight (E_id)
+  lambda_2: 1.0   # Structural consistency weight (E_str)
+  lambda_3: 1.0   # Trajectory consistency weight (E_traj)
+  beta: 0.15      # Attention blend ratio (T2)
+  omega: 0.50     # Stats blend ratio (T3)
 
 # Output Settings
 outputs:

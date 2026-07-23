@@ -84,7 +84,11 @@ class HeuristicFeedbackTuner:
             "guidance_scale_adjustment": 0.0,
             "critic_weight_shifts": {},
             "positive_terms_to_add": [],
-            "negative_terms_to_add": []
+            "negative_terms_to_add": [],
+            "lambda_1_adjustment": 0.0,
+            "lambda_2_adjustment": 0.0,
+            "lambda_3_adjustment": 0.0,
+            "beta_adjustment": 0.0,
         }
         
         if total_rated < 3:
@@ -108,6 +112,7 @@ class HeuristicFeedbackTuner:
         consistency_complaints = 0
         detail_complaints = 0
         clutter_complaints = 0
+        oversmoothing_complaints = 0
         
         for r in panels:
             comment = r.get("comment", "").lower()
@@ -120,10 +125,12 @@ class HeuristicFeedbackTuner:
                     detail_complaints += 1
                 if any(k in comment for k in ["bubble", "read", "text", "clutter", "crowded", "overlap"]):
                     clutter_complaints += 1
+                if any(k in comment for k in ["over-smoothing", "oversmooth", "plastic", "too smooth", "blurry style", "loss of detail", "smudged"]):
+                    oversmoothing_complaints += 1
                     
-        total_complaints = consistency_complaints + detail_complaints + clutter_complaints
+        total_complaints = consistency_complaints + detail_complaints + clutter_complaints + oversmoothing_complaints
         if total_complaints > 0:
-            log.info(f"  Feedback breakdown: Consistency={consistency_complaints}, Quality={detail_complaints}, Readability={clutter_complaints}")
+            log.info(f"  Feedback breakdown: Consistency={consistency_complaints}, Quality={detail_complaints}, Readability={clutter_complaints}, Over-smoothing={oversmoothing_complaints}")
             
             # Suggest shifting quality critic weights towards problematic areas
             shifts = {}
@@ -142,6 +149,14 @@ class HeuristicFeedbackTuner:
                 shifts["aesthetic_quality"] = -0.03
                 
             adjustments["critic_weight_shifts"] = shifts
+
+            # MDCP specific tuning
+            if consistency_complaints > oversmoothing_complaints:
+                adjustments["lambda_1_adjustment"] = +0.10
+                adjustments["beta_adjustment"] = +0.02
+            elif oversmoothing_complaints > consistency_complaints:
+                adjustments["lambda_3_adjustment"] = -0.10
+                adjustments["lambda_1_adjustment"] = +0.05
 
         # 3. Analyze qualitative comments for template tuning
         pos_to_add = []
@@ -235,6 +250,38 @@ class HeuristicFeedbackTuner:
                         log.info(f"Updated LoRA adapter scale from {old_lora} to {new_lora}")
                         modified = True
                         
+                    # Apply MDCP specific tuning parameters
+                    l1_adj = adjustments.get("lambda_1_adjustment", 0.0)
+                    l2_adj = adjustments.get("lambda_2_adjustment", 0.0)
+                    l3_adj = adjustments.get("lambda_3_adjustment", 0.0)
+                    beta_adj = adjustments.get("beta_adjustment", 0.0)
+                    
+                    if l1_adj != 0.0 or l2_adj != 0.0 or l3_adj != 0.0 or beta_adj != 0.0:
+                        if "mdcp" not in settings:
+                            settings["mdcp"] = {}
+                        mdcp_s = settings["mdcp"]
+                        
+                        if l1_adj != 0.0:
+                            old_l1 = mdcp_s.get("lambda_1", 1.0)
+                            mdcp_s["lambda_1"] = round(max(0.1, min(5.0, old_l1 + l1_adj)), 2)
+                            log.info(f"Updated mdcp lambda_1 from {old_l1} to {mdcp_s['lambda_1']}")
+                            modified = True
+                        if l2_adj != 0.0:
+                            old_l2 = mdcp_s.get("lambda_2", 1.0)
+                            mdcp_s["lambda_2"] = round(max(0.1, min(5.0, old_l2 + l2_adj)), 2)
+                            log.info(f"Updated mdcp lambda_2 from {old_l2} to {mdcp_s['lambda_2']}")
+                            modified = True
+                        if l3_adj != 0.0:
+                            old_l3 = mdcp_s.get("lambda_3", 1.0)
+                            mdcp_s["lambda_3"] = round(max(0.1, min(5.0, old_l3 + l3_adj)), 2)
+                            log.info(f"Updated mdcp lambda_3 from {old_l3} to {mdcp_s['lambda_3']}")
+                            modified = True
+                        if beta_adj != 0.0:
+                            old_beta = mdcp_s.get("beta", 0.15)
+                            mdcp_s["beta"] = round(max(0.01, min(0.9, old_beta + beta_adj)), 3)
+                            log.info(f"Updated mdcp beta from {old_beta} to {mdcp_s['beta']}")
+                            modified = True
+                            
                     # Apply critic weight shifts
                     shifts = adjustments.get("critic_weight_shifts", {})
                     if shifts:

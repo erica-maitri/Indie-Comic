@@ -90,10 +90,10 @@ flowchart TD
                 MDCP_Eq["Multi-Level Diffusion\nConsistency Prior (MDCP)\n𝒯MDCP = 𝒯3 ○ 𝒯2 ○ 𝒯1"]:::process
                 SeqPipe["Sequential Operator Pipeline"]:::process
                 LoopLabel["Repeat for each denoising step"]:::process
-                T1["T1: Physics Latent Smoothing\nGaussian blur subtraction\nto suppress high-frequency noise"]:::process
-                CPUPin["CPU Pinned Memory"]:::process
-                T2["T2: Attention Output Cache\nCaches anchor cross-attention output activations\nPinned-memory streaming\nO(1) GPU VRAM"]:::process
-                T3["T3: Spatiotemporal Channel Statistics Alignment\nAligns mean/variance statistics\ntoward anchor layout signature"]:::process
+                T1["T1: Latent Trajectory Optimization\nGradient-tracked optimization of clean latent\nE_cons via autograd and GradScaler"]:::process
+                CPUPin["CPU Pinned Memory & Disk pt Cache"]:::process
+                T2["T2: Attention Output Cache\nCaches anchor cross-attention output activations\nSpatial regional and saliency masking"]:::process
+                T3["T3: Spatiotemporal Channel Statistics Alignment\nAligns channel-wise mean/variance statistics\ntoward anchor channel statistics"]:::process
                 
                 MDCP_Eq --> SeqPipe
                 SeqPipe --> LoopLabel
@@ -1061,7 +1061,11 @@ $$\text{size\_class}_i = \begin{cases} \max(\text{size\_class}_i,\ \text{"large"
 
 ### Phase 2 — Multi-Anchor Reference-Free Identity Anchoring
 
-Phase 2 establishes character-aware reference-free visual anchors for protagonists, secondary characters, antagonists, and cameos without cross-entity contamination. The pipeline scans the enriched storyboard to compile a `character_introduction_panel` map, identifying the earliest panel $k_c$ at which each named character $c$ is introduced. Anchors are established sequentially: the first appearance panel $k_c$ is generated with $\mathcal{T}_2$ disabled to allow the prompt to establish the visual profile. The system then uses foreground segmentation (e.g., Segment Anything Model or localized bounding box regions $M_c \in \{0, 1\}^{H \times W}$) to isolate each character. 
+
+**MDCP Pipeline Update:** Phase 2 additionally performs a full UNet forward pass on the anchor panel to extract and cache the exact MDCP diffusion signatures ($A_{anchor}$, $F_{anchor}$, $\{O_{anchor}^{(\ell)}\}$, $\mu_a$, $\sigma_a$) for downstream operator use.
+
+
+Phase 2 establishes character-aware reference-free visual anchors for protagonists, secondary characters, antagonists, and cameos without cross-entity contamination. The pipeline scans the enriched storyboard to compile a `character_introduction_panel` map, identifying the earliest panel $k_c$ at which each named character $c$ is introduced. Anchors are established sequentially: the first appearance panel $k_c$ is generated with $\mathcal{T}_2$ disabled to allow the prompt to establish the visual profile. Phase 2 additionally performs a full UNet forward pass on the anchor panel to extract and cache the exact MDCP diffusion signatures ($A_{anchor}$, $F_{anchor}$, $\{O_{anchor}^{(\ell)}\}$, $\mu_a$, $\sigma_a$) for downstream operator use. The system then uses foreground segmentation (e.g., Segment Anything Model or localized bounding box regions $M_c \in \{0, 1\}^{H \times W}$) to isolate each character. 
 
 Classical visual identity signatures and latent statistics are extracted from these segmented region pixels, bypassing silleted paths and keeping CPU host caches mapped per character name.
 
@@ -1123,6 +1127,10 @@ where $rg=|R-G|$, $yb=|0.5(R+G)-B|$ are computed over the bounding box cropped i
 ---
 
 ### Phase 3-4 — Unified Panel Generation Loop
+
+
+**MDCP Pipeline Update:** The standard SDXL pipeline is replaced by a custom PyTorch denoising loop that natively executes the MDCP mathematical operator splitting ($\mathcal{T}_1$, $\mathcal{T}_2$, $\mathcal{T}_3$) exactly as derived.
+
 
 **Model:** `stabilityai/stable-diffusion-xl-base-1.0`, fp16 (~6.5 GB VRAM).
 
@@ -1421,6 +1429,8 @@ Then symmetrically crop the longer axis to $(w_b, h_b)$.
 | $\bar{r}>4.5$ → relax thresholds | Reduces reject-regenerate rate | $\tau\leftarrow\text{clip}(\tau-0.03,0.1,0.95)$ |
 | $\bar{r}<3.0$ → boost CFG | Stronger text conditioning | $\text{CFG}\leftarrow\text{clip}(\text{CFG}+0.5,1.0,15.0)$ |
 | Consistency complaints → boost LoRA | Restrict structural variations | $\lambda_{\text{LoRA}}\leftarrow\text{clip}(\lambda+0.05,0.0,1.5)$ |
+| Consistency complaints > Over-smoothing | Boost identity prior and blend | $\lambda_1\leftarrow\text{clip}(\lambda_1+0.10,0.1,5.0)$, $\beta\leftarrow\text{clip}(\beta+0.02,0.01,0.90)$ |
+| Over-smoothing complaints > Consistency | Attenuate trajectory prior, boost identity | $\lambda_3\leftarrow\text{clip}(\lambda_3-0.10,0.1,5.0)$, $\lambda_1\leftarrow\text{clip}(\lambda_1+0.05,0.1,5.0)$ |
 
 **Critic weight shifts** (re-normalized after each shift: $w_d\leftarrow\tilde{w}_d/\sum_{d'}\tilde{w}_{d'}$):
 - Consistency complaints: $\tilde{w}_{\text{cons}}=w_{\text{cons}}+0.05$, $\tilde{w}_{\text{aes}}=w_{\text{aes}}-0.02$, $\tilde{w}_{\text{read}}=w_{\text{read}}-0.03$
@@ -1483,40 +1493,53 @@ The individual operators $\mathcal{T}_1$, $\mathcal{T}_2$, and $\mathcal{T}_3$ a
 `	ext
 Algorithm 1: MDCP Denoising Step Update
 
-Input: 
-    Timestep t, latent z_t, anchor latent z0_anchor, text conditioning c
-    Anchor cache: {O_anchor^(ℓ)} for ℓ=1..4 (hooked attn2 layers), anchor channel stats (μ_a, σ_a), anchor attention maps A_anchor, anchor feature maps F_anchor
-    Hyperparameters: λ1, λ2, λ3, λ, β, ω
-Output: Consistency-aligned latent z'_t
+Require:
+    - Timestep t
+    - Current latent z_t
+    - Anchor latent z_{0,anchor}
+    - Text conditioning c
+    - Anchor attention maps A_anchor and feature maps F_anchor
+    - Anchor channel statistics (μ_a, σ_a)
+    - Cached anchor attention outputs {O_anchor^(ℓ)} for ℓ = 1,...,4
+    - Hyperparameters: λ₁, λ₂, λ₃, λ, β, ω
+    - Scheduler function S(·) and noise schedule σ_t
 
-/* T3: Spatiotemporal Channel Statistics Alignment */
-1.  For each channel c in z_t:
-2.      μ_c, σ_c ← ComputeChannelStats(z_t, c)
-3.      r_c ← clamp(σ_a / σ_c, 0.8, 1.2)
-4.      z_corr,c ← r_c(z_t,c - μ_c) + μ_a
-5.  End For
-6.  z_aligned ← (1 - ω)z_t + ω z_corr
+Ensure: Next latent z_{t-1}
 
-/* T1: Latent Trajectory Optimization */
-7.  Forward UNet on z_aligned to extract current attention maps A_t and feature maps F_t
-8.  z_hat_0 ← D_sched(z_aligned, ε_θ, t)
-9.  E_id ← (1/N)||A_t - A_anchor||_F^2
-10. E_str ← ||F_t - Ψ(F_t, F_anchor)||_2^2
-11. E_traj ← ||z_hat_0 - z0_anchor||_2^2
-12. E_t ← λ1 E_id + λ2 E_str + λ3 E_traj
-13. R_t ← ∇_{z_aligned} E_t
-14. η(t) ← λ * σ_t / (σ_max + ε)
-15. z_tilde ← z_aligned - η(t)R_t
+-----------------------------------------------------------------
+1:  // ----- T3: Spatiotemporal Channel Statistics Alignment -----
+2:  for each channel c in z_t do
+3:      μ_c, σ_c ← ComputeChannelStats(z_t, c)
+4:      r_c ← clip(σ_a / σ_c, 0.8, 1.2)
+5:      z_corr,c ← r_c · (z_{t,c} − μ_c) + μ_a
+6:  end for
+7:  z_aligned ← (1 − ω) · z_t + ω · z_corr
 
-/* T2: Attention Propagation Module (Executes during UNet forward pass on z_tilde) */
-16. For each of the 4 hooked attn2 layers ℓ, during UNet forward pass on z_tilde:
-17.     O_curr^(ℓ) ← layer ℓ's ordinary forward output
-18.     O_prop^(ℓ) ← (1 - β) O_curr^(ℓ) + β O_anchor^(ℓ)
-19.     Replace layer ℓ's output with O_prop^(ℓ) in-place
-20. End For
-21. z'_t ← latent produced after the UNet forward pass completes with T2 propagation
+8:  // ----- T1: Latent Trajectory Optimization -----
+9:  Forward UNet on z_aligned to extract attention maps A_t and feature maps F_t
+10: z_hat_0 ← D_sched(z_aligned, εθ, t)          // predict clean latent
+11: E_id   ← (1/N) · || A_t − A_anchor ||_F²
+12: E_str  ← || F_t − Ψ(F_t, F_anchor) ||₂²
+13: E_traj ← || z_hat_0 − z_{0,anchor} ||₂²
+14: E_t    ← λ₁·E_id + λ₂·E_str + λ₃·E_traj
+15: R_t    ← ∇_{z_aligned} E_t                    // gradient w.r.t. z_aligned
+16: η(t)   ← λ · σ_t / (σ_max + ε)
+17: z_tilde ← z_aligned − η(t) · R_t              // corrected latent
 
-22. Return z'_t
+18: // ----- T2: Attention Propagation Module -----
+19: // Perform a second UNet forward pass on z_tilde; during the forward pass,
+20: // for each of the four hooked attention layers (ℓ=1..4), replace the output:
+21: for each layer ℓ in {1,...,4} do
+22:     O_curr^(ℓ) ← ordinary output of layer ℓ on z_tilde
+23:     O_prop^(ℓ) ← (1 − β)·O_curr^(ℓ) + β·O_anchor^(ℓ)
+24:     Replace layer ℓ’s output with O_prop^(ℓ)
+25: end for
+26: // After this forward pass, we obtain the predicted noise εθ(z_tilde, t, c)
+
+27: // ----- Scheduler step (proceeds the diffusion) -----
+28: z_{t-1} ← Scheduler( z_tilde, εθ(z_tilde, t, c) )
+
+29: Return z_{t-1}
 ```
 
 ---
@@ -1533,8 +1556,7 @@ Output: assembled pages (CBZ/PDF/HTML), feedback telemetry log
 3.  /* Phase 1 - Multi-Agent Enrichment (blackboard) */
 4.  storyboard <- AgentController.run_planning(story_config)
     // Stage A sequential:     StoryDirector -> ActionDirector
-    // Stage B concurrent (ThreadPoolExecutor(4)):
-    //     DialogueWriter || PoseDirector || EmotionDirector || CameraDirector
+    // Stage B concurrent: DialogueWriter || PoseDirector || EmotionDirector || CameraDirector
 
 5.  /* Phase 2 - Multi-Anchor Visual Anchoring */
 6.  character_intro_map <- build_character_introduction_panel_map(storyboard)
@@ -1545,33 +1567,47 @@ Output: assembled pages (CBZ/PDF/HTML), feedback telemetry log
 11.     end if
 12.     M_c <- segment_character_foreground(panel_res.image, c) // using SAM (M3) or BBox
 13.     identity_signatures[c] <- IdentityEmbeddingExtractor.extract_masked(panel_res.image, M_c)
-14.     //   Extracts: regional HSV histogram, silhouette Canny edge, masked Gram matrix, local aesthetic score
-15.     //   Pins O_anchor^(1..4)(c) to CPU pinned memory (pin_memory())
-16.     //   Captures character channel stats (mu_c, sigma_c)
-17.     character_anchors[c] <- {O_anchor_c, mu_c, sigma_c}
+14.     //   Extracts: regional HSV histogram, silhouette Canny edge, Gram matrix, aesthetic score
+15.     //   Pins anchor variables (z0_anchor, A_anchor, F_anchor, O_anchor, mu_a, sigma_a) to CPU memory
+16.     //   Serializes signature directly to disk as outputs/anchors/mdcp_signature_{c}.pt
+17.     character_anchors[c] <- {pinned_signature_pt_path}
 18. end for
 
-8.  /* Phases 3-6 - remaining panels (PARALLELIZABLE) */
-9.  for panel_id in 2..N do parallel
-10.     panel_result <- generate_panel_with_retry(panel_id)
-        //  CharCom: derives g_final, S_final, lambda_final, seed (Equations 27-31)
-        //  _build_prompt(): assembles 10-layer prompt; Compel encodes overflow tokens
-        //  Algorithm 1 (MDCP): executes inside each of the S_final UNet denoising steps
-        //  QualityCritic: evaluates; reject-and-regenerate loop (max 2 retries)
-        //  TextImageIntegrator: places LLM-planned dialogue (post-crop order)
-11. end for
+19. /* Phases 3-6 - remaining panels (PARALLELIZABLE WITH VRAM BUDGETER) */
+20. w <- min(4, total_remaining_panels) // initial workers count
+21. w <- MemoryBudgeter(total_VRAM, expected_panel_VRAM_cost, w)
+22. pids_remaining <- list(range(2, N + 1))
+23. while pids_remaining is not empty do:
+24.     Submit batch of size w to ThreadPoolExecutor
+25.     try:
+26.         for each panel_id in batch in parallel do:
+27.             Load character signature .pt from disk and pin to CPU memory
+28.             S_final <- assign_complexity_steps(panel_id) // 15, 20, or 25 steps
+29.             panel_result <- generate_panel_with_retry(panel_id, steps = S_final)
+30.             //  Algorithm 1 (MDCP): executes inside each of the S_final UNet denoising steps
+31.             //  Bypasses T1 trajectory optimization if t_ratio not in [0.30, 0.60]
+32.             //  QualityCritic: evaluates; reject-and-regenerate loop (max 2 retries)
+33.             //  TextImageIntegrator: places LLM-planned dialogue (post-crop order)
+34.             //  Remove panel_id from pids_remaining
+35.         end for
+36.     catch CUDA Out of Memory:
+37.         empty_cache()
+38.         gc.collect()
+39.         w <- max(1, w / 2) // halve concurrent workers count and retry
+40.     end try
+41. end while
 
-12. /* Phase 7 - Cadence Layout */
-13. pages <- MangaFlowLayoutEngine.assemble(sorted_panels_by_page)
+42. /* Phase 7 - Cadence Layout */
+43. pages <- MangaFlowLayoutEngine.assemble(sorted_panels_by_page)
     //  Intensity weights w_i = 0.7 + I_i; partition formulas for N=1..5+
     //  Focal crop (Lanczos); post-crop bubble rendering; page numbering pill
 
-14. /* Phase 8 - Export and Feedback */
-15. ComicExporter.export(pages, formats=[CBZ, PDF, HTML])
-16. HeuristicFeedbackTuner.log_telemetry()
-17. if N_rated >= 3: HeuristicFeedbackTuner.tune()
-    //  Adjusts: g_scale, quality thresholds tau, lambda_LoRA, critic weights w_d
-18. return pages
+44. /* Phase 8 - Export and Feedback */
+45. ComicExporter.export(pages, formats=[CBZ, PDF, HTML]) in background thread
+46. HeuristicFeedbackTuner.log_telemetry()
+47. if N_rated >= 3: HeuristicFeedbackTuner.tune()
+    //  Adjusts: g_scale, quality thresholds tau, lambda_LoRA, MDCP priors (lambda_1, lambda_3), attention blend (beta), critic weights
+48. return pages
 ```
 
 ---
@@ -1635,6 +1671,11 @@ Output: Signature S_c = {h_color_c, rho_edge_c, G_style_c, S_aes_c}, Channel sta
 18. for c_idx in 1..4 do
 19.     mu_c[c_idx]    <- Mean(z[c_idx] * M_latent)
 20.     sigma_c[c_idx] <- Std(z[c_idx] * M_latent)
+21. /* Character Anchor MDCP Signature Caching */
+22. A_anchor_c <- Extract_Attention_Maps(I)
+23. F_anchor_c <- Extract_Feature_Maps(I)
+24. O_anchor_c <- Extract_CrossAttn_Outputs(I)
+
 21. end for
 
 22. return {h_color_c, rho_edge_c, G_style_c, S_aes_c}, (mu_c, sigma_c)
@@ -1727,20 +1768,22 @@ Output: evaluation_report (14-metric dict), performance_summary
 To validate the resource-performance trade-offs outlined in Algorithm 6 and Proposition 1, the framework implements an automated hyperparameter tuning and benchmarking suite. This engine performs a systematic grid search over key generation parameters to locate the Pareto-optimal configuration for any given hardware setup.
 
 #### 7.1 Parameter Grid Formulation
-The sweep space $\mathcal{S}$ is defined as the Cartesian product of the target resolution scale $\mathcal{R}$, denoising step count $\mathcal{T}$, and adapter LoRA scale $\mathcal{L}$:
-$$\mathcal{S} = \mathcal{R} \times \mathcal{T} \times \mathcal{L}$$
+The sweep space $\mathcal{S}$ is defined as the Cartesian product of the MDCP hyperparameters:
+$$\mathcal{S} = \Lambda_1 \times \Lambda_2 \times \Lambda_3 \times \mathcal{B} \times \Omega$$
 Where:
-- $\mathcal{R} \in \{512 \times 512, 768 \times 768\}$
-- $\mathcal{T} \in [15, 40] \cap \mathbb{Z}$
-- $\mathcal{L} \in [0.5, 1.0]$
+- $\Lambda_1, \Lambda_2, \Lambda_3 \in \{0.5, 1.0, 1.5\}$ (prior weights)
+- $\mathcal{B} \in \{0.10, 0.15, 0.20\}$ (attention blend ratio)
+- $\Omega \in \{0.30, 0.50, 0.70\}$ (channel stats blend ratio)
 
 #### 7.2 Objective Function and Recommendation Logic
-For each configuration $c = (r, t, l) \in \mathcal{S}$, the benchmark suite evaluates generation latency ($t_{\text{latency}}$), peak VRAM delta ($M_{\text{peak}}$), and quality similarity metrics relative to a high-quality baseline image generated at the maximum bounds ($c_{\text{max}} = (r_{\text{max}}, t_{\text{max}}, l_{\text{max}})$):
-$$S_{\text{quality}}(c) = w_1 \cdot \text{SSIM}(g_c, g_{\text{baseline}}) + w_2 \cdot S_{\text{edge}}(g_c, g_{\text{baseline}}) + w_3 \cdot S_{\text{color}}(g_c, g_{\text{baseline}})$$
-Where $w_1 = 0.5$, $w_2 = 0.2$, and $w_3 = 0.3$.
-
-The recommendation engine identifies the optimal configuration $c^*$ by maximizing the efficiency index (quality per unit of latency) while satisfying hard hardware VRAM constraints:
-$$c^* = \arg\max_{c \in \mathcal{S}} \frac{S_{\text{quality}}(c)}{\max(\epsilon, t_{\text{latency}}(c))} \quad \text{subject to} \quad M_{\text{peak}}(c) \le M_{\text{threshold}}$$
+For each configuration $c = (\lambda_1, \lambda_2, \lambda_3, \beta, \omega) \in \mathcal{S}$, the benchmark suite evaluates concept consistency metrics over a validation set:
+- DINOv2 visual similarity ($S_{\text{DINO}}$)
+- CLIP-I semantic similarity ($S_{\text{CLIP}}$)
+- LPIPS distance ($D_{\text{LPIPS}}$)
+The overall consistency energy is computed as:
+$$E_{\text{cons}}(c) = 0.3 \cdot D_{\text{LPIPS}}(c) + 0.3 \cdot (1 - S_{\text{CLIP}}(c)) + 0.4 \cdot (1 - S_{\text{DINO}}(c))$$
+The sweep suite identifies the Pareto-optimal config $c^*$ that minimizes consistency energy:
+$$c^* = \arg\min_{c \in \mathcal{S}} E_{\text{cons}}(c)$$
 
 #### 7.3 Memory Tracking & Defragmentation
 The benchmark runner measures peak VRAM using PyTorch memory allocations ($M_{\text{peak}} = \text{max\_memory\_allocated()}$) and monitors memory fragmentation. Following each generation step, the engine invokes explicit garbage collection and CUDA cache clearing ($gc.collect()$, $torch.cuda.empty\_cache()$) to isolate and prevent cumulative memory leaks across sequential runs, ensuring stable long-term inference.

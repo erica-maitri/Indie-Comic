@@ -268,7 +268,7 @@ class StoryIntakeEngine:
             Structured story config dict with:
             - recurring_motif, mood_journey, panels[], metadata
         """
-        panel_count = max(1, min(10, panel_count))
+        panel_count = max(1, min(100, panel_count))
         log.info(f"[Phase 0] Processing prompt: '{user_prompt[:80]}...'")
 
         # Dynamically load mood-weaver analyzer if available

@@ -162,6 +162,10 @@ flowchart TD
   - `PoseDirector` / `EmotionDirector` / `CameraDirector`: Enrich prompts with joint rotation constraints, expressions, facial geometry, framing, and camera positions.
 
 ### Phase 2 — Multi-Anchor Visual Anchoring
+
+
+**MDCP Pipeline Update:** Phase 2 additionally performs a full UNet forward pass on the anchor panel to extract and cache the exact MDCP diffusion signatures ($A_{anchor}$, $F_{anchor}$, $\{O_{anchor}^{(\ell)}\}$, $\mu_a$, $\sigma_a$) for downstream operator use.
+
 The pipeline extends the single-anchor design to a character-aware multi-anchor caching system. It scans all panel prompts to build a map $k_c$—the earliest panel index where character $c$ appears. For each distinct character, it generates panel $k_c$ with T2 disabled, then extracts cross-attention outputs $O_{\text{anchor}}^{(l)}(c)$ and channel statistics $(\mu_c, \sigma_c)$, storing them keyed by character name. If a user supplies a reference image, it pre-populates the corresponding entry. Memory overhead is $\mathcal{O}(1)$ because the number of distinct characters is bounded (5).
 
 #### Classical Regional Identity Signature (4 Descriptors)
@@ -185,6 +189,10 @@ The pipeline extends the single-anchor design to a character-aware multi-anchor 
 ---
 
 ### Phase 3 & 4: In-Generation Consistency & Composable Control (MDCP)
+
+
+**MDCP Pipeline Update:** The standard SDXL pipeline is replaced by a custom PyTorch denoising loop that natively executes the MDCP mathematical operator splitting ($\mathcal{T}_1$, $\mathcal{T}_2$, $\mathcal{T}_3$) exactly as derived.
+
 - **Files:** [panel_engine.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/panel_engine.py) (`PanelEngine`), [compositor.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/compositor.py) (`CharComCompositor`), and [advanced_attention.py](file:///c:/Users/Dell/Downloads/drid/indie_comic_pipeline/core/advanced_attention.py) (`AdvancedAttentionManager`, `MultiAnchorCache`)
 - **CharCom Compositor:** Blends base prompts with character-specific LoRA weights, guidance, seeds, and steps at runtime:
   $$W_{\text{total}} = W_{\text{base}} + \sum (\alpha_i \cdot W_i)$$
@@ -902,6 +910,11 @@ Output: Signature S_c = {h_color_c, rho_edge_c, G_style_c, S_aes_c}, Channel sta
 18. for c_idx in 1..4 do
 19.     mu_c[c_idx]    <- Mean(z[c_idx] * M_latent)
 20.     sigma_c[c_idx] <- Std(z[c_idx] * M_latent)
+21. /* Character Anchor MDCP Signature Caching */
+22. A_anchor_c <- Extract_Attention_Maps(I)
+23. F_anchor_c <- Extract_Feature_Maps(I)
+24. O_anchor_c <- Extract_CrossAttn_Outputs(I)
+
 21. end for
 
 22. return {h_color_c, rho_edge_c, G_style_c, S_aes_c}, (mu_c, sigma_c)

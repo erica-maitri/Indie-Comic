@@ -183,11 +183,17 @@ class IntegratedComicPipeline:
         # ── Advanced Attention Manager (L1 + L2 + L3 mechanisms) ──
         # Enabled for real generation.
         adv_attn_enabled = True
+        mdcp_conf = self.settings.get("mdcp", {})
         self.advanced_attention = AdvancedAttentionManager(
             heat_alpha=0.03,           # L1: heat diffusion strength
-            attention_blend=0.15,      # L2: anchor K/V blend ratio
+            attention_blend=mdcp_conf.get("beta", 0.15),      # L2: anchor K/V blend ratio
             spatial_strength=0.08,     # L3: spatiotemporal correction strength
-            enabled=adv_attn_enabled
+            enabled=adv_attn_enabled,
+            # MDCP Core Hyperparameters
+            lam1=mdcp_conf.get("lambda_1", 1.0),
+            lam2=mdcp_conf.get("lambda_2", 1.0),
+            lam3=mdcp_conf.get("lambda_3", 1.0),
+            omega=mdcp_conf.get("omega", 0.50)
         )
         if adv_attn_enabled:
             log.info("Advanced Attention Mechanisms ENABLED (L1-Heat, L2-Attn, L3-STE)")
@@ -266,6 +272,94 @@ class IntegratedComicPipeline:
             log.info("--- Phase 8: Background Exporting Complete ---")
         except Exception as e:
             log.error(f"Error in background Phase 8 export: {e}")
+
+    def _generate_panels_in_parallel(self, pids: List[int], checkpoint_path: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Generate a list of panels in parallel with a Memory Budgeter and OOM recovery."""
+        import concurrent.futures
+        import gc
+        import torch
+        
+        if not pids:
+            return []
+            
+        panels_completed = []
+        total_panels = len(pids)
+        max_workers = min(4, total_panels)
+        
+        # Pre-compute memory cost and adjust initial max_workers
+        try:
+            if torch.cuda.is_available():
+                total_mem = torch.cuda.get_device_properties(0).total_memory / (1024**2) # in MB
+                # Cost per panel: ~6.5GB base
+                safe_limit = total_mem * 0.90
+                cost_per_panel = 6500.0
+                if getattr(self.panel_engine.advanced_attention, "enabled", False):
+                    cost_per_panel += 1500.0 # T1 backward pass overhead
+                
+                calculated_max = int(safe_limit // cost_per_panel)
+                calculated_max = max(1, min(calculated_max, 4))
+                if calculated_max < max_workers:
+                    log.info(f"Memory Budgeter: Reduced initial max_workers from {max_workers} to {calculated_max} based on VRAM ({total_mem:.0f}MB, limit {safe_limit:.0f}MB)")
+                    max_workers = calculated_max
+        except Exception as e:
+            log.debug(f"Memory Budgeter pre-compute failed: {e}")
+
+        pids_to_generate = list(pids)
+        while pids_to_generate:
+            log.info(f"Starting parallel execution chunk with max_workers={max_workers} for panels {pids_to_generate}")
+            oom_occurred = False
+            
+            def _gen_task(pid):
+                return self._generate_single_panel_with_retry(pid)
+                
+            completed_in_this_run = []
+            
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit only the first batch of size max_workers to prevent launching too many tasks
+                batch_pids = pids_to_generate[:max_workers]
+                future_to_pid = {executor.submit(_gen_task, pid): pid for pid in batch_pids}
+                
+                for future in concurrent.futures.as_completed(future_to_pid):
+                    pid = future_to_pid[future]
+                    try:
+                        res = future.result()
+                        panels_completed.append(res)
+                        self.agent_coordinator.notify_panel_generated(res)
+                        completed_in_this_run.append(pid)
+                        
+                        # Save checkpoint if requested
+                        if checkpoint_path:
+                            self.memory.save_checkpoint(checkpoint_path)
+                            log.info(f"Saved mid-generation checkpoint for panel {pid} to: {checkpoint_path}")
+                    except Exception as exc:
+                        exc_str = str(exc).lower()
+                        if "out of memory" in exc_str or "oom" in exc_str:
+                            log.warning(f"CUDA Out of Memory caught during panel {pid} generation: {exc}")
+                            oom_occurred = True
+                        else:
+                            log.error(f"Panel {pid} generation generated an exception: {exc}")
+                            raise exc
+                            
+            # Update list of panels to generate
+            for pid in completed_in_this_run:
+                if pid in pids_to_generate:
+                    pids_to_generate.remove(pid)
+                    
+            if oom_occurred:
+                # Clear GPU memory cache
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                gc.collect()
+                
+                if max_workers > 1:
+                    new_workers = max(1, max_workers // 2)
+                    log.info(f"OOM Occurred. Halving max_workers from {max_workers} to {new_workers} and retrying remaining panels {pids_to_generate}")
+                    max_workers = new_workers
+                else:
+                    log.error("OOM occurred even with max_workers=1. Cannot reduce further.")
+                    raise RuntimeError("CUDA Out of Memory occurred during sequential generation. Exiting.")
+                    
+        return panels_completed
 
     def _generate_single_panel_with_retry(self, panel_id: int) -> Dict[str, Any]:
         """Generate a single panel, execute the reject-regenerate loop, and apply typesetting."""
@@ -447,26 +541,8 @@ class IntegratedComicPipeline:
             # Generate remaining panels (2 to N) in parallel
             if total_panels > 1:
                 log.info(f"\n--- Generating Remaining {total_panels - 1} Panels in Parallel ---")
-                import concurrent.futures
-                
-                def _gen_task(pid):
-                    return self._generate_single_panel_with_retry(pid)
-                    
-                with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, total_panels - 1)) as executor:
-                    future_to_pid = {executor.submit(_gen_task, pid): pid for pid in range(2, total_panels + 1)}
-                    for future in concurrent.futures.as_completed(future_to_pid):
-                        pid = future_to_pid[future]
-                        try:
-                            res = future.result()
-                            panels_completed.append(res)
-                            self.agent_coordinator.notify_panel_generated(res)
-                            
-                            # Save mid-generation checkpoint for each completed panel
-                            self.memory.save_checkpoint(checkpoint_path)
-                            log.info(f"Saved mid-generation checkpoint for panel {pid} to: {checkpoint_path}")
-                        except Exception as exc:
-                            log.error(f"Panel {pid} generation generated an exception: {exc}")
-                            raise exc
+                remaining_results = self._generate_panels_in_parallel(list(range(2, total_panels + 1)), checkpoint_path=checkpoint_path)
+                panels_completed.extend(remaining_results)
             
             # Sort panels by ID to restore sequential order
             panels_completed.sort(key=lambda x: x["panel_id"])
@@ -599,22 +675,8 @@ class IntegratedComicPipeline:
         if actual_end >= start_idx:
             log.info(f"\n--- Generating Remaining Panels {start_idx} to {actual_end} in Parallel ---")
             self.wait_for_preheat()
-            import concurrent.futures
-            
-            def _gen_task(pid):
-                return self._generate_single_panel_with_retry(pid)
-                
-            with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, actual_end - start_idx + 1)) as executor:
-                future_to_pid = {executor.submit(_gen_task, pid): pid for pid in range(start_idx, actual_end + 1)}
-                for future in concurrent.futures.as_completed(future_to_pid):
-                    pid = future_to_pid[future]
-                    try:
-                        res = future.result()
-                        panels_completed.append(res)
-                        self.agent_coordinator.notify_panel_generated(res)
-                    except Exception as exc:
-                        log.error(f"Panel {pid} generation generated an exception: {exc}")
-                        raise exc
+            remaining_results = self._generate_panels_in_parallel(list(range(start_idx, actual_end + 1)))
+            panels_completed.extend(remaining_results)
             
         panels_completed.sort(key=lambda x: x["panel_id"])
             

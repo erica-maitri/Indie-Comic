@@ -223,8 +223,7 @@ class MangaFlowLayoutEngine:
                 # Default: standard grid with slight offsets
                 self._fill_grid_layout(content_w, content_h, boxes)
                 
-        # Scenario 5: Five or more Panels (Three-tier layout)
-        else:
+        elif n == 5:
             # Tier 1 (2 panels) | Tier 2 (1 panel) | Tier 3 (2 panels)
             t1 = content_h // 3 - self.gutter_width
             t2 = content_h // 3 - self.gutter_width
@@ -242,6 +241,27 @@ class MangaFlowLayoutEngine:
             pw3 = content_w // 2 - self.gutter_width // 2
             boxes.append((self.margin, self.margin + t1 + t2 + 2 * self.gutter_width, pw3, t3))
             boxes.append((self.margin + pw3 + self.gutter_width, self.margin + t1 + t2 + 2 * self.gutter_width, pw3, t3))
+
+        else:
+            # High-density / Multi-panel grid layout for N > 5 (e.g. N = 50 panels per page)
+            import math
+            # Calculate optimal grid dimensions (columns and rows)
+            aspect_ratio = content_w / content_h
+            if n == 50:
+                cols, rows = 5, 10
+            else:
+                cols = max(2, int(round(math.sqrt(n * aspect_ratio))))
+                rows = math.ceil(n / cols)
+
+            pw = (content_w - (cols - 1) * self.gutter_width) // cols
+            ph = (content_h - (rows - 1) * self.gutter_width) // rows
+
+            for idx in range(n):
+                r = idx // cols
+                c = idx % cols
+                x = self.margin + c * (pw + self.gutter_width)
+                y = self.margin + r * (ph + self.gutter_width)
+                boxes.append((x, y, pw, ph))
             
         return boxes
 

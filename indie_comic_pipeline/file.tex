@@ -1,0 +1,776 @@
+\documentclass[12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{geometry}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\geometry{a4paper, margin=1in}
+\hypersetup{colorlinks=true, linkcolor=blue, citecolor=blue, urlcolor=blue}
+
+% Math operators
+\DeclareMathOperator{\Var}{Var}
+\DeclareMathOperator{\E}{\mathbb{E}}
+\DeclareMathOperator{\MSE}{MSE}
+\DeclareMathOperator{\diag}{diag}
+\DeclareMathOperator{\tr}{Tr}
+\DeclareMathOperator{\clip}{clip}
+\DeclareMathOperator{\Attention}{Attention}
+\DeclareMathOperator{\AdaIN}{AdaIN}
+\DeclareMathOperator{\Canny}{Canny}
+\DeclareMathOperator{\Sobel}{Sobel}
+\DeclareMathOperator{\Laplacian}{Laplacian}
+\DeclareMathOperator{\RFFT2}{RFFT2}
+\DeclareMathOperator{\IFFT2}{IFFT2}
+\DeclareMathOperator{\RandSample}{RandSample}
+\DeclareMathOperator{\sg}{sg}
+
+\newtheorem{observation}{Observation}
+
+% Breakable algorithm environment for algorithmicx/algpseudocode
+\makeatletter
+\let\breakablealgorithmname\fname@algorithm
+\newenvironment{breakablealgorithm}
+  {% \begin{breakablealgorithm}
+   \begin{center}
+     \refstepcounter{algorithm}% New algorithm
+     \hrule height.8pt depth0pt \kern2pt%
+     \renewcommand{\caption}[2][\relax]{% Make a new \caption
+       {\raggedright\textbf{\breakablealgorithmname~\thealgorithm} ##2\par}%
+       \ifx\relax##1\relax % #1 is \relax
+         \addcontentsline{loa}{algorithm}{\protect\numberline{\thealgorithm}##2}%
+       \else % #1 is not \relax
+         \addcontentsline{loa}{algorithm}{\protect\numberline{\thealgorithm}##1}%
+       \fi
+       \kern2pt\hrule\kern2pt
+     }
+  }
+  {% \end{breakablealgorithm}
+     \kern2pt\hrule\relax%
+   \end{center}
+  }
+\makeatother
+
+\begin{document}
+
+\section{T1 Derivation}
+
+\subsection{Problem Formulation}
+
+Our framework is built upon Latent Diffusion Models (LDMs), specifically Stable Diffusion XL (SDXL). Let $z_0$ denote the latent representation of a clean image and $z_t$ denote its noisy latent at diffusion timestep $t \in [0,T]$. During inference, the reverse diffusion process progressively removes noise through the learned denoising network $\epsilon_\theta$. The scheduler updates the latent according to
+
+\begin{equation}
+z_{t-1} = S\left(z_t, \epsilon_\theta(z_t, t, c)\right),
+\tag{1}
+\end{equation}
+
+where $c$ denotes the text conditioning and $S(\cdot)$ represents the scheduler transition operator.
+
+Most diffusion schedulers additionally estimate the clean latent from the current noisy sample. We denote this prediction as
+
+\begin{equation}
+\hat{z}_0 = D_{\text{sched}}\left(z_t, \epsilon_\theta, t\right),
+\tag{2}
+\end{equation}
+
+where $D_{\text{sched}}$ is the scheduler's predicted clean latent.
+
+The reference latent
+
+\begin{equation}
+z_{0,\mathrm{anchor}}
+\end{equation}
+
+is obtained by encoding a designated anchor image using the SDXL VAE encoder and remains fixed throughout inference.
+
+Unlike existing methods that modify model architectures or require additional training, our objective is to optimize only the latent variable $z_t$ during inference while keeping all model parameters frozen.
+
+\subsection{Motivation}
+
+Although SDXL produces high-quality images, each latent trajectory evolves independently. Consequently, multiple images conditioned on the same subject prompt may gradually diverge in facial identity, clothing appearance and fine structural details.
+
+Recent approaches address this problem from complementary perspectives.
+
+\subsubsection{StoryDiffusion: Attention-Level Interaction}
+
+StoryDiffusion introduces \textbf{Consistent Self-Attention} to establish interactions among images within a generation batch. Given image features
+
+\begin{equation}
+I \in \mathbb{R}^{B \times N \times C},
+\end{equation}
+
+the original self-attention for image $i$ is
+
+\begin{equation}
+O_i = \Attention(Q_i, K_i, V_i),
+\tag{3}
+\end{equation}
+
+where $Q_i, K_i, V_i$ denote the query, key and value tensors.
+
+To promote consistency, StoryDiffusion randomly samples tokens from the remaining images,
+
+\begin{equation}
+S_i = \RandSample(I_1, \ldots, I_{i-1}, I_{i+1}, \ldots, I_B),
+\tag{4}
+\end{equation}
+
+and concatenates them with the current image tokens,
+
+\begin{equation}
+P_i = [I_i, S_i].
+\end{equation}
+
+The attention computation becomes
+
+\begin{equation}
+O_i = \Attention(Q_i, K_{P_i}, V_{P_i}),
+\tag{5}
+\end{equation}
+
+thereby enabling cross-image information exchange without retraining the diffusion model.
+
+While this improves consistency through attention interactions, the latent trajectory itself remains unconstrained because the scheduler in Eq. (1) continues to evolve each latent independently.
+
+\subsubsection{ConsiStory: Feature-Level Correspondence}
+
+ConsiStory improves subject consistency using dense correspondence between intermediate feature maps.
+
+Let
+
+\begin{equation}
+F_t
+\end{equation}
+
+denote intermediate features extracted from the current image and
+
+\begin{equation}
+F_{\mathrm{anchor}}
+\end{equation}
+
+those extracted from the reference image.
+
+A dense correspondence operator
+
+\begin{equation}
+\Psi(F_t, F_{\mathrm{anchor}})
+\end{equation}
+
+aligns spatial structures between the two feature spaces.
+
+This feature refinement significantly improves structural consistency; however, the optimization is confined to intermediate network representations rather than directly constraining the latent diffusion trajectory.
+
+\subsubsection{Consistency Models: Clean Latent Consistency}
+
+Consistency Models demonstrate that different noisy states corresponding to the same image should converge toward a common clean representation through a consistency mapping.
+
+Motivated by this observation, we compare predicted clean latents instead of directly comparing noisy latent variables. Specifically, we use the scheduler prediction
+
+\begin{equation}
+\hat{z}_0 = D_{\mathrm{sched}}(z_t, \epsilon_\theta, t)
+\end{equation}
+
+as a clean latent estimate during inference.
+
+Unlike Consistency Models, which learn this mapping during training, our framework employs it solely as an inference-time trajectory regularization objective.
+
+\subsubsection{TADA: Adaptive Inference Dynamics}
+
+TADA demonstrates that diffusion trajectories can be modified during inference without retraining by augmenting the sampling dynamics.
+
+Inspired by this principle, we adapt the magnitude of latent correction according to the scheduler noise level rather than applying a fixed correction throughout sampling.
+
+This allows stronger corrections during early noisy stages and progressively weaker corrections as the latent approaches convergence.
+
+\subsection{Latent Consistency Energy}
+
+Motivated by the above observations, we formulate identity preservation as an optimization problem over the latent variable itself.
+
+At each diffusion timestep, we define the total consistency energy as
+
+\begin{equation}
+E_t = \lambda_1 E_{\mathrm{id}} + \lambda_2 E_{\mathrm{str}} + \lambda_3 E_{\mathrm{traj}},
+\tag{6}
+\end{equation}
+
+where $E_{\mathrm{id}}$ preserves identity, $E_{\mathrm{str}}$ preserves spatial structure, $E_{\mathrm{traj}}$ regularizes the diffusion trajectory, and $\lambda_1, \lambda_2, \lambda_3$ balance their relative contributions.
+
+\subsubsection{Identity Energy}
+
+Motivated by StoryDiffusion's attention-sharing mechanism, we introduce an explicit attention alignment objective,
+
+\begin{equation}
+E_{\mathrm{id}} = \frac{1}{N} \|A_t - A_{\mathrm{anchor}}\|_F^2,
+\tag{7}
+\end{equation}
+
+where $A_t$ denotes the attention maps extracted from the current UNet, $A_{\mathrm{anchor}}$ denotes cached attention maps extracted from the anchor image, $N$ denotes the number of attention tokens, and $\|\cdot\|_F$ denotes the Frobenius norm.
+
+Unlike StoryDiffusion, this loss is our own formulation and explicitly penalizes attention divergence during optimization.
+
+\subsubsection{Structural Energy}
+
+Motivated by ConsiStory, structural consistency is enforced by comparing the current feature maps with dense correspondence-aligned anchor features,
+
+\begin{equation}
+E_{\mathrm{str}} = \|F_t - \Psi(F_t, F_{\mathrm{anchor}})\|_2^2.
+\tag{8}
+\end{equation}
+
+Here, $\Psi(\cdot)$ is implemented using differentiable cosine-similarity-based feature correspondence, allowing gradients to propagate through the complete optimization process.
+
+\subsubsection{Trajectory Energy}
+
+To explicitly regularize the denoising trajectory, we compare the scheduler's predicted clean latent against the anchor latent,
+
+\begin{equation}
+E_{\mathrm{traj}} = \|\hat{z}_0 - z_{0,\mathrm{anchor}}\|_2^2.
+\tag{9}
+\end{equation}
+
+Unlike previous feature-level approaches, this objective directly constrains the latent diffusion trajectory while allowing scene-specific variations.
+
+\subsection{Latent Trajectory Optimization}
+
+Since every energy component is differentiable with respect to the latent variable $z_t$, we optimize only the latent while keeping all diffusion model parameters fixed.
+
+The correction direction is obtained through automatic differentiation,
+
+\begin{equation}
+R_t = \nabla_{z_t} E_t.
+\tag{10}
+\end{equation}
+
+Because diffusion sampling already performs incremental latent updates, we formulate our correction as an additive perturbation applied before each scheduler step.
+
+To stabilize optimization across different noise levels, the update magnitude is scaled according to the scheduler variance,
+
+\begin{equation}
+\eta(t) = \lambda \frac{\sigma_t}{\sigma_{\max} + \varepsilon},
+\tag{11}
+\end{equation}
+
+where $\sigma_t$ is the scheduler noise standard deviation, $\sigma_{\max}$ is the maximum scheduler noise level, and $\varepsilon$ is a small numerical stability constant.
+
+The corrected latent becomes
+
+\begin{equation}
+\tilde{z}_t = z_t - \eta(t) R_t.
+\tag{12}
+\end{equation}
+
+The refined latent is then propagated through the standard SDXL scheduler,
+
+\begin{equation}
+z_{t-1} = S\left(\tilde{z}_t, \epsilon_\theta(\tilde{z}_t, t, c)\right).
+\tag{13}
+\end{equation}
+
+This procedure directly regularizes the diffusion trajectory while leaving the pretrained diffusion network unchanged.
+
+\subsection{Computational Complexity}
+
+The proposed framework requires extracting intermediate attention maps and feature representations through forward hooks together with one additional backward pass to compute $\nabla_{z_t} E_t$. All diffusion model parameters remain frozen throughout optimization.
+
+Consequently, each denoising iteration consists of one standard forward pass and one additional backward pass, introducing an approximately constant-factor increase in inference time while preserving linear complexity with respect to the number of denoising steps.
+
+\subsection{Algorithm}
+
+\begin{breakablealgorithm}
+\caption{Latent Trajectory Optimization}
+\label{alg:t1}
+\begin{algorithmic}[1]
+\Require Initial latent $z_T$, text conditioning $c$, anchor latent $z_{0,\mathrm{anchor}}$, $\lambda_1, \lambda_2, \lambda_3$
+\Ensure Final latent $z_0$
+\State Initialize scheduler statistics
+\For{$t = T$ down to $1$}
+    \State Forward UNet
+    \State Extract attention maps $A_t$
+    \State Extract feature maps $F_t$
+    \State Predict clean latent $\hat{z}_0 = D_{\text{sched}}(z_t)$
+    \State Compute $E_{\mathrm{id}} = (1/N)\|A_t - A_{\mathrm{anchor}}\|_F^2$
+    \State Compute $E_{\mathrm{str}} = \|F_t - \Psi(F_t, F_{\mathrm{anchor}})\|_2^2$
+    \State Compute $E_{\mathrm{traj}} = \|\hat{z}_0 - z_{0,\mathrm{anchor}}\|_2^2$
+    \State $E_t = \lambda_1 E_{\mathrm{id}} + \lambda_2 E_{\mathrm{str}} + \lambda_3 E_{\mathrm{traj}}$
+    \State $R_t = \nabla_{z_t} E_t$
+    \State $\eta(t) = \lambda \sigma_t / (\sigma_{\max} + \varepsilon)$
+    \State $\tilde{z}_t = z_t - \eta(t) R_t$
+    \State $z_{t-1} = S(\tilde{z}_t, \epsilon_\theta(\tilde{z}_t, t, c))$
+\EndFor
+\State \Return $z_0$
+\end{algorithmic}
+\end{breakablealgorithm}
+
+% ==============================================================================
+% T2: ATTENTION PROPAGATION MODULE
+% ==============================================================================
+\newpage
+\section{Attention Propagation Module (\texorpdfstring{$\mathcal{T}_2$}{T2})}
+
+\subsection{Problem Formulation}
+
+While $\mathcal{T}_1$ regularizes the latent diffusion trajectory, semantic identity is primarily encoded inside the intermediate attention representations of the diffusion UNet. During standard SDXL inference, each attention layer independently computes
+
+\begin{equation}
+O_i = \Attention(Q_i, K_i, V_i),
+\tag{14}
+\end{equation}
+
+where $Q_i, K_i, V_i$ denote the projected query, key and value tensors of image $i$.
+
+Since every image is processed independently,
+
+\begin{equation}
+O_i \perp O_j, \qquad i \neq j,
+\end{equation}
+
+there exists no explicit mechanism that allows semantic identity learned in one image to influence another image during inference.
+
+Consequently, although the latent trajectory may be corrected (Section 3), semantic attention representations gradually diverge across independently generated panels.
+
+\subsection{Observations from Previous Work}
+
+\begin{observation}[StoryDiffusion]
+StoryDiffusion introduces \textbf{Consistent Self-Attention} to establish interactions between images inside the same generation batch.
+
+Instead of standard attention
+
+\begin{equation}
+O_i = \Attention(Q_i, K_i, V_i),
+\tag{15}
+\end{equation}
+
+tokens from neighboring images are randomly sampled,
+
+\begin{equation}
+S_i = \RandSample(I_1, \ldots, I_{i-1}, I_{i+1}, \ldots, I_B),
+\tag{16}
+\end{equation}
+
+and paired with the current image,
+
+\begin{equation}
+P_i = [I_i, S_i].
+\tag{17}
+\end{equation}
+
+Attention is then computed as
+
+\begin{equation}
+O_i = \Attention(Q_i, K_{P_i}, V_{P_i}).
+\tag{18}
+\end{equation}
+
+This demonstrates that exchanging attention information improves subject consistency across multiple images.
+
+\noindent \textbf{Observation.} Identity-related semantic information is encoded within intermediate attention representations.
+\end{observation}
+
+\begin{observation}[CharaConsist]
+CharaConsist improves character consistency by maintaining correspondence between intermediate feature representations across multiple images. Let $F^{(l)}$ denote the intermediate representation extracted from layer $l$. Rather than relying only on the final generated image, CharaConsist continuously aligns intermediate representations during generation.
+
+\noindent \textbf{Observation.} Intermediate representations preserve stable semantic identity throughout the diffusion process.
+\end{observation}
+
+\begin{observation}[DiffSim]
+DiffSim demonstrates that intermediate diffusion representations provide reliable semantic similarity measurements between images. Consequently, $d(O_i, O_j)$ acts as a meaningful semantic distance between attention representations. Therefore, reducing $d(O_{\mathrm{curr}}, O_{\mathrm{anchor}})$ should improve semantic consistency.
+\end{observation}
+
+\begin{observation}[AdaCache]
+AdaCache shows that intermediate diffusion activations can be cached and reused during inference without modifying network parameters. Let
+
+\begin{equation}
+\mathcal{C} = \{ O_{\mathrm{anchor}}^{(1)}, O_{\mathrm{anchor}}^{(2)}, \ldots, O_{\mathrm{anchor}}^{(L)} \}
+\tag{19}
+\end{equation}
+
+denote cached attention outputs extracted from the anchor image. These cached representations provide reusable semantic priors for subsequent generations.
+\end{observation}
+
+\begin{observation}[FAM Diffusion]
+FAM Diffusion demonstrates that attention representations can be modulated through weighted combinations to transfer semantic information between different generation contexts. Rather than treating attention as immutable, attention responses may be smoothly adjusted using weighted modulation.
+
+\noindent \textbf{Observation.} Semantic information can be propagated through continuous interpolation in attention space.
+\end{observation}
+
+\subsection{Design Principle}
+
+The previous observations establish four facts.
+
+\begin{enumerate}
+\item Identity information is encoded in attention representations.
+\item Intermediate attention remains semantically stable during generation.
+\item Anchor attention can be cached and reused.
+\item Attention representations admit continuous modulation.
+\end{enumerate}
+
+Therefore, instead of recomputing attention using modified key-value tensors (StoryDiffusion), we directly propagate semantic identity by operating on the attention outputs themselves.
+
+Since both $O_{\mathrm{curr}}$ and $O_{\mathrm{anchor}}$ belong to the same attention feature space, the propagation operator should satisfy three conditions:
+
+\begin{enumerate}
+\item preserve current scene semantics,
+\item inject anchor identity,
+\item remain bounded to avoid over-correction.
+\end{enumerate}
+
+The simplest operator satisfying these constraints is a convex combination.
+
+\subsection{Attention Propagation Operator}
+
+Accordingly, we define the propagated attention representation as
+
+\begin{equation}
+\boxed{O_{\mathrm{prop}} = (1 - \beta) O_{\mathrm{curr}} + \beta O_{\mathrm{anchor}}}
+\tag{20}
+\end{equation}
+
+where $0 \le \beta \le 1$.
+
+Unlike StoryDiffusion, which exchanges key-value tensors during attention computation, this integration operates directly on the attention outputs. Unlike FAM Diffusion, which interpolates attention across image resolutions, our operator propagates semantic identity across independently generated images while preserving the original network architecture.
+
+\subsection{Theoretical Analysis}
+
+Subtracting the anchor representation,
+
+\begin{equation}
+O_{\mathrm{prop}} - O_{\mathrm{anchor}} = (1 - \beta) \left( O_{\mathrm{curr}} - O_{\mathrm{anchor}} \right).
+\tag{21}
+\end{equation}
+
+Taking the Euclidean norm,
+
+\begin{equation}
+\| O_{\mathrm{prop}} - O_{\mathrm{anchor}} \|_2 = (1 - \beta) \| O_{\mathrm{curr}} - O_{\mathrm{anchor}} \|_2.
+\tag{22}
+\end{equation}
+
+Since $0 \le \beta \le 1$, we obtain
+
+\begin{equation}
+\boxed{ \| O_{\mathrm{prop}} - O_{\mathrm{anchor}} \|_2 \le \| O_{\mathrm{curr}} - O_{\mathrm{anchor}} \|_2 }
+\tag{23}
+\end{equation}
+
+with equality only when $\beta = 0$ or $O_{\mathrm{curr}} = O_{\mathrm{anchor}}$. Therefore, the propagation operator monotonically moves the attention representation toward the anchor in attention feature space while preserving the contribution of the current image.
+
+\subsection{Integration into Diffusion}
+
+The propagated attention replaces the original attention output before the subsequent UNet block,
+
+\begin{equation}
+O_{\mathrm{curr}} \longrightarrow O_{\mathrm{prop}} \longrightarrow \text{UNet}_{l+1},
+\tag{24}
+\end{equation}
+
+thereby propagating semantic identity throughout the denoising process without modifying network parameters or requiring retraining.
+
+% ==============================================================================
+% T3: SPATIOTEMPORAL CHANNEL STATISTICS ALIGNMENT
+% ==============================================================================
+\newpage
+\section{Spatiotemporal Channel Statistics Alignment (\texorpdfstring{$\mathcal{T}_3$}{T3})}
+
+\subsection{Step 1. Baseline SDXL}
+
+During standard SDXL inference, every generated panel evolves independently through the diffusion process. For a latent representation $z_t \in \mathbb{R}^{C \times H \times W}$, the scheduler performs
+
+\begin{equation}
+z_{t-1} = S(z_t, \epsilon_\theta(z_t, t, c)).
+\end{equation}
+
+Since every panel is generated independently, we have $z_t^{(i)} \perp z_t^{(j)}$ for $i \neq j$, and consequently their feature statistics evolve independently without cross-panel influence.
+
+\paragraph{Observation 1.}
+SDXL provides no mechanism for maintaining global appearance consistency between independently generated panels.
+
+\subsection{Step 2. LogCD: Global Consistency Along Diffusion Trajectories}
+
+LogCD~\cite{XieCVPR2026} demonstrates that global consistency should be maintained throughout the diffusion trajectory. Rather than enforcing consistency only at the final output, LogCD introduces Global Consistency Distillation (GoCD) to explicitly enforce consistency across pre-defined timesteps along the inference path:
+
+\begin{equation}
+\mathcal{L}_{\mathrm{GoCD}}^{\mathrm{MSE}} = \left\| f_\theta(\hat{z}_{t_m}, c, t_m) - \sg\left(f_\theta(\hat{z}_{t_n}, c, t_n)\right) \right\|_2^2,
+\end{equation}
+
+where $t_n = t_m - T/M$ and $\sg$ denotes stop-gradient.
+
+\paragraph{Observation 2.}
+Global consistency depends on maintaining stable latent representations throughout the sampling trajectory, not only at the final output.
+
+\subsection{Step 3. Temporal \& Content Co-Awareness: Appearance in Latent Features}
+
+Temporal and Content Co-Awareness Latent Diffusion~\cite{HaoCVPR2026} reveals that appearance information is fundamentally encoded in latent feature representations. The paper shows through time-segmented feature injection studies that:
+
+\begin{quote}
+``The pose condition dominates the global structure in early denoising timesteps, while the appearance condition gradually refines local textures in later denoising timesteps.''
+\end{quote}
+
+The Pose-Invariant Appearance Encoder (PIAE) introduced in the paper explicitly captures both global appearance consistency and local texture details from latent representations of multi-pose reference images. Different lighting, color, and structural variations manifest as changes in latent feature distributions.
+
+\paragraph{Observation 3.}
+Since appearance information is encoded in latent features, aligning their statistical moments provides a lightweight approximation for preserving global appearance consistency.
+
+\subsection{Step 4. Blend-Aware Latent Diffusion: Distribution Mismatch Causes Inconsistency}
+
+Blend-Aware Latent Diffusion~\cite{LiuCVPR2026} identifies that distribution mismatch between regions causes visual inconsistency. The paper explicitly states:
+
+\begin{quote}
+``The preserved and generated regions follow distinct statistical distributions, forming a piece-wise latent manifold with sharp transition across regions.''
+\end{quote}
+
+This distributional divergence leads to boundary discontinuity and content inconsistency.
+
+\paragraph{Observation 4.}
+Distribution mismatch inside latent space directly causes visual inconsistency, including seams, boundary artifacts, and structural misalignment. Therefore, reducing latent distribution mismatch should improve visual consistency.
+
+\subsection{Step 5. Balanced Representation Space: Stable Statistics Generalize}
+
+Balanced Representation Space~\cite{ZhangICLR2026} establishes that stable latent statistics produce more robust representations. The paper proves that ``generalized samples yield balanced representations that reflect the underlying distribution'' while ``memorized samples are encoded as spiky activations concentrated on a few neurons.''
+
+\paragraph{Observation 5.}
+Stable feature distributions (balanced representations) produce more robust semantic representations and better generalization, while unstable distributions (spiky activations) indicate overfitting and memorization.
+
+\subsection{Step 6. Proposed Distribution Alignment Objective}
+
+The previous observations establish four key principles:
+
+\begin{enumerate}
+\item Consistency should persist throughout the diffusion trajectory (LogCD).
+\item Appearance is reflected by the statistical distribution of latent feature activations (TCCA).
+\item Distribution mismatch causes visual inconsistency (Blend-Aware).
+\item Stable feature distributions produce better representations (Balanced Representation Space).
+\end{enumerate}
+
+Therefore, to maintain appearance consistency across independently generated panels, we apply a direct reduction of the latent distribution mismatch between the current panel and the anchor panel.
+
+Formally, let $P_c$ denote the latent distribution of the current panel and $P_a$ denote the latent distribution of the anchor panel. We formulate the goal as:
+
+\begin{equation}
+\min_{z'} \mathcal{W}_2(P_{z'}, P_a),
+\end{equation}
+
+where $\mathcal{W}_2$ denotes the \textbf{2-Wasserstein distance} between the distributions, and $z'$ is a transformation of the current latent $z$.
+
+Assuming each latent channel follows an approximately Gaussian distribution, minimizing the 2-Wasserstein distance reduces to matching the first two statistical moments (mean and variance). This provides a principled justification for our moment-matching approach.
+
+\subsection{Step 7. Moment Matching via Affine Transformation}
+
+To make this optimization tractable during inference, we approximate each channel's distribution by its first two moments and restrict the transformation to an affine form.
+
+For a latent channel $z_c$, define the \textbf{mean} as the average activation:
+
+\begin{equation}
+\mu_c = \frac{1}{HW} \sum_{h=1}^{H} \sum_{w=1}^{W} z_{c,h,w},
+\end{equation}
+
+and the \textbf{standard deviation} as the activation spread:
+
+\begin{equation}
+\sigma_c = \sqrt{ \frac{1}{HW} \sum_{h=1}^{H} \sum_{w=1}^{W} (z_{c,h,w} - \mu_c)^2 }.
+\end{equation}
+
+Now suppose we apply an affine transformation to each channel:
+
+\begin{equation}
+z'_c = a_c z_c + b_c.
+\end{equation}
+
+We choose $a_c, b_c$ to match the anchor moments:
+
+\begin{equation}
+\E[z'_c] = \mu_a, \qquad \Var(z'_c) = \sigma_a^2.
+\end{equation}
+
+From expectation:
+
+\begin{equation}
+a_c \mu_c + b_c = \mu_a.
+\end{equation}
+
+From variance:
+
+\begin{equation}
+a_c^2 \sigma_c^2 = \sigma_a^2.
+\end{equation}
+
+Solving gives:
+
+\begin{equation}
+a_c = \frac{\sigma_a}{\sigma_c}, \qquad b_c = \mu_a - \frac{\sigma_a}{\sigma_c} \mu_c.
+\end{equation}
+
+Therefore, the affine transformation that aligns the first two moments is:
+
+\begin{equation}
+\boxed{z'_c = \frac{\sigma_a}{\sigma_c} (z_c - \mu_c) + \mu_a}.
+\end{equation}
+
+\subsection{Step 8. Connection to AdaIN}
+
+Equation (11) is mathematically equivalent to \textbf{Adaptive Instance Normalization (AdaIN)}~\cite{HuangICCV2017}:
+
+\begin{equation}
+\AdaIN(z, \mu_a, \sigma_a) = \sigma_a \frac{z - \mu(z)}{\sigma(z)} + \mu_a.
+\end{equation}
+
+With $\mu(z) = \mu_c$ and $\sigma(z) = \sigma_c$, this matches Eq. (11).
+
+\paragraph{This connection is important to acknowledge.}
+Although Eq. (11) is mathematically equivalent to AdaIN, AdaIN was originally proposed for image style transfer in pixel feature space. In contrast, we apply this affine moment matching to diffusion latent representations, progressively during denoising, using scheduler-aware interpolation for cross-panel appearance consistency.
+
+Our contribution is therefore:
+
+\begin{enumerate}
+\item Applying it in diffusion latent space to align distributions between independently generated panels,
+\item Applying it progressively across denoising timesteps (following Observation 2),
+\item Using controlled interpolation to preserve scene-specific content,
+\item Demonstrating its effectiveness for cross-panel appearance consistency.
+\end{enumerate}
+
+\subsection{Step 9. Progressive Alignment via Interpolation}
+
+Direct AdaIN may over-constrain the scene appearance. Following Observation 2, the correction should be applied progressively rather than abruptly.
+
+We define the full AdaIN-corrected latent:
+
+\begin{equation}
+z_{\mathrm{corr}} = r_c(z - \mu_c) + \mu_a,
+\end{equation}
+
+where $r_c = \sigma_a / \sigma_c$.
+
+To preserve the original structure and avoid over-correction, we blend the corrected latent with the original using a single interpolation coefficient $\omega \in [0, 1]$:
+
+\begin{equation}
+z_{\mathrm{final}} = (1 - \omega) z + \omega z_{\mathrm{corr}}.
+\end{equation}
+
+This single parameter controls the overall correction strength. When $\omega = 0$, no correction is applied; when $\omega = 1$, the channel statistics are fully aligned to the anchor.
+
+\subsection{Step 10. Clamping for Stability}
+
+To prevent numerical instability when $\sigma_c$ is very small, we clamp the variance ratio:
+
+\begin{equation}
+r_c = \clip\left( \frac{\sigma_a}{\sigma_c},\, 0.8,\, 1.2 \right).
+\end{equation}
+
+Clamping bounds the scaling factor, preventing excessively large or small affine transformations while improving numerical stability.
+
+Thus, the final operator is:
+
+\begin{equation}
+\boxed{z_{\mathrm{final}} = (1-\omega) z + \omega \left( r_c(z - \mu_c) + \mu_a \right)}.
+\end{equation}
+
+\subsection{Step 11. Theoretical Analysis — Mean Convergence}
+
+From Eq. (13), the corrected latent is $z_{\mathrm{corr}} = r_c(z - \mu_c) + \mu_a$, where $r_c = \sigma_a/\sigma_c$ (or its clamped version).
+
+Taking expectation over the spatial dimensions gives
+
+\begin{equation}
+\mu' = \E[z_{\mathrm{corr}}] = r_c\mu_c - r_c\mu_c + \mu_a = \mu_a.
+\end{equation}
+
+Therefore, the corrected latent has mean exactly equal to the anchor mean:
+
+\begin{equation}
+\boxed{\mu' = \mu_a}.
+\end{equation}
+
+After interpolation with the original latent, $z_{\mathrm{final}} = (1-\omega)z + \omega z_{\mathrm{corr}}$, the final mean is:
+
+\begin{equation}
+\mu_{\mathrm{final}} = (1-\omega)\mu_c + \omega\mu_a.
+\end{equation}
+
+Thus:
+
+\begin{equation}
+\boxed{\mu_{\mathrm{final}} - \mu_a = (1-\omega)(\mu_c - \mu_a)}.
+\end{equation}
+
+Since $0 \le \omega \le 1$, increasing $\omega$ progressively moves the latent mean toward the anchor.
+
+\subsection{Step 12. Theoretical Analysis — Variance Alignment}
+
+For an affine transformation $z_{\mathrm{corr}} = r_c(z - \mu_c) + \mu_a$, subtracting the mean and adding a constant does not affect variance. Hence,
+
+\begin{equation}
+\Var(z_{\mathrm{corr}}) = r_c^2 \Var(z).
+\end{equation}
+
+Without clamping, $r_c = \sigma_a/\sigma_c$, which gives $\sigma' = r_c\sigma_c = \sigma_a$. Therefore, the variance of every latent channel exactly matches the anchor variance.
+
+With clamping, the scaling factor is bounded to $[0.8, 1.2]$, ensuring that the affine correction remains stable while preventing numerical issues from extreme variance ratios.
+
+\subsection{Step 13. Combined Statistical Alignment}
+
+The alignment operator performs variance alignment $r_c(z - \mu_c)$ followed by mean alignment $+\mu_a$, then progressive blending with the original latent through $\omega$.
+
+Consequently, the transformed latent simultaneously reduces discrepancies in both channel mean and channel variance while preserving controllable scene-specific variation through the parameter $\omega$.
+
+Since $0 \le \omega \le 1$, the correction remains bounded, constituting a bounded affine interpolation that progressively moves the latent distribution toward the anchor distribution without introducing abrupt changes to the diffusion trajectory.
+
+\subsection{Step 14. Integration into Diffusion}
+
+The statistical alignment is applied after each scheduler step, before the next UNet forward pass:
+
+\begin{equation}
+z_t \xrightarrow{\text{Align}} z_t^{\mathrm{aligned}} \xrightarrow{\text{UNet}} z_{t-1}.
+\end{equation}
+
+The alignment module requires no training, adds minimal computational overhead (only channel-wise moments, scaling, and addition), and can be applied at any denoising timestep.
+
+% ==============================================================================
+% SUMMARY OF DERIVATION FLOW
+% ==============================================================================
+\section{Summary of Derivation Flow}
+
+The derivation flow is summarized as:
+
+\begin{center}
+\fbox{\begin{minipage}{0.9\textwidth}
+\small
+SDXL (Baseline)\\
+$\downarrow$\\
+Observation 1: Independent trajectories $\to$ no cross-panel appearance control\\
+LogCD (CVPR 2026)\\
+$\downarrow$\\
+Observation 2: Global consistency requires stable latent representations throughout trajectory\\
+Temporal \& Content Co-Awareness (CVPR 2026)\\
+$\downarrow$\\
+Observation 3: Since appearance is encoded in latent features, aligning their statistical moments provides a lightweight approximation\\
+Blend-Aware Latent Diffusion (CVPR 2026)\\
+$\downarrow$\\
+Observation 4: Distribution mismatch causes visual inconsistency\\
+Balanced Representation Space (ICLR 2026)\\
+$\downarrow$\\
+Observation 5: Stable feature distributions produce better representations\\
+$\downarrow$\\
+OURS: Latent Statistical Alignment ($\mathcal{T}_3$)\\
+Define $\mu_c$ and $\sigma_c$ for each latent channel\\
+Minimize $\mathcal{W}_2(P_c, P_a)$ with affine transform constraint $\to$ reduces to moment matching\\
+Solve: $a = \sigma_a/\sigma_c$, $b = \mu_a - a\mu_c$\\
+This is AdaIN (acknowledged) — we apply it to diffusion latent space with progressive interpolation\\
+Progressive interpolation: $z_{\mathrm{final}} = (1-\omega)z + \omega( r(z-\mu_c) + \mu_a )$\\
+Clamp for stability: $r = \clip(\sigma_a/\sigma_c, 0.8, 1.2)$\\
+Proof: $\mu_{\mathrm{final}} - \mu_a = (1-\omega)(\mu_c - \mu_a)$ $\to$ mean converges; $\sigma' = \sigma_a$ (unclamped) $\to$ variance exactly matches.
+\end{minipage}}
+\end{center}
+
+\bibliographystyle{plain}
+\begin{thebibliography}{99}
+\bibitem{XieCVPR2026} Xie et al., ``LogCD: Global Consistency Distillation for Diffusion Models,'' CVPR 2026.
+\bibitem{HaoCVPR2026} Hao et al., ``Temporal and Content Co-Awareness Latent Diffusion,'' CVPR 2026.
+\bibitem{LiuCVPR2026} Liu et al., ``Blend-Aware Latent Diffusion,'' CVPR 2026.
+\bibitem{ZhangICLR2026} Zhang et al., ``Balanced Representation Space,'' ICLR 2026.
+\bibitem{HuangICCV2017} Huang and Belongie, ``Arbitrary Style Transfer in Real-time with Adaptive Instance Normalization,'' ICCV 2017.
+\end{thebibliography}
+
+\end{document}

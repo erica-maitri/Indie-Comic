@@ -65,6 +65,389 @@ log = logging.getLogger("pipeline.advanced_attention")
 # Level 1: Heat Diffusion Prior
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+# MDCP T1/T2/T3 Formal Operator Splitting
+# ─────────────────────────────────────────────────────────────────────────────
+
+class MDCPAttentionManager:
+    """
+    Implements the exact mathematical MDCP Algorithm 1:
+    - T3: Spatiotemporal Channel Statistics Alignment
+    - T1: Latent Trajectory Optimization
+    - T2: Attention Propagation Module
+    """
+    def __init__(self, lam1=1.0, lam2=1.0, lam3=1.0, lr=0.1, beta=0.15, omega=0.5):
+        self.lam1 = lam1
+        self.lam2 = lam2
+        self.lam3 = lam3
+        self.lr = lr
+        self.beta = beta
+        self.omega = omega
+        self._is_anchor = False
+        self._anchor_mu = None
+        self._anchor_sigma = None
+        self._anchor_z0 = None
+        self._anchor_A = None
+        self._anchor_F = None
+        self._anchor_O = {}
+        self.enabled = True
+
+    def set_anchor_mode(self, is_anchor):
+        self._is_anchor = is_anchor
+
+    def capture_anchor_stats(self, latents):
+        import torch
+        self._anchor_mu = latents.mean(dim=[2, 3], keepdim=True).detach().cpu().pin_memory()
+        self._anchor_sigma = (latents.std(dim=[2, 3], keepdim=True).detach().cpu() + 1e-5).pin_memory()
+
+    def capture_anchor_data(self, unet, latents, t, encoder_hidden_states, added_cond_kwargs=None, do_classifier_free_guidance=False):
+        import torch
+        import math
+        # Capture stats
+        self._anchor_mu = latents.mean(dim=[2, 3], keepdim=True).detach().cpu().pin_memory()
+        self._anchor_sigma = (latents.std(dim=[2, 3], keepdim=True).detach().cpu() + 1e-5).pin_memory()
+        self._anchor_z0 = latents.clone().detach().cpu().pin_memory()
+        
+        # Hook and capture tensors
+        handles = []
+        captured_q = {}
+        captured_k = {}
+        captured_F = []
+        captured_O = {}
+        
+        count = 0
+        attn_modules = []
+        for name, module in unet.named_modules():
+            is_attn_layer = ("attn2" in name or ("attn" in name and "attn1" not in name))
+            if is_attn_layer and hasattr(module, "to_k") and count < 4:
+                attn_modules.append(module)
+                count += 1
+                
+        for module in attn_modules:
+            def q_hook(m, inp, out, mod=module):
+                captured_q[mod] = out.detach().cpu()
+            def k_hook(m, inp, out, mod=module):
+                captured_k[mod] = out.detach().cpu()
+            def O_hook(m, inp, out, mod=module):
+                captured_O[mod] = out.detach().cpu()
+            handles.append(module.to_q.register_forward_hook(q_hook))
+            handles.append(module.to_k.register_forward_hook(k_hook))
+            handles.append(module.register_forward_hook(O_hook))
+            
+        def mid_hook(m, inp, out):
+            if isinstance(out, tuple):
+                out = out[0]
+            captured_F.append(out.detach().cpu())
+        if hasattr(unet, "mid_block"):
+            handles.append(unet.mid_block.register_forward_hook(mid_hook))
+            
+        with torch.no_grad():
+            unet_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
+            unet(unet_input, t, encoder_hidden_states=encoder_hidden_states, added_cond_kwargs=added_cond_kwargs)
+            
+        for handle in handles:
+            handle.remove()
+            
+        A_list = []
+        for module in attn_modules:
+            q = captured_q.get(module)
+            k = captured_k.get(module)
+            if q is not None and k is not None:
+                if do_classifier_free_guidance:
+                    q = q.chunk(2)[1]
+                    k = k.chunk(2)[1]
+                d_k = q.shape[-1]
+                q = q * (d_k ** -0.5)
+                attn_probs = torch.softmax(torch.bmm(q, k.transpose(-1, -2)), dim=-1)
+                A_list.append(attn_probs)
+                
+        self._anchor_A = torch.stack(A_list).mean(dim=0).pin_memory() if A_list else None
+        
+        F_t = captured_F[0] if captured_F else None
+        if F_t is not None and do_classifier_free_guidance:
+            F_t = F_t.chunk(2)[1]
+        self._anchor_F = F_t.pin_memory() if F_t is not None else None
+        
+        module_to_name = {mod: name for name, mod in unet.named_modules()}
+        O_dict = {}
+        for mod, out in captured_O.items():
+            if do_classifier_free_guidance:
+                out = out.chunk(2)[1]
+            O_dict[module_to_name[mod]] = out.pin_memory()
+        self._anchor_O = O_dict
+
+    def apply_t3(self, latents, anchor_stats=None, omega=0.5):
+        import torch
+        if self._is_anchor:
+            return latents
+            
+        if anchor_stats is None:
+            if self._anchor_mu is None:
+                return latents
+            mu_a = self._anchor_mu.to(latents.device, latents.dtype)
+            sigma_a = self._anchor_sigma.to(latents.device, latents.dtype)
+        else:
+            mu_a = anchor_stats['mu_a'].to(latents.device, latents.dtype)
+            sigma_a = anchor_stats['sigma_a'].to(latents.device, latents.dtype)
+            
+        curr_mu = latents.mean(dim=[2, 3], keepdim=True)
+        curr_sigma = latents.std(dim=[2, 3], keepdim=True) + 1e-5
+        
+        if mu_a.ndim == 1:
+            mu_a = mu_a.view(1, -1, 1, 1)
+        if sigma_a.ndim == 1:
+            sigma_a = sigma_a.view(1, -1, 1, 1)
+            
+        r_c = torch.clamp(sigma_a / curr_sigma, 0.8, 1.2)
+        z_corr = r_c * (latents - curr_mu) + mu_a
+        
+        return (1.0 - omega) * latents + omega * z_corr
+
+    def _correspondence(self, F_t, F_anchor):
+        import torch
+        B, C, H, W = F_t.shape
+        F_t_flat = F_t.view(B, C, -1)
+        F_a_flat = F_anchor.view(B, C, -1)
+        
+        F_t_norm = F_t_flat / (F_t_flat.norm(dim=1, keepdim=True) + 1e-6)
+        F_a_norm = F_a_flat / (F_a_flat.norm(dim=1, keepdim=True) + 1e-6)
+        
+        sim = torch.bmm(F_t_norm.transpose(-1, -2), F_a_norm)
+        idx = sim.argmax(dim=-1)
+        
+        idx_expanded = idx.unsqueeze(1).expand(-1, C, -1)
+        F_mapped = torch.gather(F_a_flat, 2, idx_expanded).view(B, C, H, W)
+        return F_mapped.detach()
+
+    def _forward_with_hooks(self, unet, z_aligned, t, encoder_hidden_states, added_cond_kwargs=None, do_classifier_free_guidance=False, guidance_scale=7.5):
+        import torch
+        import math
+        handles = []
+        captured_q = {}
+        captured_k = {}
+        captured_F = []
+        
+        count = 0
+        attn_modules = []
+        for name, module in unet.named_modules():
+            is_attn_layer = ("attn2" in name or ("attn" in name and "attn1" not in name))
+            if is_attn_layer and hasattr(module, "to_k") and count < 4:
+                attn_modules.append(module)
+                count += 1
+                
+        for module in attn_modules:
+            def q_hook(m, inp, out, mod=module):
+                captured_q[mod] = out
+            def k_hook(m, inp, out, mod=module):
+                captured_k[mod] = out
+            handles.append(module.to_q.register_forward_hook(q_hook))
+            handles.append(module.to_k.register_forward_hook(k_hook))
+            
+        def mid_hook(m, inp, out):
+            if isinstance(out, tuple):
+                out = out[0]
+            captured_F.append(out)
+        if hasattr(unet, "mid_block"):
+            handles.append(unet.mid_block.register_forward_hook(mid_hook))
+            
+        with torch.enable_grad():
+            unet_input = torch.cat([z_aligned] * 2) if do_classifier_free_guidance else z_aligned
+            output = unet(unet_input, t, encoder_hidden_states=encoder_hidden_states, added_cond_kwargs=added_cond_kwargs)
+            if hasattr(output, "sample"):
+                noise_pred = output.sample
+            else:
+                noise_pred = output
+                
+            if do_classifier_free_guidance:
+                noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+                
+        for handle in handles:
+            handle.remove()
+            
+        A_list = []
+        for module in attn_modules:
+            q = captured_q.get(module)
+            k = captured_k.get(module)
+            if q is not None and k is not None:
+                if do_classifier_free_guidance:
+                    q = q.chunk(2)[1]
+                    k = k.chunk(2)[1]
+                d_k = q.shape[-1]
+                q = q * (d_k ** -0.5)
+                attn_probs = torch.softmax(torch.bmm(q, k.transpose(-1, -2)), dim=-1)
+                A_list.append(attn_probs)
+                
+        A_t = torch.stack(A_list).mean(dim=0) if A_list else torch.zeros(1, device=z_aligned.device)
+        
+        F_t = captured_F[0] if captured_F else torch.zeros_like(z_aligned)
+        if do_classifier_free_guidance:
+            F_t = F_t.chunk(2)[1]
+            
+        return A_t, F_t, noise_pred
+
+    def apply_t1(self, z_aligned, anchor_data, t, scheduler, unet, encoder_hidden_states, added_cond_kwargs=None, do_classifier_free_guidance=False, guidance_scale=7.5):
+        import torch
+        
+        # 1. Early Stopping check (Active Window: [0.30, 0.60])
+        try:
+            timesteps = scheduler.timesteps
+            t_val = t.item() if isinstance(t, torch.Tensor) else int(t)
+            t_max = timesteps[0].item() if hasattr(timesteps[0], "item") else timesteps[0]
+            t_min = timesteps[-1].item() if hasattr(timesteps[-1], "item") else timesteps[-1]
+            if t_max != t_min:
+                t_ratio = (t_val - t_min) / (t_max - t_min)
+            else:
+                t_ratio = 0.5
+        except Exception:
+            t_ratio = 0.5
+            
+        if not (0.30 <= t_ratio <= 0.60):
+            # Skip T1 optimization outside active window
+            return z_aligned.detach(), 0.0
+
+        # 2. Gradient Checkpointing
+        original_gp = getattr(unet, "gradient_checkpointing", False)
+        if hasattr(unet, "enable_gradient_checkpointing"):
+            try:
+                unet.enable_gradient_checkpointing()
+            except Exception:
+                pass
+
+        # 3. Mixed Precision (AMP)
+        use_amp = (z_aligned.device.type == "cuda")
+        scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+        
+        try:
+            with torch.cuda.amp.autocast(enabled=use_amp, dtype=torch.float16):
+                # Forward pass with hooks
+                A_t, F_t, noise_pred = self._forward_with_hooks(
+                    unet=unet,
+                    z_aligned=z_aligned,
+                    t=t,
+                    encoder_hidden_states=encoder_hidden_states,
+                    added_cond_kwargs=added_cond_kwargs,
+                    do_classifier_free_guidance=do_classifier_free_guidance,
+                    guidance_scale=guidance_scale
+                )
+                
+                # Predict clean latent z_hat_0
+                if hasattr(scheduler, "alphas_cumprod"):
+                    t_idx = t.item() if isinstance(t, torch.Tensor) else int(t)
+                    t_idx = min(max(t_idx, 0), len(scheduler.alphas_cumprod) - 1)
+                    alpha_prod_t = scheduler.alphas_cumprod[t_idx].to(z_aligned.device)
+                    beta_prod_t = 1.0 - alpha_prod_t
+                    z_hat_0 = (z_aligned - (beta_prod_t ** 0.5) * noise_pred) / (alpha_prod_t ** 0.5)
+                else:
+                    z_hat_0 = z_aligned
+                    
+                # Compute energies
+                E_id = torch.mean((A_t - anchor_data['A_anchor'].to(A_t.device, A_t.dtype))**2)
+                
+                F_anchor = anchor_data['F_anchor'].to(F_t.device, F_t.dtype)
+                E_str = torch.mean((F_t - self._correspondence(F_t, F_anchor))**2)
+                
+                z0_anchor = anchor_data['z0_anchor'].to(z_hat_0.device, z_hat_0.dtype)
+                E_traj = torch.mean((z_hat_0 - z0_anchor)**2)
+                
+                E_t = self.lam1 * E_id + self.lam2 * E_str + self.lam3 * E_traj
+                
+            # Scale and compute grads
+            scaled_E_t = scaler.scale(E_t)
+            grads = torch.autograd.grad(scaled_E_t, z_aligned, retain_graph=False)[0]
+            R_t = grads / scaler.get_scale()
+        finally:
+            # Restore gradient checkpointing state
+            if not original_gp and hasattr(unet, "disable_gradient_checkpointing"):
+                try:
+                    unet.disable_gradient_checkpointing()
+                except Exception:
+                    unet.gradient_checkpointing = False
+            
+        # Adaptive step size
+        if hasattr(scheduler, "timesteps") and hasattr(scheduler, "sigmas"):
+            try:
+                t_val = t.item() if isinstance(t, torch.Tensor) else int(t)
+                matching_indices = (scheduler.timesteps == t_val).nonzero()
+                if matching_indices.numel() > 0:
+                    i = matching_indices[0, 0].item()
+                else:
+                    i = torch.argmin(torch.abs(scheduler.timesteps - t_val)).item()
+                # Cast to float in case it's a tensor
+                sigma_t = float(scheduler.sigmas[i])
+                sigma_max = float(scheduler.sigmas[0])
+            except Exception:
+                sigma_t = 1.0
+                sigma_max = 1.0
+        elif hasattr(scheduler, "sigmas"):
+            t_idx = t.item() if isinstance(t, torch.Tensor) else int(t)
+            t_idx = min(max(t_idx, 0), len(scheduler.sigmas) - 1)
+            sigma_t = float(scheduler.sigmas[t_idx])
+            sigma_max = float(scheduler.sigmas[0])
+        else:
+            sigma_t = 1.0
+            sigma_max = 1.0
+            
+        eta = self.lr * sigma_t / (sigma_max + 1e-8)
+        z_tilde = z_aligned.detach() - eta * R_t.detach()
+        return z_tilde, E_t.item()
+
+    def apply_t2(self, z_tilde, anchor_outputs, beta=0.15, unet=None, t=None, encoder_hidden_states=None, added_cond_kwargs=None, do_classifier_free_guidance=False):
+        import torch
+        module_to_name = {mod: name for name, mod in unet.named_modules()}
+        
+        handles = []
+        for name, module in unet.named_modules():
+            if name in anchor_outputs:
+                def make_hook(layer_name):
+                    def hook_fn(m, inp, out):
+                        cached = anchor_outputs[layer_name]
+                        cached_device = cached.to(device=out.device, dtype=out.dtype, non_blocking=True)
+                        
+                        # M2/M3 mitigation: spatial mask support
+                        region_mask = getattr(self, "attn_cache", None)
+                        mask_tensor = region_mask._region_mask if region_mask is not None else None
+                        
+                        if mask_tensor is not None:
+                            try:
+                                mask_device = mask_tensor.to(device=out.device, dtype=out.dtype)
+                                mask_flat = mask_device.view(1, -1, 1)  # (1, seq_len, 1)
+                                if mask_flat.shape[1] == out.shape[1]:
+                                    mask_scale = 0.5
+                                    beta_adaptive = beta * (1.0 + mask_scale * mask_flat)
+                                    beta_adaptive = torch.clamp(beta_adaptive, 0.0, 0.4)
+                                    
+                                    if out.shape[0] == 2 * cached_device.shape[0]:
+                                        uncond, cond = out.chunk(2)
+                                        cond = (1.0 - beta_adaptive) * cond + beta_adaptive * cached_device
+                                        return torch.cat([uncond, cond], dim=0)
+                                    else:
+                                        return (1.0 - beta_adaptive) * out + beta_adaptive * cached_device
+                            except Exception:
+                                pass
+                                
+                        if out.shape[0] == 2 * cached_device.shape[0]:
+                            uncond, cond = out.chunk(2)
+                            cond = (1.0 - beta) * cond + beta * cached_device
+                            return torch.cat([uncond, cond], dim=0)
+                        else:
+                            return (1.0 - beta) * out + beta * cached_device
+                    return hook_fn
+                handles.append(module.register_forward_hook(make_hook(name)))
+                
+        with torch.no_grad():
+            unet_input = torch.cat([z_tilde] * 2) if do_classifier_free_guidance else z_tilde
+            output = unet(unet_input, t, encoder_hidden_states=encoder_hidden_states, added_cond_kwargs=added_cond_kwargs)
+            if hasattr(output, "sample"):
+                noise_pred = output.sample
+            else:
+                noise_pred = output
+                
+        for handle in handles:
+            handle.remove()
+            
+        return noise_pred
+
 class HeatDiffusionPrior:
     """
     Physics-Informed Attention — RealDiffusion approximation.
@@ -1713,7 +2096,7 @@ class PlaceChangeHandler:
 # ███████████████████████████████████████████████████████████████████████████
 # =============================================================================
 
-class AdvancedAttentionManager:
+class AdvancedAttentionManager(MDCPAttentionManager):
     """
     Unified entry-point for all three core MDCP attention mechanisms *and*
     all five optional failure-mode mitigations, plus the multi-anchor
@@ -1753,6 +2136,7 @@ class AdvancedAttentionManager:
                  attention_blend: float = 0.15,
                  spatial_strength: float = 0.08,
                  enabled: bool = True,
+                 use_heuristic_mode: bool = False,
                  # ── Mitigation flags (enabled by default) ───────────────
                  freeu_enabled: bool = True,
                  regional_masking_enabled: bool = True,
@@ -1763,14 +2147,22 @@ class AdvancedAttentionManager:
                  freeu_backbone_scale: float = 1.2,
                  freeu_skip_scale: float = 0.9,
                  adain_strength: float = 0.5,
-                 detail_use_ip_adapter: bool = False):
+                 detail_use_ip_adapter: bool = False,
+                 # ── MDCP Hyperparameters ──────────────────────────────
+                 lam1: float = 1.0,
+                 lam2: float = 1.0,
+                 lam3: float = 1.0,
+                 lr: float = 0.1,
+                 omega: float = 0.50):
         try:
             import torch
             gpu_available = torch.cuda.is_available()
         except ImportError:
             gpu_available = False
 
+        MDCPAttentionManager.__init__(self, lam1=lam1, lam2=lam2, lam3=lam3, lr=lr, beta=attention_blend, omega=omega)
         self.enabled = enabled and gpu_available
+        self.use_heuristic_mode = use_heuristic_mode
 
         # ── Core mechanisms ───────────────────────────────────────────────────
         self.heat_prior    = HeatDiffusionPrior(alpha=heat_alpha)
@@ -2135,7 +2527,7 @@ class AdvancedAttentionManager:
         - Updates FreeU and AdaIN timestep ratios each step (if enabled).
         - Auto-captures anchor latent statistics on the last step of Panel 1.
         """
-        if not self.enabled:
+        if not self.enabled or not getattr(self, "use_heuristic_mode", False):
             return None
 
         heat_prior    = self.heat_prior
@@ -2266,3 +2658,6 @@ class AdvancedAttentionManager:
                 "gamma_reduced": PlaceChangeHandler.GAMMA_REDUCED,
             },
         }
+
+
+

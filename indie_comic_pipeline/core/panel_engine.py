@@ -299,6 +299,49 @@ class PanelEngine:
         if self.advanced_attention:
             is_anchor = (panel_id == 1)
             steps = weights["num_steps"]
+            
+            # MDCP Core: Retrieve anchor signature from StorySectionMemory and load it
+            if not is_anchor:
+                char_name = self.memory.main_character or (list(self.memory.characters.keys())[0] if self.memory.characters else "Wanderer")
+                tokens = self.memory.get_identity_tokens(char_name)
+                sig = None
+                
+                # Try to load from the .pt file first for checkpoint recovery robustness
+                import torch
+                pt_path = os.path.join("outputs", "anchors", f"mdcp_signature_{char_name}.pt")
+                if tokens and "mdcp_signature_path" in tokens:
+                    pt_path = tokens["mdcp_signature_path"]
+                
+                if os.path.exists(pt_path):
+                    try:
+                        sig = torch.load(pt_path, map_location="cpu")
+                        # Pin the loaded CPU tensors
+                        sig = {k: (v.pin_memory() if hasattr(v, "pin_memory") else v) for k, v in sig.items()}
+                        if "O_anchor" in sig and isinstance(sig["O_anchor"], dict):
+                            sig["O_anchor"] = {k: v.pin_memory() for k, v in sig["O_anchor"].items()}
+                        log.info(f"  [4b] Loaded MDCP signature from {pt_path}")
+                    except Exception as e:
+                        log.warning(f"  [4b] Failed to load MDCP signature from {pt_path}: {e}")
+                
+                # Fallback to in-memory if loading from disk failed
+                if sig is None and tokens and "mdcp_signature" in tokens:
+                    sig = tokens["mdcp_signature"]
+                    
+                if sig:
+                    self.advanced_attention._anchor_mu = sig.get("mu_a")
+                    self.advanced_attention._anchor_sigma = sig.get("sigma_a")
+                    self.advanced_attention._anchor_A = sig.get("A_anchor")
+                    self.advanced_attention._anchor_F = sig.get("F_anchor")
+                    self.advanced_attention._anchor_O = sig.get("O_anchor", {})
+                    self.advanced_attention._anchor_z0 = sig.get("z0_anchor")
+                    
+                    # Ensure L3 statistics are also loaded into spatio_temp
+                    if self.advanced_attention._anchor_mu is not None:
+                        mu_a = self.advanced_attention._anchor_mu
+                        sigma_a = self.advanced_attention._anchor_sigma
+                        self.advanced_attention.spatio_temp._anchor_mean = mu_a.view(-1)
+                        self.advanced_attention.spatio_temp._anchor_std = sigma_a.view(-1)
+                        
             self.advanced_attention.on_panel_start(
                 panel_id=panel_id, is_anchor=is_anchor, total_steps=steps
             )
@@ -338,6 +381,11 @@ class PanelEngine:
             if cb is not None:
                 gen_config["step_callback"] = cb
                 gen_config["callback_tensor_inputs"] = ["latents"]
+            
+            # MDCP Core: Pass manager and flag for custom generation loop
+            use_mdcp = context.get("generation", {}).get("use_mdcp", True)
+            gen_config["use_mdcp_custom_loop"] = use_mdcp
+            gen_config["mdcp_manager"] = self.advanced_attention
 
         image = backend.generate(prompt, negative_prompt, gen_config)
         log.info(f"  [5] Image generated ({image.size[0]}x{image.size[1]})")

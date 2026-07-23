@@ -893,40 +893,53 @@ The individual operators $\mathcal{T}_1$, $\mathcal{T}_2$, and $\mathcal{T}_3$ a
 `	ext
 Algorithm 1: MDCP Denoising Step Update
 
-Input: 
-    Timestep t, latent z_t, anchor latent z0_anchor, text conditioning c
-    Anchor cache: {O_anchor^(ℓ)} for ℓ=1..4 (hooked attn2 layers), anchor channel stats (μ_a, σ_a), anchor attention maps A_anchor, anchor feature maps F_anchor
-    Hyperparameters: λ1, λ2, λ3, λ, β, ω
-Output: Consistency-aligned latent z'_t
+Require:
+    - Timestep t
+    - Current latent z_t
+    - Anchor latent z_{0,anchor}
+    - Text conditioning c
+    - Anchor attention maps A_anchor and feature maps F_anchor
+    - Anchor channel statistics (μ_a, σ_a)
+    - Cached anchor attention outputs {O_anchor^(ℓ)} for ℓ = 1,...,4
+    - Hyperparameters: λ₁, λ₂, λ₃, λ, β, ω
+    - Scheduler function S(·) and noise schedule σ_t
 
-/* T3: Spatiotemporal Channel Statistics Alignment */
-1.  For each channel c in z_t:
-2.      μ_c, σ_c ← ComputeChannelStats(z_t, c)
-3.      r_c ← clamp(σ_a / σ_c, 0.8, 1.2)
-4.      z_corr,c ← r_c(z_t,c - μ_c) + μ_a
-5.  End For
-6.  z_aligned ← (1 - ω)z_t + ω z_corr
+Ensure: Next latent z_{t-1}
 
-/* T1: Latent Trajectory Optimization */
-7.  Forward UNet on z_aligned to extract current attention maps A_t and feature maps F_t
-8.  z_hat_0 ← D_sched(z_aligned, ε_θ, t)
-9.  E_id ← (1/N)||A_t - A_anchor||_F^2
-10. E_str ← ||F_t - Ψ(F_t, F_anchor)||_2^2
-11. E_traj ← ||z_hat_0 - z0_anchor||_2^2
-12. E_t ← λ1 E_id + λ2 E_str + λ3 E_traj
-13. R_t ← ∇_{z_aligned} E_t
-14. η(t) ← λ * σ_t / (σ_max + ε)
-15. z_tilde ← z_aligned - η(t)R_t
+-----------------------------------------------------------------
+1:  // ----- T3: Spatiotemporal Channel Statistics Alignment -----
+2:  for each channel c in z_t do
+3:      μ_c, σ_c ← ComputeChannelStats(z_t, c)
+4:      r_c ← clip(σ_a / σ_c, 0.8, 1.2)
+5:      z_corr,c ← r_c · (z_{t,c} − μ_c) + μ_a
+6:  end for
+7:  z_aligned ← (1 − ω) · z_t + ω · z_corr
 
-/* T2: Attention Propagation Module (Executes during UNet forward pass on z_tilde) */
-16. For each of the 4 hooked attn2 layers ℓ, during UNet forward pass on z_tilde:
-17.     O_curr^(ℓ) ← layer ℓ's ordinary forward output
-18.     O_prop^(ℓ) ← (1 - β) O_curr^(ℓ) + β O_anchor^(ℓ)
-19.     Replace layer ℓ's output with O_prop^(ℓ) in-place
-20. End For
-21. z'_t ← latent produced after the UNet forward pass completes with T2 propagation
+8:  // ----- T1: Latent Trajectory Optimization -----
+9:  Forward UNet on z_aligned to extract attention maps A_t and feature maps F_t
+10: z_hat_0 ← D_sched(z_aligned, εθ, t)          // predict clean latent
+11: E_id   ← (1/N) · || A_t − A_anchor ||_F²
+12: E_str  ← || F_t − Ψ(F_t, F_anchor) ||₂²
+13: E_traj ← || z_hat_0 − z_{0,anchor} ||₂²
+14: E_t    ← λ₁·E_id + λ₂·E_str + λ₃·E_traj
+15: R_t    ← ∇_{z_aligned} E_t                    // gradient w.r.t. z_aligned
+16: η(t)   ← λ · σ_t / (σ_max + ε)
+17: z_tilde ← z_aligned − η(t) · R_t              // corrected latent
 
-22. Return z'_t
+18: // ----- T2: Attention Propagation Module -----
+19: // Perform a second UNet forward pass on z_tilde; during the forward pass,
+20: // for each of the four hooked attention layers (ℓ=1..4), replace the output:
+21: for each layer ℓ in {1,...,4} do
+22:     O_curr^(ℓ) ← ordinary output of layer ℓ on z_tilde
+23:     O_prop^(ℓ) ← (1 − β)·O_curr^(ℓ) + β·O_anchor^(ℓ)
+24:     Replace layer ℓ’s output with O_prop^(ℓ)
+25: end for
+26: // After this forward pass, we obtain the predicted noise εθ(z_tilde, t, c)
+
+27: // ----- Scheduler step (proceeds the diffusion) -----
+28: z_{t-1} ← Scheduler( z_tilde, εθ(z_tilde, t, c) )
+
+29: Return z_{t-1}
 `
 
 
@@ -1240,7 +1253,11 @@ In the multi-anchor system, sequential dependencies are localized to the first-a
 
 #### 3.2.4 Phase 3–4 — Unified Panel Generation Loop
 
-Phase 3–4 is the core generative pass. For each panel $i \in \{1, \ldots, N\}$, the `PanelEngine` executes a deterministic 7-step pipeline: (1) assemble the positive prompt, (2) compute `CharComCompositor` weights, (3) select and configure the generation backend, (4) assemble the negative prompt and append consistency priors, (5) generate the image at the configured resolution and random seed, (6) trigger Phase 2 anchoring for newly introduced characters, and (7) record the panel to the blackboard. All seven steps run inside a per-panel mutex (`threading.Lock`) so that concurrent Phase B agents from Phase 1 cannot corrupt the shared `StorySectionMemory` state during generation.
+
+**MDCP Pipeline Update:** The standard SDXL pipeline is replaced by a custom PyTorch denoising loop that natively executes the MDCP mathematical operator splitting ($\mathcal{T}_1$, $\mathcal{T}_2$, $\mathcal{T}_3$) exactly as derived.
+
+
+Phase 3–4 is the core generative pass. The standard SDXL pipeline is replaced by a custom PyTorch denoising loop that natively executes the MDCP mathematical operator splitting ($\mathcal{T}_1$, $\mathcal{T}_2$, $\mathcal{T}_3$) exactly as derived. For each panel $i \in \{1, \ldots, N\}$, the `PanelEngine` executes a deterministic 7-step pipeline: (1) assemble the positive prompt, (2) compute `CharComCompositor` weights, (3) select and configure the generation backend, (4) assemble the negative prompt and append consistency priors, (5) generate the image at the configured resolution and random seed, (6) trigger Phase 2 anchoring for newly introduced characters, and (7) record the panel to the blackboard. All seven steps run inside a per-panel mutex (`threading.Lock`) so that concurrent Phase B agents from Phase 1 cannot corrupt the shared `StorySectionMemory` state during generation.
 
 ##### 3.2.4.1 Model Backend: SDXL Configuration
 
@@ -1401,11 +1418,15 @@ The $1024 \times 1024$ resolution for full-page panels is the native training re
 
 ##### 3.2.4.6 Advanced Attention Hook Integration
 
-If an `AdvancedAttentionManager` is active, it is integrated into the generation loop through two distinct mechanisms:
+If an `AdvancedAttentionManager` is active, it is integrated into the generation loop through two distinct mechanisms depending on the execution mode:
 
-**Hook installation (once per pipeline lifetime).** On the first panel, the backend's cross-attention modules are discovered via `backend.get_cross_attention_modules()`, which iterates SDXL's UNet and returns up to `max_layers=4` attention layers from the `attn2` (cross-attention) blocks. These layers receive PyTorch forward hooks that intercept and modify the attention output tensors according to the active mitigation flags ($\mathcal{T}_1$, $\mathcal{T}_2$, $\mathcal{T}_3$). The 4-layer cap prevents the hook overhead from dominating per-step compute time while targeting the highest-level semantic attention layers (the outermost `attn2` blocks in the UNet bottleneck), which carry the most identity-relevant cross-attention weights.
+**Exact Denoising Loop Integration (Default).** The standard diffusers pipeline execution is replaced by a custom PyTorch sampling loop in `mdcp_generate()`. This loop directly schedules and executes the three core MDCP operators at each timestep $t$:
+1. **$\mathcal{T}_3$ Channel Alignment:** Invoked on the current latents to align mean/variance using Progressive Affine Moment Matching.
+2. **$\mathcal{T}_1$ Trajectory Optimization:** Invoked via a gradient-tracked forward pass on the aligned latents to compute $E_{\text{id}}$, $E_{\text{str}}$, and $E_{\text{traj}}$, backpropagating to obtain $\nabla_{z_{\text{aligned}}} E_t$ and taking a step of size $\eta(t)$.
+3. **$\mathcal{T}_2$ Attention Propagation:** Invoked via a second forward pass where forward hooks intercept the 4 cross-attention layers of the UNet to blend text-conditioned outputs with the cached anchor outputs ($O_{\text{anchor}}$), optionally gated by a spatial region mask (M2/M3).
+The scheduler then performs the transition step to produce $z_{t-1}$.
 
-**Per-step callback for $\mathcal{T}_1$ and $\mathcal{T}_3$.** The `step_callback` function returned by `advanced_attention.get_step_callback()` is passed as `callback_on_step_end` to the SDXL pipeline call. This function executes at every denoising step and has direct access to the intermediate `latents` tensor. It applies the $\mathcal{T}_1$ heat diffusion operator (spatial smoothing of the latent map) and the $\mathcal{T}_3$ spatiotemporal anchor blend (mixing anchor statistics into the current latent), both of which require step-level access to the latent trajectory — access that is impossible from a standard post-generation hook. The `callback_tensor_inputs=["latents"]` parameter ensures that the callback receives the latent tensor on the same device as the pipeline, avoiding an unnecessary CPU/GPU transfer.
+**Heuristic Callback Integration (Legacy/A/B testing).** When `use_heuristic_mode=True` is configured, the manager reverts to the legacy callback-based mode. Here, the `step_callback` function returned by `advanced_attention.get_step_callback()` is passed as `callback_on_step_end` to the SDXL pipeline call. This function executes at every denoising step and has direct access to the intermediate `latents` tensor. It applies the $\mathcal{T}_1$ heat diffusion operator (spatial smoothing of the latent map) and the $\mathcal{T}_3$ spatiotemporal anchor blend (mixing anchor statistics into the current latent) as heuristic approximations. The `callback_tensor_inputs=["latents"]` parameter ensures that the callback receives the latent tensor on the same device as the pipeline, avoiding an unnecessary CPU/GPU transfer. Additionally, forward hooks discover the cross-attention modules on the first panel via `backend.get_cross_attention_modules()` to apply attention blending at every step.
 
 #### 3.2.5 Phase 4 — Optional Consistency Modules
 
@@ -1594,7 +1615,7 @@ advanced_attention = AdvancedAttentionManager(
 )
 ```
 
-The activation order when all five are enabled is: M4 and M5 install UNet hooks at model load time (once); M3 and M1 run at Phase 2 step-zero (once); M2 runs per panel at panel-start time; L1 and L3 run per denoising step via the `callback_on_step_end` callback; L2 runs per attention layer per denoising step via forward hooks. The combined additional latency per panel is approximately 5–8% over baseline SDXL generation.
+The activation order when all five are enabled is: M4 and M5 install UNet hooks at model load time (once); M3 and M1 run at Phase 2 step-zero (once); M2 runs per panel at panel-start time; L1 and L3 run per denoising step via direct custom loop execution (or via the `callback_on_step_end` callback in legacy mode); L2 runs per attention layer per denoising step via forward hooks. The combined additional latency per panel is approximately 5–8% over baseline SDXL generation.
 
 | Module | Layer | Active When | Overhead |
 |:---|:---:|:---|:---|

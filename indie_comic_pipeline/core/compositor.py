@@ -57,7 +57,21 @@ class CharComCompositor:
         # Base weights
         lora_scale = self.base_lora_scale
         guidance = self.base_guidance
-        steps = self.base_steps
+        
+        # Adaptive steps based on scene complexity
+        size_class = layout.get("size_class", "medium") if layout else "medium"
+        camera_angle = layout.get("camera_angle", "medium_shot") if layout else "medium_shot"
+        action_intensity = context.get("action_intensity", "medium")
+        
+        # High complexity (Full-page, large, action-heavy, or wide shots)
+        if size_class in ["full_page", "large"] or action_intensity == "high" or camera_angle == "wide_shot":
+            steps = 25
+        # Low complexity (Close-up, extreme close-up, small panels, or low action)
+        elif camera_angle in ["close_up", "extreme_close_up"] or size_class == "small" or action_intensity == "low":
+            steps = 15
+        # Medium complexity
+        else:
+            steps = 20
 
         # ── Apply critic adjustment overrides (from reject-regenerate loop) ──
         if "guidance_scale_override" in context:
@@ -65,15 +79,12 @@ class CharComCompositor:
         if "steps_override" in context:
             steps = context["steps_override"]
 
-        # ── Adjustment 1: Action Intensity ──
+        # ── Adjustment 1: Action Intensity (Guidance only, steps are already adaptive) ──
         # Higher intensity → slight guidance increase for more dramatic output
-        size_class = layout.get("size_class", "medium") if layout else "medium"
         if size_class == "full_page":
             guidance += 0.5
-            steps += 5
         elif size_class == "large":
             guidance += 0.25
-            steps += 2
 
         # ── Adjustment 2: Emotion Intensity ──
         # Strong emotions → slightly more guidance for clearer expression

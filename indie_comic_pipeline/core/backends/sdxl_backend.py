@@ -170,6 +170,184 @@ class SDXLBackend(BaseBackend):
         """
         return self._pipe
 
+
+    def mdcp_generate(self, prompt: str, negative_prompt: str, config: dict):
+        """
+        Custom generation loop executing MDCP Algorithm 1 explicitly:
+        T3 -> T1 (gradient pass) -> T2 (propagation pass) -> Scheduler
+        """
+        import torch
+        from PIL import Image
+        
+        if self._pipe is None:
+            raise RuntimeError("SDXL pipeline is not loaded.")
+        
+        pipe = self._pipe
+        device = pipe.device
+        
+        width = config.get("width", 768)
+        height = config.get("height", 768)
+        steps = config.get("num_steps", 25)
+        guidance_scale = config.get("guidance_scale", 7.5)
+        seed = config.get("seed", 42)
+        
+        manager = config.get("mdcp_manager")
+        
+        generator = torch.Generator(device=device).manual_seed(seed)
+        
+        # 1. Encode prompts (positive and negative)
+        prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds = pipe.encode_prompt(
+            prompt=prompt,
+            prompt_2=prompt,
+            device=device,
+            num_images_per_prompt=1,
+            do_classifier_free_guidance=True,
+            negative_prompt=negative_prompt,
+            negative_prompt_2=negative_prompt,
+        )
+        
+        # Combine embeds for CFG
+        prompt_embeds_cat = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
+        
+        add_text_embeds = pooled_prompt_embeds
+        add_time_ids = pipe._get_add_time_ids(
+            (height, width), (0, 0), (height, width), dtype=prompt_embeds.dtype, text_encoder_projection_dim=pipe.text_encoder_2.config.projection_dim
+        ).to(device)
+        
+        negative_add_time_ids = add_time_ids
+        
+        add_text_embeds_cat = torch.cat([negative_pooled_prompt_embeds, add_text_embeds], dim=0)
+        add_time_ids_cat = torch.cat([negative_add_time_ids, add_time_ids], dim=0)
+        
+        added_cond_kwargs = {
+            "text_embeds": add_text_embeds_cat,
+            "time_ids": add_time_ids_cat
+        }
+        
+        pipe.scheduler.set_timesteps(steps, device=device)
+        timesteps = pipe.scheduler.timesteps
+        
+        num_channels = pipe.unet.config.in_channels
+        latents = pipe.prepare_latents(1, num_channels, height, width, prompt_embeds.dtype, device, generator=generator)
+        
+        # Check if we have stashed anchor data or need to extract it
+        is_anchor = manager._is_anchor if manager else True
+        
+        # Prepare anchor statistics and dictionaries
+        anchor_data = {}
+        if not is_anchor and manager:
+            # We look up identity tokens stashed in the manager's cached state or stashed multi_anchor
+            # Since panel_engine sets the active anchor via select_anchor_for_panel, we check multi_anchor / spatio_temp
+            # Retrieve from multi_anchor or custom parameters
+            anchor_data = {
+                "A_anchor": getattr(manager, "_anchor_A", None),
+                "F_anchor": getattr(manager, "_anchor_F", None),
+                "O_anchor": getattr(manager, "_anchor_O", {}),
+                "z0_anchor": getattr(manager, "_anchor_z0", None)
+            }
+            
+            # Fallback to checking active cache
+            if anchor_data["A_anchor"] is None and hasattr(manager, "multi_anchor"):
+                # Find the first cached anchor
+                for k, val in manager.multi_anchor._anchors.items():
+                    sig = val.get("mdcp_signature")
+                    if sig:
+                        anchor_data = {
+                            "A_anchor": sig.get("A_anchor"),
+                            "F_anchor": sig.get("F_anchor"),
+                            "O_anchor": sig.get("O_anchor", {}),
+                            "z0_anchor": sig.get("z0_anchor")
+                        }
+                        break
+                        
+        for i, t in enumerate(timesteps):
+            if not is_anchor and manager and anchor_data.get("A_anchor") is not None:
+                # T3: Spatiotemporal Alignment
+                with torch.no_grad():
+                    # Check if spatio_temp has mean and std stashed
+                    anchor_stats = None
+                    if manager.spatio_temp._anchor_mean is not None:
+                        anchor_stats = {
+                            "mu_a": manager.spatio_temp._anchor_mean,
+                            "sigma_a": manager.spatio_temp._anchor_std
+                        }
+                    z_aligned = manager.apply_t3(latents, anchor_stats=anchor_stats, omega=manager.spatio_temp.strength)
+                
+                # T1: Latent Trajectory Optimization
+                z_aligned.requires_grad_(True)
+                with torch.enable_grad():
+                    z_tilde, loss = manager.apply_t1(
+                        z_aligned=z_aligned,
+                        anchor_data=anchor_data,
+                        t=t,
+                        scheduler=pipe.scheduler,
+                        unet=pipe.unet,
+                        encoder_hidden_states=prompt_embeds_cat,
+                        added_cond_kwargs=added_cond_kwargs,
+                        do_classifier_free_guidance=True,
+                        guidance_scale=guidance_scale
+                    )
+                z_tilde = z_tilde.detach()
+                
+                # T2: Attention Propagation (Interception hook runs inside here)
+                noise_pred = manager.apply_t2(
+                    z_tilde=z_tilde,
+                    anchor_outputs=anchor_data["O_anchor"],
+                    beta=manager.attn_cache.blend_ratio,
+                    unet=pipe.unet,
+                    t=t,
+                    encoder_hidden_states=prompt_embeds_cat,
+                    added_cond_kwargs=added_cond_kwargs,
+                    do_classifier_free_guidance=True
+                )
+                latents_input = z_tilde
+                
+            else:
+                # Standard denoising step (for anchor generation or if no anchor available)
+                with torch.no_grad():
+                    # Double latents for CFG
+                    latent_model_input = torch.cat([latents] * 2)
+                    latent_model_input = pipe.scheduler.scale_model_input(latent_model_input, t)
+                    
+                    noise_pred = pipe.unet(
+                        latent_model_input,
+                        t,
+                        encoder_hidden_states=prompt_embeds_cat,
+                        added_cond_kwargs=added_cond_kwargs
+                    ).sample
+                latents_input = latents
+                    
+            # Scheduler Step
+            with torch.no_grad():
+                if guidance_scale > 1.0:
+                    noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                    noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+                    
+                latents = pipe.scheduler.step(noise_pred, t, latents_input).prev_sample
+                
+            # If generating anchor, capture tensors on the second to last step/first steps
+            if is_anchor and manager and i == len(timesteps) - 1:
+                # Capture stats
+                manager.capture_anchor_stats(latents)
+                manager._anchor_z0 = latents.clone().detach().cpu()
+                
+                # Run one last capture forward pass to record A_anchor, F_anchor, and O_anchor
+                manager.capture_anchor_data(
+                    unet=pipe.unet,
+                    latents=latents,
+                    t=t,
+                    encoder_hidden_states=prompt_embeds_cat,
+                    added_cond_kwargs=added_cond_kwargs,
+                    do_classifier_free_guidance=True
+                )
+                
+        # Decode
+        with torch.no_grad():
+            image = pipe.vae.decode(latents / pipe.vae.config.scaling_factor, return_dict=False)[0]
+            image = pipe.image_processor.postprocess(image, output_type="pil")[0]
+            
+        return image
+
     def generate(self, prompt: str, negative_prompt: str,
                  config: Dict[str, Any]) -> Image.Image:
         """
@@ -182,6 +360,10 @@ class SDXLBackend(BaseBackend):
                                   (default: ["latents"])
         """
         import torch
+
+        if config.get("use_mdcp_custom_loop", False):
+            log.info("  [SDXL] Routing to custom MDCP Algorithm 1 generation loop")
+            return self.mdcp_generate(prompt, negative_prompt, config)
 
         if self._pipe is None:
             raise RuntimeError("SDXL backend not loaded. Call load() first.")
